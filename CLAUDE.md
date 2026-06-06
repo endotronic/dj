@@ -23,10 +23,14 @@ Non-goals: not a system-configuration manager, not a fleet manager.
 
 ## 2. Design decisions
 
-### 2.1 Bare git repo + `dot` alias
+### 2.1 Two-repo split: public + private bare repo
+
+**Public repo** — `~/.dotfiles/` is its own normal git repo tracking all shareable infrastructure (scripts, tests, Justfile, packages, CLAUDE.md). Pushed to GitHub.
+
+**Private bare repo** — `~/.config.git`, work-tree `$HOME`, tracks personal config files and encrypted secrets. The `dot` alias targets it:
 
 ```bash
-alias dot='git --git-dir=$HOME/.dotfiles.git --work-tree=$HOME'
+alias dot='git --git-dir="$HOME/.config.git" --work-tree="$HOME"'
 dot config status.showUntrackedFiles no
 ```
 
@@ -92,12 +96,16 @@ Track a file only if it diverges from what the system would have shipped. On Oma
 
 ## 3. Repository layout
 
+Two repos coexist:
+
 ```
-$HOME (work tree)
-├── .dotfiles.git/                      # bare git dir
-├── .bashrc  .bash_profile  .zshrc  .zprofile  .gitignore   # tracked loaders
+$HOME
+├── .config.git/                        # private bare repo (work-tree $HOME)
+│                                       # dot alias → this repo; tracks personal
+│                                       # config files and encrypted secrets
+├── .bashrc  .bash_profile  .zshrc  .zprofile   # tracked by .config.git
 ├── .config/
-│   ├── shell/                          # POSIX shared layer
+│   ├── shell/                          # POSIX shared layer (tracked by .config.git)
 │   │   ├── init.sh  env.sh  aliases.sh  functions.sh  secrets.sh
 │   │   ├── os/{linux,darwin,wsl}.sh
 │   │   └── host/<hostname>.sh
@@ -107,8 +115,8 @@ $HOME (work tree)
 │   ├── alacritty/  ghostty/  kitty/
 │   ├── hypr/  waybar/  mako/  walker/  omarchy/
 │   └── sops/age/keys.txt               # NOT tracked; out-of-band transport target
-├── .dotfiles/                          # operational tooling + Claude context
-│   ├── CLAUDE.md                        # this file (Claude project memory)
+├── .dotfiles/                          # PUBLIC git repo (.git/ inside)
+│   ├── CLAUDE.md                       # this file (Claude project memory)
 │   ├── .claude/skills/<name>/SKILL.md  # project-scope skills (NOT global)
 │   ├── install.sh                      # POSIX sh bootstrap
 │   ├── Justfile                        # daily ops (invoke via `dj`)
@@ -126,19 +134,24 @@ $HOME (work tree)
 │   │   ├── common.txt  desktop.txt  server.txt
 │   │   ├── renames/{apt,pacman,brew}.txt   # `logical actual` per line; SKIP to omit
 │   │   └── scripts/{sops,just,starship}.sh # fallback installers
-│   ├── secrets/
-│   │   ├── manifest.txt.enc           # src → dst + mode map (SOPS-encrypted)
-│   │   └── env/api-keys.env.enc
 │   └── tests/                         # bats suite
-├── .ssh/
-│   ├── config                          # tracked iff no host secrets
-│   ├── id_*                            # NEVER tracked plaintext; via apply-secrets
-│   └── known_hosts                     # NOT tracked
+├── .private/                           # tracked by .config.git (private bare repo)
+│   ├── .sops.yaml                      # SOPS age recipient config
+│   └── secrets/
+│       ├── manifest.txt.enc            # src → dst + mode map (SOPS-encrypted)
+│       ├── .ssh/id_ed25519.enc
+│       └── claude/credentials.json.enc
+└── .ssh/
+    ├── config                          # tracked iff no host secrets
+    ├── id_*                            # NEVER tracked plaintext; via apply-secrets
+    └── known_hosts                     # NOT tracked
 ```
 
-`README.md`, `.bashrc`, `.zshrc`, `.config/**` → tracked at repo root, deploy to `$HOME` (where the tools read them). Everything operational → under `.dotfiles/`, deploys to `~/.dotfiles/`. Bare git dir: `~/.dotfiles.git/`. There is **no dev clone**: Claude runs from `~/.dotfiles/` and edits the live `$HOME` files directly through the bare repo (see §10).
+**Two-repo model:**
+- `~/.dotfiles/` — normal git repo, public, pushed to GitHub. Contains only shareable infrastructure. Use `git` inside it for commits. `PRIVATE_DIR` env var tells secrets scripts where to find `~/.private/`.
+- `~/.config.git` — private bare repo, work-tree `$HOME`. Tracks personal dotfiles and `~/.private/` encrypted secrets. Use `dot` alias (= `git --git-dir=~/.config.git --work-tree=$HOME`) for all operations on personal config.
 
-`CLAUDE.md` and `.claude/skills/` deliberately live **under `.dotfiles/`**, not at the repo root. The repo root is `$HOME`, so tracking them there would deploy `$HOME/CLAUDE.md` and `$HOME/.claude/skills/` — i.e. make them global to every Claude session anywhere under `$HOME`. Keeping them under `~/.dotfiles/` scopes them to this project (loaded only when launched from `~/.dotfiles/`).
+`CLAUDE.md` and `.claude/skills/` deliberately live **under `.dotfiles/`**, not at the repo root. The private bare-repo root is `$HOME`, so tracking them there would deploy `$HOME/CLAUDE.md` and `$HOME/.claude/skills/` — i.e. make them global to every Claude session anywhere under `$HOME`. Keeping them under `~/.dotfiles/` scopes them to this project (loaded only when launched from `~/.dotfiles/`).
 
 ### 3.1 The Justfile and `dj`
 
@@ -166,13 +179,13 @@ curl -fsSL https://raw.githubusercontent.com/<you>/dotfiles/main/install.sh \
 1. Detect OS + pkg manager (abort if none of apt/pacman/brew).
 2. Bootstrap git if missing.
 3. Persist `--system-type`; resolve and install packages.
-4. `git clone --bare … $HOME/.dotfiles.git`.
+4. `git clone --bare … $HOME/.config.git` (private bare repo).
 5. Conflict-aware checkout — classify existing files as **identical** (silently remove, git re-creates), **symlink** (always back up), or **conflict**. Conflicts dispatch on `--on-conflict {ask|backup|keep|abort}` (default `ask`; non-interactive shells must pass explicit mode).
 6. `dot config status.showUntrackedFiles no`.
-7. Install pre-commit hook into `.dotfiles.git/hooks/`.
+7. Install pre-commit hook into `.config.git/hooks/`.
 8. Install age key — from `--age-key <path>` if provided, or interactive paste, or skip.
-9. Initialize SOPS — run `sops-init.sh` (generate age key + write `.sops.yaml`) if sops and age-keygen are present and not yet done.
-10. Apply secrets (`dj apply-secrets`) if age key is present.
+9. Initialize SOPS — run `sops-init.sh` (generate age key + write `~/.private/.sops.yaml`) if sops and age-keygen are present and not yet done.
+10. Apply secrets (`dj apply-secrets`) if age key is present — decrypts from `~/.private/secrets/` to target paths.
 11. Optional cleanup of local source clone.
 12. Offer shell consolidation (`shell-consolidate.sh`) — migrate or create `~/.config/{shell,bash,zsh}/`.
 13. Git identity, SSH key, GPG key (`git-setup.sh`) — adopt existing config, prompt if missing, generate keys if absent.
@@ -227,42 +240,41 @@ Reports `DOTFILES_OS/PKG/DISTRO/SYSTEM_TYPE`. Checks: sops/age present; age key 
 
 ### 5.1 Manifest
 
-`.dotfiles/secrets/manifest.txt.enc` (SOPS-encrypted) maps encrypted files to targets:
+`~/.private/secrets/manifest.txt.enc` (SOPS-encrypted) maps encrypted files to targets. Paths are relative to `PRIVATE_DIR` (`~/.private`):
 
 ```
-.dotfiles/secrets/env/api-keys.env.enc  ~/.secrets/api-keys.env  0600
-.dotfiles/secrets/ssh/id_ed25519.enc    ~/.ssh/id_ed25519                0600
-.dotfiles/secrets/ssh/config.enc        ~/.ssh/config                    0600
+secrets/.ssh/id_ed25519.enc             ~/.ssh/id_ed25519        0600
+secrets/claude/credentials.json.enc     ~/.claude/.credentials.json  0600
+secrets/env/api-keys.env.enc            ~/.secrets/api-keys.env  0600
 ```
 
-`dj apply-secrets` (`rebuild-secrets.sh`) iterates the manifest: decrypt src → write dst with mode. Idempotent.
+`dj apply-secrets` (`rebuild-secrets.sh`) iterates the manifest: decrypt src → write dst with mode. Idempotent. Set `PRIVATE_DIR` to override the default `~/.private`.
 
 ### 5.2 Pre-commit hook
 
 Rejects a commit when:
-1. Any staged path matches `.dotfiles/secrets/**` but doesn't end in `.enc`, `.pub`, `.md`, or `.example`.
+1. Any staged path matches `.private/secrets/**` but doesn't end in `.enc`, `.pub`, `.md`, or `.example`.
 2. `gitleaks` (if installed) finds credentials in non-secrets staged files.
 
-Backstop only — primary control is that `sops` editing never produces a plaintext working file.
+The hook is installed in `~/.config.git/hooks/pre-commit` (private bare repo). Backstop only — primary control is that `sops` editing never produces a plaintext working file.
 
 ### 5.3 Cross-machine SSH trust
 
-All machines share the same identity (`.dotfiles/secrets/ssh/id_ed25519.enc` → `~/.ssh/id_ed25519`). Track `~/.ssh/authorized_keys` so every machine gets the public key on bootstrap:
+All machines share the same identity (`~/.private/secrets/.ssh/id_ed25519.enc` → `~/.ssh/id_ed25519`). Track `~/.ssh/authorized_keys` so every machine gets the public key on bootstrap:
 
 ```sh
 cp ~/.ssh/id_ed25519.pub ~/.ssh/authorized_keys
 chmod 0600 ~/.ssh/authorized_keys
-dot-add ~/.ssh/authorized_keys
+dot add ~/.ssh/authorized_keys
 dot commit -m 'ssh: track authorized_keys for cross-machine trust'
 dot push
 ```
 
 ### 5.4 Rotating the age key
 
-1. Generate new keypair; add new public key to `.sops.yaml`.
-2. `find ~/.dotfiles/secrets -name '*.enc' -exec sops updatekeys {} \;`
-3. Commit, push, distribute new private key out-of-band.
-4. Once all machines have it: remove old key from `.sops.yaml`, re-run `updatekeys`, commit.
+1. `dj rotate` — generates new keypair, re-encrypts all `.enc` files under `~/.private/secrets/`, updates `~/.private/.sops.yaml`, commits via `dot`.
+2. Distribute new private key (`~/.config/sops/age/keys.txt`) out-of-band.
+3. Once all machines have it: `dj sync` on each.
 
 ---
 
@@ -297,11 +309,12 @@ Two orthogonal rules:
 
 ## 8. Implementation status
 
-**Complete:** install.sh (POSIX, idempotent, --system-type, --on-conflict, --age-key, three-bucket conflict classification, auto sops-init, shell consolidation, git setup); Justfile (sync, upgrade, add, secret-add, secret-edit, apply-secrets, install-packages, system-type, sops-init, doctor, config-diff, audit-config, test); os-detect.sh; install-packages.sh (SKIP semantics, fallback scripts); packages/scripts/{sops,just,starship}.sh; rebuild-secrets.sh; secret-add.sh (encrypt + manifest update + stage); pre-commit-secrets.sh; sops-init.sh (auto-called from install.sh); shell-consolidate.sh (migrate or create ~/.config/{shell,bash,zsh}/, atomic conflict check); git-setup.sh (identity + SSH + GPG, idempotent); config-diff.sh; audit-config.sh; packages/{common,desktop,server}.txt (gpg in common); renames/{apt,pacman,brew}.txt; shell/{init,env,aliases,functions,secrets}.sh; shell/os/{linux,darwin,wsl}.sh; bash/{init,functions,completion,prompt}.sh; zsh/{init,functions,completion,prompt}.sh; bats coverage for all scripts (245 tests, ~20 skipped pending sops/age/zsh); claude-creds-snapshot.sh; install-claude.sh; `dj claude`; project skills (install-package, query-config, dispatch-just, edit-config).
+**Complete:** install.sh (POSIX, idempotent, --system-type, --on-conflict, --age-key, three-bucket conflict classification, auto sops-init, shell consolidation, git setup); Justfile (sync, upgrade, add, secret-add, secret-edit, apply-secrets, install-packages, system-type, sops-init, doctor, config-diff, audit-config, test); os-detect.sh; install-packages.sh (SKIP semantics, fallback scripts); packages/scripts/{sops,just,starship}.sh; rebuild-secrets.sh (PRIVATE_DIR-based); secret-add.sh (encrypt + manifest update + stage); pre-commit-secrets.sh (guards .private/secrets/); sops-init.sh (auto-called from install.sh, writes to PRIVATE_DIR); shell-consolidate.sh (migrate or create ~/.config/{shell,bash,zsh}/, atomic conflict check); git-setup.sh (identity + SSH + GPG, idempotent); config-diff.sh; audit-config.sh; packages/{common,desktop,server}.txt (gpg in common); renames/{apt,pacman,brew}.txt; shell/{init,env,aliases,functions,secrets}.sh; shell/os/{linux,darwin,wsl}.sh; bash/{init,functions,completion,prompt}.sh; zsh/{init,functions,completion,prompt}.sh; bats coverage for all scripts (245 tests, ~20 skipped pending sops/age/zsh); claude-creds-snapshot.sh; install-claude.sh; `dj claude`; project skills (install-package, query-config, dispatch-just, edit-config); **public/private repo split** (public `~/.dotfiles/.git`, private bare `~/.config.git`, secrets at `~/.private/`).
 
 **Outstanding (user task only):**
-- [ ] Initial secrets — run `dj secret-add <file>` for each secret (`dj sops-init` is now called automatically by install.sh, but may need to be run manually if skipped).
-- [ ] Stage `~/.config/*` files identified by `dj audit-config -q` via `dot-add`.
+- [ ] Push public repo: `cd ~/.dotfiles && git remote add origin https://github.com/endotronic/dotfiles.git && git push -u origin master`
+- [ ] Populate manifest: run `dj secret-add` for each secret in `~/.private/secrets/` to write `manifest.txt.enc`.
+- [ ] Stage `~/.config/*` files identified by `dj audit-config -q` via `dot add` (private bare repo).
 
 ---
 
@@ -336,7 +349,7 @@ dj claude install pv and add to common  # one-shot (claude -p)
 
 `dj claude` (a `Justfile` target) `cd`s into `~/.dotfiles/` then launches `claude`. Requires `claude` on PATH.
 
-**Single repo, no dev clone.** `~/.dotfiles/` is the operational root — it carries this `CLAUDE.md`, the `.claude/skills/`, and the bulk of the editable tooling (`scripts/`, `tests/`, `Justfile`, `packages/`, `secrets/`). Claude edits the **live `$HOME` files directly** through the bare repo: configs at `~/.config/**`, loaders like `~/.bashrc`, tooling under `~/.dotfiles/`. Git operations go through the `dot` alias (`git --git-dir=$HOME/.dotfiles.git --work-tree=$HOME`); the cwd (`~/.dotfiles/`) is not itself a normal git worktree, so use `dot`, not bare `git`, for status/add/commit. Because there is exactly one copy of every file (no clone to keep in sync), tests run against the same files Claude edits — no drift, no lost updates.
+**Two repos, no dev clone.** `~/.dotfiles/` is a normal git repo (public) carrying `CLAUDE.md`, `.claude/skills/`, and all shareable tooling. Personal configs and secrets live in the private bare repo (`~/.config.git`, work-tree `$HOME`). Claude edits the **live `$HOME` files directly**: tooling changes go through `git` inside `~/.dotfiles/`; personal config changes go through `dot` (`git --git-dir="$HOME/.config.git" --work-tree="$HOME"`). Tests in `~/.dotfiles/tests/` run against the same scripts Claude edits — no drift, no lost updates.
 
 ### 10.2 Project skills
 
@@ -377,8 +390,8 @@ Tokens drift over time; re-run `dj claude-creds-snapshot` when expired. macOS: u
 
 ### 10.5 Norms for Claude when invoked via `dj claude`
 
-- **Edit the live `$HOME` files directly — there is no dev clone.** To change shell functions, edit `~/.config/shell/functions.sh`; to change a script, edit `~/.dotfiles/scripts/<name>.sh`. These are the real tracked files; the bare repo's work-tree is `$HOME`, so your edits *are* the change. Do not look for or recreate a `~/Projects/dotfiles` clone.
-- **Use `dot`, not `git`, for repo operations.** Stage with `dot add <path>` (or `dot-add`), inspect with `dot status`, diff with `dot diff`. Plain `git` from `~/.dotfiles/` does not see the bare repo.
-- **Don't commit without explicit approval.** Leave changes staged via `dot add`; the user runs `dot commit && dot push`. No `dj sync` is needed afterward — the edited files are already the deployed files.
-- **Verify before claiming success.** "Added pv to common" = `command -v pv` returns a path AND the change shows in `dot status`.
+- **Two repos, two git commands.** Tooling changes (scripts, tests, Justfile, packages): use plain `git` inside `~/.dotfiles/`. Personal config / secret changes: use `dot` (`git --git-dir="$HOME/.config.git" --work-tree="$HOME"`).
+- **Edit the live `$HOME` files directly — there is no dev clone.** To change shell functions, edit `~/.config/shell/functions.sh`; to change a script, edit `~/.dotfiles/scripts/<name>.sh`. These are the real tracked files.
+- **Don't commit without explicit approval.** Leave changes staged; the user commits and pushes. No sync needed afterward — edited files are already the deployed files.
+- **Verify before claiming success.** "Added pv to common" = `command -v pv` returns a path AND the change shows in `git status` (inside `~/.dotfiles/`).
 - **Tests run against the live tree.** `dj test` (or `bats ~/.dotfiles/tests/`) exercises the same `~/.dotfiles/scripts/` you edit. There is no second copy that can pass while the real one is broken.
