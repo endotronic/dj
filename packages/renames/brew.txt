@@ -1,0 +1,14 @@
+# Per-line: <logical-binary> <brew-formula-or-cask>
+# Use SKIP as the second column to omit a tool on this manager.
+
+nvim neovim
+gpg gnupg
+# npm is bundled with node on brew; there is no standalone npm formula.
+npm node
+rg ripgrep
+bats bats-core
+# Claude Code: install.sh runs scripts/install-claude.sh (vendor
+# curl-pipe) for the latest version, even on macOS.
+claude SKIP
+# Gemini CLI: install.sh runs scripts/install-gemini.sh (npm install).
+gemini SKIP

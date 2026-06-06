@@ -1,0 +1,4 @@
+# Desktop tier: added when --system-type desktop.
+# GUI / Wayland / interactive tooling. Tools not available on a given
+# package manager should be SKIP'd in packages/renames/<pkg-mgr>.txt.
+# Populate as desktops are set up.

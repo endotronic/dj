@@ -1,0 +1,510 @@
+#!/bin/sh
+# Fresh-machine bootstrap for the dotfiles repo.
+#
+# Usage:
+#   sh install.sh [--system-type {desktop|server}] [--repo URL]
+#
+# Or, when curl-piped from a fresh machine:
+#   curl -fsSL <raw-install.sh> | sh
+#   curl -fsSL <raw-install.sh> | sh -s -- --system-type desktop
+#
+# Idempotent: re-running on an installed machine converges rather than
+# replaces. Package installs are skipped when the binary is already on
+# PATH. The `dot checkout` step backs up any colliding files in $HOME
+# to ~/.dotfiles-backup/<utc-timestamp>/ before overwriting.
+
+set -eu
+
+REPO_URL=
+REPO_URL_DEFAULT=${DOTFILES_REPO_URL:-https://github.com/endotronic/dotfiles.git}
+DOT_DIR=$HOME/.config.git
+PRIVATE_DIR=${PRIVATE_DIR:-$HOME/.private}
+BACKUP_DIR=$HOME/.dotfiles-backup/$(date -u +%Y%m%dT%H%M%SZ)
+TIER_FILE=${XDG_CONFIG_HOME:-$HOME/.config}/dotfiles/system-type
+
+SYSTEM_TYPE=
+CONFLICT_MODE=ask
+REMOVE_SOURCE=ask
+AGE_KEY_SRC=
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --system-type)    shift; SYSTEM_TYPE=${1:-} ;;
+    --system-type=*)  SYSTEM_TYPE=${1#*=} ;;
+    --repo)           shift; REPO_URL=${1:-} ;;
+    --repo=*)         REPO_URL=${1#*=} ;;
+    --on-conflict)    shift; CONFLICT_MODE=${1:-} ;;
+    --on-conflict=*)  CONFLICT_MODE=${1#*=} ;;
+    --remove-source)   shift; REMOVE_SOURCE=${1:-} ;;
+    --remove-source=*) REMOVE_SOURCE=${1#*=} ;;
+    --age-key)        shift; AGE_KEY_SRC=${1:-} ;;
+    --age-key=*)      AGE_KEY_SRC=${1#*=} ;;
+    -h|--help)
+      cat <<EOF
+Usage: install.sh [OPTIONS]
+
+Bootstrap the dotfiles repo on this machine. Idempotent.
+
+Options:
+  --system-type {desktop|server}
+        Pick a package tier; persists to ~/.config/dotfiles/system-type.
+        Omit for the common-only set. Re-runs without the flag keep the
+        existing tier.
+  --repo URL
+        Source repo to clone from. Resolution order:
+          1. --repo (this flag), highest priority
+          2. Auto-detected: if install.sh lives inside a clone of
+             this repo (heuristic: scripts/os-detect.sh exists at
+             the toplevel), that clone is used
+          3. \$DOTFILES_REPO_URL env var
+          4. Built-in default
+  --on-conflict {ask|backup|keep|abort}
+        How to handle files in \$HOME that differ in content from the
+        tracked version. Default: 'ask' interactively; refuses to act
+        non-interactively (curl-pipe-sh on a non-empty \$HOME must pass
+        this flag explicitly). 'backup' moves your files to
+        ~/.dotfiles-backup/<utc>/ and checks out the tracked versions.
+        'keep' moves your files aside, checks out, then restores yours
+        over the checked-out versions (tracked versions remain in the
+        backup dir). 'abort' refuses to overwrite.
+  --remove-source {ask|yes|no}
+        When --repo points at a local directory, the bare repo at
+        ~/.dotfiles.git is a clone of that directory and becomes the new
+        source of truth -- the original local source clone is now redundant.
+        'ask' (default) prompts at the end of a successful install
+        (or does nothing if non-interactive). 'yes' removes without
+        prompting. 'no' always leaves the source intact. No-op when
+        --repo is a remote URL.
+  --age-key PATH
+        Path to an age private key file (keys.txt). Installs it to
+        ~/.config/sops/age/keys.txt so that apply-secrets runs
+        immediately during bootstrap. When omitted and the key is absent,
+        an interactive install will prompt you to paste it; press Enter
+        on a blank line to finish, or Enter immediately to skip.
+  -h, --help
+        Show this help.
+EOF
+      exit 0 ;;
+    *)
+      printf 'error: unknown argument: %s\n' "$1" >&2
+      exit 2 ;;
+  esac
+  shift
+done
+
+case "$SYSTEM_TYPE" in
+  ''|desktop|server) ;;
+  *)
+    printf 'error: --system-type must be desktop, server, or omitted (got: %s)\n' \
+      "$SYSTEM_TYPE" >&2
+    exit 2 ;;
+esac
+
+case "$CONFLICT_MODE" in
+  ask|backup|keep|abort) ;;
+  *)
+    printf 'error: --on-conflict must be ask|backup|keep|abort (got: %s)\n' \
+      "$CONFLICT_MODE" >&2
+    exit 2 ;;
+esac
+
+case "$REMOVE_SOURCE" in
+  ask|yes|no) ;;
+  *)
+    printf 'error: --remove-source must be ask|yes|no (got: %s)\n' \
+      "$REMOVE_SOURCE" >&2
+    exit 2 ;;
+esac
+
+# ---------- 1. OS / package-manager detection (inlined for bootstrap) ----------
+
+case "$(uname -s)" in
+  Darwin) OS=darwin ;;
+  Linux)
+    if [ -r /proc/version ] && grep -qiE '(microsoft|wsl)' /proc/version 2>/dev/null; then
+      OS=wsl
+    else
+      OS=linux
+    fi ;;
+  *) OS=unknown ;;
+esac
+
+PKG=
+case "$OS" in
+  darwin)
+    command -v brew >/dev/null 2>&1 && PKG=brew ;;
+  linux|wsl)
+    if   command -v apt    >/dev/null 2>&1; then PKG=apt
+    elif command -v pacman >/dev/null 2>&1; then PKG=pacman
+    fi ;;
+esac
+
+if [ -z "$PKG" ]; then
+  cat >&2 <<EOF
+error: no supported package manager found.
+  Expected one of: apt (Debian/Ubuntu/WSL), pacman (Arch), brew (macOS).
+  Install one and re-run.
+EOF
+  exit 1
+fi
+
+log() { printf '[install] %s\n' "$*"; }
+
+# Resolve REPO_URL (CLI > auto-detect > env > built-in default).
+if [ -z "$REPO_URL" ]; then
+  # Auto-detect: if this script's own location is inside a git work
+  # tree that looks like our repo (has scripts/os-detect.sh at the
+  # toplevel), use that toplevel as the source.
+  if [ -f "$0" ]; then
+    _script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd) || _script_dir=
+    if [ -n "$_script_dir" ]; then
+      _toplevel=$(git -C "$_script_dir" rev-parse --show-toplevel 2>/dev/null || true)
+      if [ -n "$_toplevel" ] \
+         && [ -f "$_toplevel/.dotfiles/install.sh" ] \
+         && [ -f "$_toplevel/.dotfiles/scripts/os-detect.sh" ]
+      then
+        REPO_URL=$_toplevel
+        log "auto-detected source repo: $REPO_URL"
+      fi
+    fi
+    unset _script_dir _toplevel
+  fi
+fi
+if [ -z "$REPO_URL" ]; then
+  REPO_URL=$REPO_URL_DEFAULT
+fi
+
+log "OS=$OS PKG=$PKG TIER=${SYSTEM_TYPE:-none} REPO=$REPO_URL"
+
+# ---------- 2. Bootstrap prerequisite: git ----------
+# install-packages.sh handles the full set later; here we only need
+# enough to clone the repo.
+
+install_one() {
+  pkg_bin=$1; pkg_actual=$2
+  command -v "$pkg_bin" >/dev/null 2>&1 && return 0
+  log "installing $pkg_actual"
+  case "$PKG" in
+    apt)    sudo apt-get update; sudo apt-get install -y "$pkg_actual" ;;
+    pacman) sudo pacman -S --needed --noconfirm "$pkg_actual" ;;
+    brew)   brew install "$pkg_actual" ;;
+  esac
+}
+
+install_one git git
+
+# ---------- 3. Persist system tier ----------
+
+if [ -n "$SYSTEM_TYPE" ]; then
+  mkdir -p "$(dirname "$TIER_FILE")"
+  printf '%s\n' "$SYSTEM_TYPE" > "$TIER_FILE"
+  log "persisted system-type=$SYSTEM_TYPE"
+fi
+
+# ---------- 4. Clone bare repo ----------
+
+dot() { git --git-dir="$DOT_DIR" --work-tree="$HOME" "$@"; }
+
+# If --repo is a local directory, capture an absolute path now (before
+# anyone cd's around) so the optional cleanup step at the end can find
+# it. Also detect whether it's a regular git clone with an `origin`
+# remote, so we can rewire the bare repo's origin to that instead of
+# leaving it pointing at a soon-to-be-deleted local path.
+LOCAL_SOURCE=
+LOCAL_SOURCE_ORIGIN=
+if [ -d "$REPO_URL" ]; then
+  LOCAL_SOURCE=$(CDPATH= cd -- "$REPO_URL" 2>/dev/null && pwd) || LOCAL_SOURCE=
+  if [ -n "$LOCAL_SOURCE" ]; then
+    LOCAL_SOURCE_ORIGIN=$(git -C "$LOCAL_SOURCE" remote get-url origin 2>/dev/null || true)
+  fi
+fi
+
+if [ ! -d "$DOT_DIR" ]; then
+  log "cloning $REPO_URL into $DOT_DIR"
+  git clone --bare "$REPO_URL" "$DOT_DIR"
+  # Rewire origin: a bare clone of a local path points its origin at
+  # that local path. If the source had a real remote, use that instead
+  # so future `dot push` reaches the right place.
+  if [ -n "$LOCAL_SOURCE_ORIGIN" ]; then
+    dot remote set-url origin "$LOCAL_SOURCE_ORIGIN"
+    log "rewired origin -> $LOCAL_SOURCE_ORIGIN"
+  fi
+fi
+
+# ---------- 5. Conflict-aware checkout ----------
+#
+# Walk every tracked path. For each path that currently exists in
+# $HOME, classify it:
+#   - identical: content matches HEAD; safe to silently remove
+#                (git will re-create with the same content)
+#   - symlink:   present as a symlink at a tracked-file path;
+#                always moved to the backup dir before checkout
+#   - conflict:  different content; behavior controlled by
+#                --on-conflict {ask|backup|keep|abort}
+
+identical=$(mktemp)
+conflicts=$(mktemp)
+symlinks=$(mktemp)
+trap 'rm -f "$identical" "$conflicts" "$symlinks"' EXIT INT TERM
+
+dot ls-tree --full-tree -r --name-only HEAD 2>/dev/null | while IFS= read -r f; do
+  [ -z "$f" ] && continue
+  src=$HOME/$f
+  [ -e "$src" ] || [ -L "$src" ] || continue
+  if [ -L "$src" ]; then
+    printf '%s\n' "$f" >> "$symlinks"
+  elif dot show "HEAD:$f" 2>/dev/null | cmp -s - "$src" 2>/dev/null; then
+    printf '%s\n' "$f" >> "$identical"
+  else
+    printf '%s\n' "$f" >> "$conflicts"
+  fi
+done
+
+n_conflicts=$(awk 'END { print NR+0 }' "$conflicts")
+n_identical=$(awk 'END { print NR+0 }' "$identical")
+n_symlinks=$(awk 'END { print NR+0 }' "$symlinks")
+
+log "checkout: identical=$n_identical conflicts=$n_conflicts symlinks=$n_symlinks"
+if [ "$n_conflicts" -gt 0 ]; then
+  log 'conflicting files:'
+  sed 's/^/  /' < "$conflicts"
+fi
+
+# Decide on conflict handling first; if aborting, exit before any side
+# effects (no removals, no moves, no checkout).
+if [ "$n_conflicts" -eq 0 ]; then
+  log 'no conflicts'
+  decision=clean
+else
+  mode=$CONFLICT_MODE
+  if [ "$mode" = ask ]; then
+    if [ -t 0 ] && [ -t 1 ]; then
+      printf '\n[install] choose: (b)ackup-and-overwrite, (k)eep-yours, (a)bort [b]: '
+      read -r ans || ans=
+      case "${ans:-b}" in
+        b|B|backup) mode=backup ;;
+        k|K|keep)   mode=keep ;;
+        *)          mode=abort ;;
+      esac
+    else
+      cat >&2 <<EOF
+[install] non-interactive shell; refusing to overwrite. Re-run with one of:
+[install]   --on-conflict backup   move yours to $BACKUP_DIR, then check out
+[install]   --on-conflict keep     keep yours; tracked versions go to backup
+[install]   --on-conflict abort    do nothing
+EOF
+      exit 1
+    fi
+  fi
+  decision=$mode
+
+  case "$decision" in
+    abort)
+      log 'aborting per user request'
+      exit 1 ;;
+    backup|keep) ;;
+    *)
+      printf 'error: unexpected conflict decision: %s\n' "$decision" >&2
+      exit 2 ;;
+  esac
+fi
+
+# Past this point we're committed to checking out. Clear the work
+# tree of anything that would prevent the checkout.
+
+if [ "$n_conflicts" -gt 0 ]; then
+  mkdir -p "$BACKUP_DIR"
+  log "moving $n_conflicts conflict(s) to $BACKUP_DIR"
+  while IFS= read -r f; do
+    [ -z "$f" ] && continue
+    target=$BACKUP_DIR/$f
+    mkdir -p "$(dirname "$target")"
+    mv "$HOME/$f" "$target"
+  done < "$conflicts"
+fi
+
+if [ "$n_symlinks" -gt 0 ]; then
+  mkdir -p "$BACKUP_DIR"
+  log "moving $n_symlinks symlink(s) at tracked paths to $BACKUP_DIR"
+  while IFS= read -r f; do
+    [ -z "$f" ] && continue
+    target=$BACKUP_DIR/$f
+    mkdir -p "$(dirname "$target")"
+    mv "$HOME/$f" "$target"
+  done < "$symlinks"
+fi
+
+if [ "$n_identical" -gt 0 ]; then
+  log "removing $n_identical identical file(s) (no data loss; same as HEAD)"
+  while IFS= read -r f; do
+    [ -z "$f" ] && continue
+    rm -f "$HOME/$f"
+  done < "$identical"
+fi
+
+( cd "$HOME" && dot checkout HEAD -- . )
+
+if [ "$n_conflicts" -gt 0 ] && [ "$decision" = keep ]; then
+  log 'restoring your versions over the checked-out files'
+  while IFS= read -r f; do
+    [ -z "$f" ] && continue
+    cp -p "$BACKUP_DIR/$f" "$HOME/$f"
+  done < "$conflicts"
+  log "your \$HOME files unchanged; tracked versions saved in $BACKUP_DIR"
+  log "'dot status' will show these as modified (expected)"
+fi
+
+dot config status.showUntrackedFiles no
+
+# ---------- 6. Install pre-commit hook (if present) ----------
+
+HOOK_SRC=$HOME/.dotfiles/scripts/pre-commit-secrets.sh
+HOOK_DST=$DOT_DIR/hooks/pre-commit
+if [ -f "$HOOK_SRC" ]; then
+  mkdir -p "$DOT_DIR/hooks"
+  ln -sf "$HOOK_SRC" "$HOOK_DST"
+  chmod +x "$HOOK_SRC"
+  log "linked pre-commit hook -> $HOOK_SRC"
+fi
+
+# ---------- 7. Full package install ----------
+
+if [ -x "$HOME/.dotfiles/scripts/install-packages.sh" ]; then
+  log "running install-packages.sh"
+  sh "$HOME/.dotfiles/scripts/install-packages.sh"
+fi
+
+# Ensure ~/.local/bin is in PATH before calling install-claude.sh so
+# the post-install verification can find the just-installed binary.
+case ":$PATH:" in
+  *":$HOME/.local/bin:"*) ;;
+  *) PATH="$HOME/.local/bin:$PATH"; export PATH ;;
+esac
+
+# Claude Code isn't shipped through apt/pacman/brew, so it has its
+# own installer script (vendor curl-pipe). Idempotent: no-op if
+# `claude` is already on PATH.
+if [ -x "$HOME/.dotfiles/scripts/install-claude.sh" ]; then
+  log "running install-claude.sh"
+  sh "$HOME/.dotfiles/scripts/install-claude.sh"
+fi
+
+if [ -x "$HOME/.dotfiles/scripts/install-gemini.sh" ]; then
+  log "running install-gemini.sh"
+  sh "$HOME/.dotfiles/scripts/install-gemini.sh" \
+    || log "warn: gemini install failed; skipping (non-fatal)"
+fi
+
+# ---------- 8. Install age key (if provided via flag or interactive paste) ---
+
+AGE_KEY=${XDG_CONFIG_HOME:-$HOME/.config}/sops/age/keys.txt
+
+if [ ! -r "$AGE_KEY" ]; then
+  if [ -n "$AGE_KEY_SRC" ]; then
+    if [ ! -r "$AGE_KEY_SRC" ]; then
+      log "warn: --age-key path not readable: $AGE_KEY_SRC; skipping"
+    else
+      mkdir -p "$(dirname "$AGE_KEY")"
+      cp "$AGE_KEY_SRC" "$AGE_KEY"
+      chmod 0600 "$AGE_KEY"
+      log "installed age key from $AGE_KEY_SRC"
+    fi
+  elif [ -t 0 ] && [ -t 1 ]; then
+    printf '\n[install] Age key not found at %s\n' "$AGE_KEY"
+    printf '[install] Paste your age key (press Enter on a blank line when done,\n'
+    printf '[install] or just press Enter to skip and apply secrets later):\n'
+    key_content=
+    while IFS= read -r _line; do
+      [ -z "$_line" ] && break
+      key_content="${key_content}${_line}
+"
+    done || true
+    if [ -n "$key_content" ]; then
+      mkdir -p "$(dirname "$AGE_KEY")"
+      printf '%s' "$key_content" > "$AGE_KEY"
+      chmod 0600 "$AGE_KEY"
+      log "wrote age key to $AGE_KEY"
+    else
+      log "no age key provided; skipping secrets"
+      log "transport the age key, then run: just apply-secrets"
+    fi
+  fi
+fi
+
+# ---------- 9. Initialize SOPS/age (generate key + .sops.yaml if absent) -----
+
+if [ -x "$HOME/.dotfiles/scripts/sops-init.sh" ]; then
+  if command -v sops >/dev/null 2>&1 && command -v age-keygen >/dev/null 2>&1; then
+    mkdir -p "$PRIVATE_DIR"
+    PRIVATE_DIR="$PRIVATE_DIR" sh "$HOME/.dotfiles/scripts/sops-init.sh"
+  else
+    log "sops or age-keygen not on PATH; skipping SOPS init"
+    log "install them, then run: dj sops-init"
+  fi
+fi
+
+# ---------- 10. Apply secrets (only if age key is present) ----------
+
+if [ -r "$AGE_KEY" ] && [ -x "$HOME/.dotfiles/scripts/rebuild-secrets.sh" ]; then
+  log "rematerializing secrets"
+  PRIVATE_DIR="$PRIVATE_DIR" sh "$HOME/.dotfiles/scripts/rebuild-secrets.sh"
+elif [ ! -r "$AGE_KEY" ]; then
+  log "no age key at $AGE_KEY -- skipping secrets"
+  log "transport the age key, then run: dj apply-secrets"
+fi
+
+# ---------- 11. Optional cleanup of local source clone ----------
+
+# If --repo was a local directory, that source clone is now redundant
+# (the bare repo at $DOT_DIR is the source of truth from here on).
+# Honor --remove-source: yes deletes, no leaves alone, ask prompts.
+if [ -n "$LOCAL_SOURCE" ] \
+   && [ "$LOCAL_SOURCE" != "$HOME" ] \
+   && [ "$LOCAL_SOURCE" != "$DOT_DIR" ]
+then
+  log "source clone at $LOCAL_SOURCE is now redundant"
+  log "(the bare repo at $DOT_DIR is your source of truth from here on)"
+  remove_source_clone() {
+    # cd somewhere safe so we don't delete the dir we're standing on.
+    ( cd "$HOME" && rm -rf "$LOCAL_SOURCE" ) \
+      && log "removed $LOCAL_SOURCE" \
+      || log "warn: failed to remove $LOCAL_SOURCE"
+  }
+  case "$REMOVE_SOURCE" in
+    yes) remove_source_clone ;;
+    no)  log "leaving source clone in place (--remove-source no)" ;;
+    ask)
+      if [ -t 0 ] && [ -t 1 ]; then
+        printf '\n[install] remove source clone %s? [y/N]: ' "$LOCAL_SOURCE"
+        read -r ans || ans=
+        case "$ans" in
+          y|Y|yes) remove_source_clone ;;
+          *)       log "leaving source clone in place" ;;
+        esac
+      else
+        log "non-interactive; not prompting. To clean up: rm -rf $LOCAL_SOURCE"
+      fi ;;
+  esac
+fi
+
+# ---------- 12. Offer shell consolidation ----------
+
+if [ -x "$HOME/.dotfiles/scripts/shell-consolidate.sh" ] && [ -d "$DOT_DIR" ]; then
+  sh "$HOME/.dotfiles/scripts/shell-consolidate.sh"
+fi
+
+# ---------- 13. Git identity, SSH key, GPG key ----------
+
+if [ -x "$HOME/.dotfiles/scripts/git-setup.sh" ]; then
+  sh "$HOME/.dotfiles/scripts/git-setup.sh"
+fi
+
+# ---------- 14. Done ----------
+
+cat <<EOF
+
+[install] bootstrap complete.
+
+next steps:
+  1. reload your shell:  . ~/.bashrc   (or . ~/.zshrc on zsh)
+  2. 'dj doctor' for sanity checks
+EOF

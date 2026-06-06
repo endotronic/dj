@@ -1,0 +1,21 @@
+# Per-line: <logical-binary> <apt-package-name>
+# Use SKIP as the second column to omit a tool on this manager.
+# SKIP items with a matching packages/scripts/<name>.sh get that script
+# run as a fallback installer.
+
+nvim neovim
+gpg gnupg
+rg ripgrep
+fd fd-find
+# Not in Debian/Ubuntu apt repos; installed via packages/scripts/sops.sh.
+sops SKIP
+# Not in Debian/Ubuntu apt repos; installed via packages/scripts/just.sh.
+just SKIP
+# Not in Debian/Ubuntu apt repos; installed via packages/scripts/starship.sh.
+starship SKIP
+# Claude Code is not in apt; install.sh runs scripts/install-claude.sh
+# (vendor curl-pipe) after install-packages.sh to handle it.
+claude SKIP
+# Gemini CLI is not in apt; install.sh runs scripts/install-gemini.sh
+# (npm install) after install-packages.sh to handle it.
+gemini SKIP

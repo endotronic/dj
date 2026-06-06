@@ -1,0 +1,6 @@
+# Per-line: <logical-binary> <apt-package-name>
+# Debian-specific overrides. Checked before apt.txt; missing entries
+# fall back to apt.txt. Use SKIP to omit a tool on Debian.
+#
+# Add entries here when a package name differs between Debian and the
+# apt.txt default, or when a tool is not available in Debian's repos.

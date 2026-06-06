@@ -1,0 +1,13 @@
+# Per-line: <logical-binary> <pacman-package-name>
+# Use SKIP as the second column to omit a tool on this manager.
+
+nvim neovim
+gpg gnupg
+rg ripgrep
+# Claude Code is in the AUR but not the official repos; we don't
+# assume an AUR helper is present. install.sh runs
+# scripts/install-claude.sh (vendor curl-pipe) instead.
+claude SKIP
+# Gemini CLI is not in the official repos; install.sh runs
+# scripts/install-gemini.sh (npm install) instead.
+gemini SKIP
