@@ -16,7 +16,7 @@
 set -eu
 
 REPO_URL=
-REPO_URL_DEFAULT=${DOTFILES_REPO_URL:-https://github.com/endotronic/dotfiles.git}
+REPO_URL_DEFAULT=${DOTFILES_REPO_URL:-https://github.com/endotronic/dj.git}
 DOT_DIR=$HOME/.config.git
 PRIVATE_DIR=${PRIVATE_DIR:-$HOME/.private}
 BACKUP_DIR=$HOME/.dotfiles-backup/$(date -u +%Y%m%dT%H%M%SZ)
