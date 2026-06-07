@@ -65,10 +65,10 @@ _make_fake_repo_dir() {
   [[ "$output" =~ "--private-repo" ]]
 }
 
-@test "invalid --system-type exits 2" {
-  run sh "$INSTALL" --system-type bogus
+@test "--system-type with invalid characters exits 2" {
+  run sh "$INSTALL" --system-type 'not a type'
   [ "$status" -eq 2 ]
-  [[ "$output" =~ "--system-type must be" ]]
+  [[ "$output" =~ "--system-type must contain only" ]]
 }
 
 @test "invalid --on-conflict exits 2" {
@@ -343,6 +343,39 @@ _make_fake_repo_dir() {
   run sh "$INSTALL" --private-repo "$SRC_REPO" --on-conflict backup
   [ "$status" -eq 0 ]
   [ "$(cat "$XDG_CONFIG_HOME/dotfiles/system-type")" = "server" ]
+}
+
+# --- personal package list seeding ----------------------------------------
+
+@test "fresh install seeds ~/.config/dj/packages/common.txt from the template (non-interactive)" {
+  stage_fake_dotfiles_checkout
+  mkdir -p "$HOME/.dotfiles/packages/template"
+  printf '# template\nfoo\nbar\n' > "$HOME/.dotfiles/packages/template/common.txt"
+  make_src_repo
+  add_to_repo .bashrc "# tracked"
+  publish_repo
+
+  run sh "$INSTALL" --private-repo "$SRC_REPO" --on-conflict backup
+  [ "$status" -eq 0 ]
+  [ -f "$HOME/.config/dj/packages/common.txt" ]
+  grep -qx foo "$HOME/.config/dj/packages/common.txt"
+  grep -qx bar "$HOME/.config/dj/packages/common.txt"
+}
+
+@test "re-running install does not overwrite an existing personal package list" {
+  stage_fake_dotfiles_checkout
+  mkdir -p "$HOME/.dotfiles/packages/template"
+  printf 'foo\n' > "$HOME/.dotfiles/packages/template/common.txt"
+  make_src_repo
+  add_to_repo .bashrc "# tracked"
+  publish_repo
+
+  sh "$INSTALL" --private-repo "$SRC_REPO" --on-conflict backup >/dev/null
+  printf 'my-own-list\n' > "$HOME/.config/dj/packages/common.txt"
+
+  run sh "$INSTALL" --private-repo "$SRC_REPO" --on-conflict backup
+  [ "$status" -eq 0 ]
+  [ "$(cat "$HOME/.config/dj/packages/common.txt")" = "my-own-list" ]
 }
 
 # --- auto-detection of public-repo source (when --repo not given) ---------

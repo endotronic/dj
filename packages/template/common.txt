@@ -1,0 +1,32 @@
+# Template seed list for the personal "common" package list.
+#
+# This file is NOT installed from directly -- it only seeds
+# ~/.config/dj/packages/common.txt on a fresh machine (interactively,
+# or in full when non-interactive). The real list lives in the private
+# config repo and travels with you; edit it via `dj install-package` or
+# by hand, not by editing this template.
+#
+# One logical name per line. The logical name is the binary that
+# `command -v` will look for. Package-manager-specific renames live in
+# packages/renames/<pkg-mgr>.txt.
+
+git
+gpg
+sops
+age
+just
+nvim
+tmux
+starship
+rg
+fd
+fzf
+jq
+gh
+npm
+curl
+openssl
+bats
+claude
+gemini
+

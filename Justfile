@@ -52,22 +52,24 @@ diff:
 install-packages:
     sh "{{SCRIPTS}}/install-packages.sh"
 
-# Persist a new system tier (desktop|server|none). Does not install.
-system-type TIER:
+# Persist a new system type (any identifier, e.g. desktop|server|laptop|none).
+# Does not install -- the type is just a lookup key for
+# ~/.config/dj/packages/types/<type>.txt.
+system-type TYPE:
     #!/bin/sh
-    case "{{TIER}}" in
-      desktop|server)
-        mkdir -p "$(dirname "{{TIER_FILE}}")"
-        printf '%s\n' "{{TIER}}" > "{{TIER_FILE}}"
-        echo "system-type set to {{TIER}}; run 'just upgrade' to install tier packages"
-        ;;
+    case "{{TYPE}}" in
       none|'')
         rm -f "{{TIER_FILE}}"
-        echo "system-type cleared (common tier only)"
+        echo "system-type cleared (common-only)"
+        ;;
+      *[!A-Za-z0-9_-]*)
+        echo "error: TYPE must contain only letters, digits, _ and -" >&2
+        exit 2
         ;;
       *)
-        echo "error: TIER must be desktop|server|none" >&2
-        exit 2
+        mkdir -p "$(dirname "{{TIER_FILE}}")"
+        printf '%s\n' "{{TYPE}}" > "{{TIER_FILE}}"
+        echo "system-type set to {{TYPE}}; run 'just upgrade' to install its packages"
         ;;
     esac
 

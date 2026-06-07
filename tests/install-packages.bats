@@ -23,8 +23,14 @@ teardown() {
   [[ "$output" =~ Usage ]]
 }
 
-@test "invalid --system-type exits 2" {
-  run sh "$INSTALL_PKGS" --system-type bogus
+@test "any identifier is a valid --system-type (it's just a lookup key)" {
+  run sh "$INSTALL_PKGS" --dry-run --system-type bogus
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "TYPE=bogus" ]]
+}
+
+@test "--system-type with invalid characters exits 2" {
+  run sh "$INSTALL_PKGS" --system-type 'not a type'
   [ "$status" -eq 2 ]
   [[ "$output" =~ "invalid system-type" ]]
 }
@@ -53,10 +59,10 @@ teardown() {
   ! stub_called brew
 }
 
-@test "--dry-run with --system-type desktop reports TIER=desktop" {
+@test "--dry-run with --system-type desktop reports TYPE=desktop" {
   run sh "$INSTALL_PKGS" --dry-run --system-type desktop
   [ "$status" -eq 0 ]
-  [[ "$output" =~ "TIER=desktop" ]]
+  [[ "$output" =~ "TYPE=desktop" ]]
 }
 
 # --- name resolution via renames table ------------------------------------
@@ -123,7 +129,7 @@ teardown() {
   stub_sudo_passthrough
   stub_cmd apt-get
 
-  DOTFILES_PACKAGES_DIR="$fake_pkgs" run sh "$INSTALL_PKGS"
+  DOTFILES_PACKAGES_DIR="$fake_pkgs" DOTFILES_DJ_PACKAGES_DIR="$fake_pkgs" run sh "$INSTALL_PKGS"
   [ "$status" -eq 0 ]
   if ! stub_called apt-get; then
     printf 'no package manager was invoked. log:\n%s\n' "$(stub_log)" >&2
@@ -131,6 +137,52 @@ teardown() {
   fi
   # The install verb (not just `apt-get update`) ran for the missing tool.
   grep -q "apt-get install.*dotfiles-test-pkg-zzz" "$SANDBOX/stub.log"
+}
+
+# --- personal lists: common + types/<type> + hosts/<hostname> -------------
+
+@test "--system-type pulls in lists_dir/types/<type>.txt" {
+  fake_pkgs="$SANDBOX/fake-pkgs"
+  mkdir -p "$fake_pkgs/renames" "$fake_pkgs/types"
+  : > "$fake_pkgs/common.txt"
+  printf 'dotfiles-test-pkg-type\n' > "$fake_pkgs/types/sometype.txt"
+
+  stub_cmd apt
+  stub_sudo_passthrough
+  stub_cmd apt-get
+
+  DOTFILES_PACKAGES_DIR="$fake_pkgs" DOTFILES_DJ_PACKAGES_DIR="$fake_pkgs" \
+    run sh "$INSTALL_PKGS" --dry-run --system-type sometype
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "dotfiles-test-pkg-type" ]]
+}
+
+@test "host-specific list at lists_dir/hosts/<hostname>.txt is included" {
+  fake_pkgs="$SANDBOX/fake-pkgs"
+  mkdir -p "$fake_pkgs/renames" "$fake_pkgs/hosts"
+  : > "$fake_pkgs/common.txt"
+  _host=$(hostname -s 2>/dev/null || hostname)
+  printf 'dotfiles-test-pkg-host\n' > "$fake_pkgs/hosts/$_host.txt"
+
+  stub_cmd apt
+  stub_sudo_passthrough
+  stub_cmd apt-get
+
+  DOTFILES_PACKAGES_DIR="$fake_pkgs" DOTFILES_DJ_PACKAGES_DIR="$fake_pkgs" \
+    run sh "$INSTALL_PKGS" --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "dotfiles-test-pkg-host" ]]
+}
+
+@test "a type without a matching types/<type>.txt is not an error" {
+  fake_pkgs="$SANDBOX/fake-pkgs"
+  mkdir -p "$fake_pkgs/renames"
+  : > "$fake_pkgs/common.txt"
+  # No types/ dir at all.
+
+  DOTFILES_PACKAGES_DIR="$fake_pkgs" DOTFILES_DJ_PACKAGES_DIR="$fake_pkgs" \
+    run sh "$INSTALL_PKGS" --dry-run --system-type whatever
+  [ "$status" -eq 0 ]
 }
 
 # --- error handling: per-package failures warn but don't abort ------------
@@ -156,7 +208,7 @@ STUBEOF
   chmod +x "$STUB_BIN/apt-get"
 
   # Use --separate-stderr so $stderr captures the warning lines.
-  DOTFILES_PACKAGES_DIR="$fake_pkgs" run --separate-stderr sh "$INSTALL_PKGS"
+  DOTFILES_PACKAGES_DIR="$fake_pkgs" DOTFILES_DJ_PACKAGES_DIR="$fake_pkgs" run --separate-stderr sh "$INSTALL_PKGS"
   [ "$status" -eq 0 ]
   [[ "$stderr" =~ WARNING ]]
 }
@@ -177,7 +229,7 @@ STUBEOF
   stub_sudo_passthrough
   stub_cmd apt-get
 
-  DOTFILES_PACKAGES_DIR="$fake_pkgs" run sh "$INSTALL_PKGS"
+  DOTFILES_PACKAGES_DIR="$fake_pkgs" DOTFILES_DJ_PACKAGES_DIR="$fake_pkgs" run sh "$INSTALL_PKGS"
   [ "$status" -eq 0 ]
   [[ "$output" =~ "running fallback script" ]]
   [ -f "$marker" ]
@@ -203,7 +255,7 @@ case "\$1" in update) exit 0 ;; *) exit 100 ;; esac
 STUBEOF
   chmod +x "$STUB_BIN/apt-get"
 
-  DOTFILES_PACKAGES_DIR="$fake_pkgs" run sh "$INSTALL_PKGS"
+  DOTFILES_PACKAGES_DIR="$fake_pkgs" DOTFILES_DJ_PACKAGES_DIR="$fake_pkgs" run sh "$INSTALL_PKGS"
   [ "$status" -eq 0 ]
   [[ "$output" =~ "running fallback script" ]]
   [ -f "$marker" ]

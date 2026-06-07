@@ -17,7 +17,7 @@ non-interactive Bash tool**. Use the full forms when running commands:
 | User types | Claude's Bash tool runs |
 |---|---|
 | `dj <target>` | `JUST_JUSTFILE="$HOME/.dotfiles/Justfile" just <target>` |
-| `dot <git-cmd>` | `git --git-dir="$HOME/.dotfiles.git" --work-tree="$HOME" <git-cmd>` |
+| `dot <git-cmd>` | `git --git-dir="$HOME/.config.git" --work-tree="$HOME" <git-cmd>` |
 
 When telling the user what to run next, use `dj` and `dot` — those work
 in their interactive shell.
@@ -36,7 +36,7 @@ in their interactive shell.
 | "diff", "what's changed" | `diff` |
 | "edit a secret named X" | `secret-edit X` |
 | "rebuild / apply secrets" | `apply-secrets` |
-| "set tier to desktop/server", "switch tier" | `system-type {desktop\|server\|none}` (does NOT install — follow with `upgrade` if they want install too) |
+| "set type/tier to desktop", "switch type to <anything>" | `system-type <type\|none>` (any identifier — it's a lookup key for `~/.config/dj/packages/types/<type>.txt`; does NOT install — follow with `upgrade` if they want install too) |
 | "first-time SOPS setup" | `sops-init` |
 | "sanity check", "is everything ok" | `doctor` |
 | "what's under ~/.config that we could track?" | `audit-config` (or `-q` for newline list) |

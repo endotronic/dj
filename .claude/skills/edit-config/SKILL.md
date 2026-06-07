@@ -18,7 +18,7 @@ non-interactive Bash tool**. Use the full forms when running commands:
 | User types | Claude's Bash tool runs |
 |---|---|
 | `dj <target>` | `JUST_JUSTFILE="$HOME/.dotfiles/Justfile" just <target>` |
-| `dot <git-cmd>` | `git --git-dir="$HOME/.dotfiles.git" --work-tree="$HOME" <git-cmd>` |
+| `dot <git-cmd>` | `git --git-dir="$HOME/.config.git" --work-tree="$HOME" <git-cmd>` |
 
 When telling the user what to run next, use `dj` and `dot`.
 
@@ -50,12 +50,12 @@ When telling the user what to run next, use `dj` and `dot`.
    - toml: open and re-read; structural typos usually visible
    - hyprland: no built-in linter; rely on user to reload
 
-6. **Show what changed.** Run `git --git-dir="$HOME/.dotfiles.git" --work-tree="$HOME" diff -- <path>`
+6. **Show what changed.** Run `git --git-dir="$HOME/.config.git" --work-tree="$HOME" diff -- <path>`
    for bare-repo-tracked files. Tell the user *concretely* what the
    change does in one sentence.
 
 7. **Stage but don't commit.** If the file isn't tracked yet, use
-   `git --git-dir="$HOME/.dotfiles.git" --work-tree="$HOME" add <path>`.
+   `git --git-dir="$HOME/.config.git" --work-tree="$HOME" add <path>`.
    Mention `dot commit` / `dot push` as the next steps for the user.
    Per CLAUDE.md §9, never commit without explicit approval.
 
@@ -68,13 +68,15 @@ When telling the user what to run next, use `dj` and `dot`.
 - **Shared shell layer (`~/.config/shell/`).** POSIX only — no `[[`,
   `local`, arrays, or `function name()`. Those go in `~/.config/bash/`
   or `~/.config/zsh/` instead. (CLAUDE.md §9.)
-- **Tier-specific binaries in shell init.** Any new line that calls a
+- **Type-specific binaries in shell init.** Any new line that calls a
   binary which might not be installed (e.g. `eval "$(zoxide init bash)"`)
   must guard with `command -v <tool> >/dev/null 2>&1 && ...`. The same
-  file ships to servers.
+  file ships to every machine regardless of system-type.
 - **Don't touch `~/.config/dotfiles/system-type`.** It's host-local
-  state (CLAUDE.md §9). If the user wants to change tier, tell them to
-  run `dj system-type <tier>`.
+  state (CLAUDE.md §9). If the user wants to change it, tell them to
+  run `dj system-type <type>`. (For adding/removing packages, hand off
+  to `install-package` instead — that edits
+  `~/.config/dj/packages/{common,types/<type>,hosts/<host>}.txt`.)
 
 ## What to avoid
 

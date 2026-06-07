@@ -68,14 +68,20 @@ teardown() {
   [ "$output" = "desktop" ]
 }
 
+@test "DOTFILES_SYSTEM_TYPE accepts arbitrary identifiers, not just desktop|server" {
+  printf 'laptop\n' > "$XDG_CONFIG_HOME/dotfiles/system-type"
+  run sh -c '. "$OS_DETECT" && printf %s "$DOTFILES_SYSTEM_TYPE"'
+  [ "$output" = "laptop" ]
+}
+
 @test "DOTFILES_SYSTEM_TYPE=server when persisted" {
   printf 'server\n' > "$XDG_CONFIG_HOME/dotfiles/system-type"
   run sh -c '. "$OS_DETECT" && printf %s "$DOTFILES_SYSTEM_TYPE"'
   [ "$output" = "server" ]
 }
 
-@test "DOTFILES_SYSTEM_TYPE rejected when persisted file contains junk" {
-  printf 'banana\n' > "$XDG_CONFIG_HOME/dotfiles/system-type"
+@test "DOTFILES_SYSTEM_TYPE rejected when persisted file contains invalid characters" {
+  printf 'not a valid type!\n' > "$XDG_CONFIG_HOME/dotfiles/system-type"
   run sh -c '. "$OS_DETECT" && printf %s "$DOTFILES_SYSTEM_TYPE"'
   [ "$output" = "" ]
 }

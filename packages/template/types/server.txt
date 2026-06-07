@@ -1,0 +1,5 @@
+# Template seed for the personal "server" type list
+# (~/.config/dj/packages/types/server.txt, used when
+# `dj system-type server` is set).
+#
+# Headless ops tooling. Populate as server hosts come online.

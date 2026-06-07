@@ -1,16 +1,28 @@
 #!/bin/sh
 # Idempotent package installer.
-# Reads packages/{common,desktop,server}.txt, resolves logical names
-# through packages/renames/<pkg-mgr>.txt, and installs only what's
-# missing. The active tier comes from DOTFILES_SYSTEM_TYPE (set by
-# os-detect.sh, persisted in ~/.config/dotfiles/system-type) but can
-# be overridden with --system-type.
+#
+# Two distinct roots:
+#   - lists:     ~/.config/dj/packages/{common.txt,types/<type>.txt,
+#                hosts/<hostname>.txt} -- the personal package
+#                selection. Lives in the private config repo and
+#                travels with `dj sync`. DOTFILES_DJ_PACKAGES_DIR
+#                overrides the root (useful in tests). The public
+#                repo's packages/template/ only seeds these on a
+#                fresh machine (see install.sh) -- it is never read
+#                here.
+#   - mechanism: packages/{renames,scripts}/ in the public tooling
+#                repo -- shared, OS-specific name mappings and
+#                fallback installers. DOTFILES_PACKAGES_DIR overrides
+#                this root (useful in tests).
+#
+# Resolves logical names through renames/<pkg-mgr>.txt and installs
+# only what's missing. The active type comes from DOTFILES_SYSTEM_TYPE
+# (set by os-detect.sh, persisted in ~/.config/dotfiles/system-type)
+# but can be overridden with --system-type.
 #
 # For tools not available in a distro's package repo, place an install
 # script at packages/scripts/<logical-name>.sh and mark the tool SKIP
-# in the appropriate renames file. The script runs when the binary is
-# absent; DOTFILES_PACKAGES_DIR overrides the packages/ root (useful
-# in tests).
+# in the appropriate renames file.
 
 set -eu
 
@@ -26,11 +38,12 @@ while [ $# -gt 0 ]; do
     -n|--dry-run)    DRY_RUN=1 ;;
     -h|--help)
       cat <<EOF
-Usage: install-packages.sh [--system-type {desktop|server}] [--dry-run]
+Usage: install-packages.sh [--system-type TYPE] [--dry-run]
 
-Resolves the active package list (packages/common.txt + tier file if
-set) through packages/renames/<pkg-mgr>.txt, then installs missing
-tools via the detected package manager.
+Resolves the active package list (~/.config/dj/packages/common.txt +
+types/TYPE.txt + hosts/<hostname>.txt, whichever exist) through
+packages/renames/<pkg-mgr>.txt, then installs missing tools via the
+detected package manager.
 
 For tools not available in the package repo, place packages/scripts/<name>.sh
 and mark the tool SKIP in the renames file; the script is run as a fallback.
@@ -45,10 +58,12 @@ done
 
 : "${DRY_RUN:=0}"
 
+# A type is just a lookup key for types/<type>.txt -- any identifier
+# is valid (it doesn't need to exist as a file).
 case "${DOTFILES_SYSTEM_TYPE:-}" in
-  ''|desktop|server) ;;
-  *)
-    printf 'error: invalid system-type: %s (want desktop|server|empty)\n' \
+  '') ;;
+  *[!A-Za-z0-9_-]*)
+    printf 'error: invalid system-type: %s (letters, digits, _ and - only)\n' \
       "$DOTFILES_SYSTEM_TYPE" >&2
     exit 2 ;;
 esac
@@ -58,6 +73,9 @@ if [ -z "${DOTFILES_PKG:-}" ]; then
   exit 1
 fi
 
+# Personal package lists -- private, travel via `dj sync`.
+lists_dir=${DOTFILES_DJ_PACKAGES_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/dj/packages}
+# Shared install mechanism (renames + fallback scripts) -- public repo.
 packages_dir=${DOTFILES_PACKAGES_DIR:-$repo_root/packages}
 scripts_dir=$packages_dir/scripts
 pkg_renames=$packages_dir/renames/$DOTFILES_PKG.txt
@@ -77,10 +95,11 @@ read_pkglist() {
   awk 'NF && $1 !~ /^#/ { print $1 }' "$1" >> "$active_list"
 }
 
-read_pkglist "$packages_dir/common.txt"
-case "${DOTFILES_SYSTEM_TYPE:-}" in
-  desktop|server) read_pkglist "$packages_dir/$DOTFILES_SYSTEM_TYPE.txt" ;;
-esac
+_hostname=$(hostname -s 2>/dev/null || hostname 2>/dev/null || printf '')
+
+read_pkglist "$lists_dir/common.txt"
+[ -n "${DOTFILES_SYSTEM_TYPE:-}" ] && read_pkglist "$lists_dir/types/$DOTFILES_SYSTEM_TYPE.txt"
+[ -n "$_hostname" ] && read_pkglist "$lists_dir/hosts/$_hostname.txt"
 
 resolve_name() {
   _rn=
@@ -119,7 +138,7 @@ for _l in $missing; do
   _a=$(resolve_name "$_l"); _to_install_display="$_to_install_display ${_a:-$_l}"
 done
 
-printf '[install-packages] OS=%s PKG=%s DISTRO=%s TIER=%s\n' \
+printf '[install-packages] OS=%s PKG=%s DISTRO=%s TYPE=%s\n' \
   "$DOTFILES_OS" "$DOTFILES_PKG" "${DOTFILES_DISTRO:-none}" "${DOTFILES_SYSTEM_TYPE:-none}"
 printf '[install-packages] already installed:%s\n' "${already:- (none)}"
 printf '[install-packages] skipped (SKIP):%s\n' "${skipped:- (none)}"

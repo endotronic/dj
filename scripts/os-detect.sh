@@ -4,7 +4,7 @@
 # Sets and exports:
 #   DOTFILES_OS           darwin | linux | wsl | unknown
 #   DOTFILES_PKG          apt | pacman | brew | (empty if none)
-#   DOTFILES_SYSTEM_TYPE  desktop | server | (empty)
+#   DOTFILES_SYSTEM_TYPE  any identifier (letters, digits, _, -) | (empty)
 # Safe to source repeatedly; idempotent.
 
 case "$(uname -s)" in
@@ -46,8 +46,7 @@ if [ -r "$_dotfiles_tier_file" ]; then
   DOTFILES_SYSTEM_TYPE=$(tr -d '[:space:]' < "$_dotfiles_tier_file" 2>/dev/null || printf '')
 fi
 case "$DOTFILES_SYSTEM_TYPE" in
-  desktop|server) ;;
-  *) DOTFILES_SYSTEM_TYPE= ;;
+  ''|*[!A-Za-z0-9_-]*) DOTFILES_SYSTEM_TYPE= ;;
 esac
 export DOTFILES_SYSTEM_TYPE
 unset _dotfiles_tier_file

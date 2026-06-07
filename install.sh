@@ -2,7 +2,7 @@
 # Fresh-machine bootstrap for the dotfiles repo.
 #
 # Usage:
-#   sh install.sh [--system-type {desktop|server}] [--repo URL] [--private-repo URL]
+#   sh install.sh [--system-type TYPE] [--repo URL] [--private-repo URL]
 #
 # Or, when curl-piped from a fresh machine:
 #   curl -fsSL <raw-install.sh> | sh
@@ -57,10 +57,13 @@ Usage: install.sh [OPTIONS]
 Bootstrap the dotfiles repo on this machine. Idempotent.
 
 Options:
-  --system-type {desktop|server}
-        Pick a package tier; persists to ~/.config/dotfiles/system-type.
-        Omit for the common-only set. Re-runs without the flag keep the
-        existing tier.
+  --system-type TYPE
+        Pick a package type (any identifier, e.g. desktop, server,
+        laptop); persists to ~/.config/dotfiles/system-type and is
+        used as a lookup key for
+        ~/.config/dj/packages/types/<type>.txt. Omit for the
+        common-only set. Re-runs without the flag keep the existing
+        type.
   --repo URL
         Source for the public tooling repo (~/.dotfiles/). Resolution
         order:
@@ -116,9 +119,9 @@ EOF
 done
 
 case "$SYSTEM_TYPE" in
-  ''|desktop|server) ;;
-  *)
-    printf 'error: --system-type must be desktop, server, or omitted (got: %s)\n' \
+  '') ;;
+  *[!A-Za-z0-9_-]*)
+    printf 'error: --system-type must contain only letters, digits, _ and - (got: %s)\n' \
       "$SYSTEM_TYPE" >&2
     exit 2 ;;
 esac
@@ -473,7 +476,48 @@ else
   log "private repo has no commits yet; nothing to check out"
 fi
 
-# ---------- 7. Install pre-commit hook (if present) ----------
+# ---------- 7. Seed personal package list (if absent) ----------
+#
+# ~/.config/dj/packages/{common.txt,types/<type>.txt,hosts/<host>.txt}
+# is the personal, tracked package selection -- it lives in the
+# private config repo and travels via `dj sync`. On a returning
+# machine the checkout above just materialized it. On a genuinely
+# fresh install there's nothing to check out yet, so seed common.txt
+# from the public repo's template: a yes/no checkbox per tool when
+# attached to a terminal, or the full template otherwise.
+
+DJ_PACKAGES_DIR=${XDG_CONFIG_HOME:-$HOME/.config}/dj/packages
+DJ_PACKAGES_TEMPLATE=$HOME/.dotfiles/packages/template/common.txt
+
+if [ ! -f "$DJ_PACKAGES_DIR/common.txt" ] && [ -f "$DJ_PACKAGES_TEMPLATE" ]; then
+  mkdir -p "$DJ_PACKAGES_DIR"
+  if [ -t 0 ] && [ -t 1 ]; then
+    printf '\n[install] Seeding your personal package list from the template.\n'
+    printf '[install] Answer y/n for each tool (Enter = yes):\n'
+    : > "$DJ_PACKAGES_DIR/common.txt"
+    while IFS= read -r _line; do
+      case "$_line" in
+        ''|'#'*)
+          printf '%s\n' "$_line" >> "$DJ_PACKAGES_DIR/common.txt"
+          continue ;;
+      esac
+      _name=$(printf '%s' "$_line" | awk '{print $1}')
+      printf '  include %-16s [Y/n]: ' "$_name"
+      read -r _ans </dev/tty || _ans=
+      case "$_ans" in
+        [Nn]*) ;;
+        *) printf '%s\n' "$_line" >> "$DJ_PACKAGES_DIR/common.txt" ;;
+      esac
+    done < "$DJ_PACKAGES_TEMPLATE"
+    unset _line _name _ans
+  else
+    log "non-interactive: seeding personal package list with the full template"
+    cp "$DJ_PACKAGES_TEMPLATE" "$DJ_PACKAGES_DIR/common.txt"
+  fi
+  log "wrote $DJ_PACKAGES_DIR/common.txt -- track it: dot add $DJ_PACKAGES_DIR/common.txt"
+fi
+
+# ---------- 8. Install pre-commit hook (if present) ----------
 
 HOOK_SRC=$HOME/.dotfiles/scripts/pre-commit-secrets.sh
 HOOK_DST=$DOT_DIR/hooks/pre-commit
@@ -484,7 +528,7 @@ if [ -f "$HOOK_SRC" ]; then
   log "linked pre-commit hook -> $HOOK_SRC"
 fi
 
-# ---------- 8. Full package install ----------
+# ---------- 9. Full package install ----------
 
 if [ -x "$HOME/.dotfiles/scripts/install-packages.sh" ]; then
   log "running install-packages.sh"
@@ -512,7 +556,7 @@ if [ -x "$HOME/.dotfiles/scripts/install-gemini.sh" ]; then
     || log "warn: gemini install failed; skipping (non-fatal)"
 fi
 
-# ---------- 9. Install age key (if provided via flag or interactive paste) ---
+# ---------- 10. Install age key (if provided via flag or interactive paste) ---
 
 AGE_KEY=${XDG_CONFIG_HOME:-$HOME/.config}/sops/age/keys.txt
 
@@ -548,7 +592,7 @@ if [ ! -r "$AGE_KEY" ]; then
   fi
 fi
 
-# ---------- 10. Initialize SOPS/age (generate key + .sops.yaml if absent) -----
+# ---------- 11. Initialize SOPS/age (generate key + .sops.yaml if absent) -----
 
 if [ -x "$HOME/.dotfiles/scripts/sops-init.sh" ]; then
   if command -v sops >/dev/null 2>&1 && command -v age-keygen >/dev/null 2>&1; then
@@ -560,7 +604,7 @@ if [ -x "$HOME/.dotfiles/scripts/sops-init.sh" ]; then
   fi
 fi
 
-# ---------- 11. Apply secrets (only if age key is present) ----------
+# ---------- 12. Apply secrets (only if age key is present) ----------
 
 if [ -r "$AGE_KEY" ] && [ -x "$HOME/.dotfiles/scripts/rebuild-secrets.sh" ]; then
   log "rematerializing secrets"
@@ -570,7 +614,7 @@ elif [ ! -r "$AGE_KEY" ]; then
   log "transport the age key, then run: dj apply-secrets"
 fi
 
-# ---------- 12. Optional cleanup of local public-repo source clone ----------
+# ---------- 13. Optional cleanup of local public-repo source clone ----------
 
 # If --repo was a local directory other than ~/.dotfiles itself, that
 # source clone is now redundant -- its content lives in $DOTFILES_DIR.
@@ -608,19 +652,19 @@ if [ -n "$PUBLIC_LOCAL_SOURCE" ] && [ "$PUBLIC_LOCAL_SOURCE" != "$HOME" ]; then
   esac
 fi
 
-# ---------- 13. Offer shell consolidation ----------
+# ---------- 14. Offer shell consolidation ----------
 
 if [ -x "$HOME/.dotfiles/scripts/shell-consolidate.sh" ] && [ -d "$DOT_DIR" ]; then
   sh "$HOME/.dotfiles/scripts/shell-consolidate.sh"
 fi
 
-# ---------- 14. Git identity, SSH key, GPG key ----------
+# ---------- 15. Git identity, SSH key, GPG key ----------
 
 if [ -x "$HOME/.dotfiles/scripts/git-setup.sh" ]; then
   sh "$HOME/.dotfiles/scripts/git-setup.sh"
 fi
 
-# ---------- 15. Done ----------
+# ---------- 16. Done ----------
 
 cat <<EOF
 

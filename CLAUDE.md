@@ -15,7 +15,7 @@ Personal dotfiles, secrets, and bootstrap tooling. Targets: **Linux** (apt/pacma
 7. **Idempotent bootstrap** — re-running converges rather than replaces.
 8. **bash and zsh parity** — shared POSIX layer; shell-specific details in per-shell files.
 9. **Multi-user-on-one-host safe** — writes nothing outside `$HOME` except via package manager.
-10. **Configs travel everywhere; software is tiered** — all tracked configs deploy to every machine; `--system-type` controls only which packages install.
+10. **Configs travel everywhere; software is typed** — all tracked configs deploy to every machine; `--system-type` is just a lookup key controlling which personal package lists get installed.
 
 Non-goals: not a system-configuration manager, not a fleet manager.
 
@@ -80,17 +80,42 @@ done
 
 Track a file only if it diverges from what the system would have shipped. On Omarchy: prefer override hooks (`~/.config/hypr/<file>.conf`, `~/.config/omarchy/`) over wholesale file replacement. `dj config-diff` audits what's worth tracking.
 
-### 2.7 System tier
+### 2.7 System type and personal package lists
 
-| Tier | What's added |
-|---|---|
-| _(none)_ | common: git, sops, age, nvim, tmux, starship, rg, fd, fzf, jq, gh, … |
-| `desktop` | waybar, mako, walker, image viewers, fonts |
-| `server` | htop, btop, ncdu, restic, fail2ban, … |
+`--system-type` is a **generic lookup key**, not an enum — `desktop` and
+`server` are just the types in use today; any identifier works (`laptop`,
+`htpc`, …). It governs *which personal package list files get read*,
+nothing else.
 
-- **Tier governs software, not config.** All tracked configs deploy uniformly.
+**The package lists themselves are personal data, not shareable infra** —
+they live in the **private** config repo (tracked by `dot`, travel via
+`dj sync`), not in `~/.dotfiles/`:
+
+```
+~/.config/dj/packages/
+├── common.txt              # installed on every machine
+├── types/<type>.txt        # added when DOTFILES_SYSTEM_TYPE == <type>
+└── hosts/<hostname>.txt    # added only on that one host
+```
+
+`install-packages.sh` concatenates whichever of these exist (common +
+the active type's file + this host's file), resolves through
+`~/.dotfiles/packages/renames/<pkg-mgr>.txt` (shared mechanism, public
+repo), and installs what's missing. `~/.dotfiles/packages/template/`
+holds **seed templates only** — `install.sh` copies (or, interactively,
+checkbox-prompts from) `template/common.txt` into
+`~/.config/dj/packages/common.txt` on a genuinely fresh machine, where
+nothing exists yet to check out from the private repo. Never read or
+install from the templates directly; never edit them when the goal is
+"add a package to my machine" — that's `dj install-package` editing the
+personal lists.
+
+- **Type governs software, not config.** All tracked configs deploy uniformly.
 - **Choice persists** at `~/.config/dotfiles/system-type`. Never auto-detect from `$DISPLAY`.
-- Shell init must guard tier-specific binaries: `command -v zoxide >/dev/null 2>&1 && eval "$(zoxide init bash)"`.
+- Shell init must guard type-specific binaries: `command -v zoxide >/dev/null 2>&1 && eval "$(zoxide init bash)"`.
+- Adding a package: use `dj install-package` (or the `install-package`
+  skill) — it picks the right personal list (common / type / host),
+  edits renames if needed, installs, and verifies.
 
 ---
 
@@ -114,6 +139,8 @@ $HOME
 │   ├── git/  nvim/  tmux/  starship.toml
 │   ├── alacritty/  ghostty/  kitty/
 │   ├── hypr/  waybar/  mako/  walker/  omarchy/
+│   ├── dj/packages/                    # PERSONAL package lists (tracked by .config.git)
+│   │   └── common.txt  types/<type>.txt  hosts/<hostname>.txt
 │   └── sops/age/keys.txt               # NOT tracked; out-of-band transport target
 ├── .dotfiles/                          # PUBLIC git repo (.git/ inside)
 │   ├── CLAUDE.md                       # this file (Claude project memory)
@@ -130,8 +157,10 @@ $HOME
 │   │   ├── config-diff.sh  audit-config.sh  sops-init.sh
 │   │   ├── claude-creds-snapshot.sh   # Linux/WSL only
 │   │   └── install-claude.sh          # vendor curl-pipe, idempotent
-│   ├── packages/
-│   │   ├── common.txt  desktop.txt  server.txt
+│   ├── packages/                       # shared install MECHANISM only
+│   │   ├── template/                   # seed lists for fresh installs (NOT live)
+│   │   │   ├── common.txt
+│   │   │   └── types/{desktop,server}.txt
 │   │   ├── renames/{apt,pacman,brew}.txt   # `logical actual` per line; SKIP to omit
 │   │   └── scripts/{sops,just,starship}.sh # fallback installers
 │   └── tests/                         # bats suite
@@ -170,7 +199,7 @@ Always use `dj` not `just` — the Justfile is at `~/.dotfiles/Justfile`, not `$
 ```sh
 # Transport ~/.config/sops/age/keys.txt first (or pass --age-key <path>).
 curl -fsSL https://raw.githubusercontent.com/<you>/dotfiles/main/install.sh | sh
-# With tier and inline age key:
+# With type and inline age key:
 curl -fsSL https://raw.githubusercontent.com/<you>/dotfiles/main/install.sh \
   | sh -s -- --system-type desktop --age-key ~/keys.txt
 ```
@@ -178,18 +207,20 @@ curl -fsSL https://raw.githubusercontent.com/<you>/dotfiles/main/install.sh \
 `install.sh` steps:
 1. Detect OS + pkg manager (abort if none of apt/pacman/brew).
 2. Bootstrap git if missing.
-3. Persist `--system-type`; resolve and install packages.
-4. `git clone --bare … $HOME/.config.git` (private bare repo).
-5. Conflict-aware checkout — classify existing files as **identical** (silently remove, git re-creates), **symlink** (always back up), or **conflict**. Conflicts dispatch on `--on-conflict {ask|backup|keep|abort}` (default `ask`; non-interactive shells must pass explicit mode).
-6. `dot config status.showUntrackedFiles no`.
-7. Install pre-commit hook into `.config.git/hooks/`.
-8. Install age key — from `--age-key <path>` if provided, or interactive paste, or skip.
-9. Initialize SOPS — run `sops-init.sh` (generate age key + write `~/.private/.sops.yaml`) if sops and age-keygen are present and not yet done.
-10. Apply secrets (`dj apply-secrets`) if age key is present — decrypts from `~/.private/secrets/` to target paths.
-11. Optional cleanup of local source clone.
-12. Offer shell consolidation (`shell-consolidate.sh`) — migrate or create `~/.config/{shell,bash,zsh}/`.
-13. Git identity, SSH key, GPG key (`git-setup.sh`) — adopt existing config, prompt if missing, generate keys if absent.
-14. Print next steps.
+3. Persist `--system-type` (any identifier — just a lookup key for `~/.config/dj/packages/types/<type>.txt`, see §2.7).
+4. Clone the public tooling repo to `~/.dotfiles/` (or use in place).
+5. `git clone --bare … $HOME/.config.git` (private bare repo).
+6. Conflict-aware checkout — classify existing files as **identical** (silently remove, git re-creates), **symlink** (always back up), or **conflict**. Conflicts dispatch on `--on-conflict {ask|backup|keep|abort}` (default `ask`; non-interactive shells must pass explicit mode).
+7. Seed `~/.config/dj/packages/common.txt` from `~/.dotfiles/packages/template/common.txt` if it doesn't already exist (i.e. nothing was checked out for it — a genuinely fresh machine). Interactive: yes/no checkbox per tool. Non-interactive: seed the full template. Returning machines skip this — checkout in step 6 already materialized the tracked list.
+8. Install pre-commit hook into `.config.git/hooks/`.
+9. Resolve the active package list (common + type + host, §2.7) and install via `install-packages.sh`.
+10. Install age key — from `--age-key <path>` if provided, or interactive paste, or skip.
+11. Initialize SOPS — run `sops-init.sh` (generate age key + write `~/.private/.sops.yaml`) if sops and age-keygen are present and not yet done.
+12. Apply secrets (`dj apply-secrets`) if age key is present — decrypts from `~/.private/secrets/` to target paths.
+13. Optional cleanup of local source clone.
+14. Offer shell consolidation (`shell-consolidate.sh`) — migrate or create `~/.config/{shell,bash,zsh}/`.
+15. Git identity, SSH key, GPG key (`git-setup.sh`) — adopt existing config, prompt if missing, generate keys if absent.
+16. Print next steps.
 
 Multi-user: steps 1–3 may `sudo` for system packages (idempotent); steps 4+ touch only invoking user's `$HOME`.
 
@@ -221,7 +252,7 @@ dj apply-secrets                # re-materialize to target paths
 ```sh
 dj sync            # dot pull --rebase && dj apply-secrets
 dj upgrade         # dj sync && dj install-packages
-dj system-type desktop   # update persisted tier (does NOT install packages)
+dj system-type desktop   # update persisted type (does NOT install packages)
 ```
 
 `apply-secrets` is bundled with `sync` because pulls can update encrypted material. Package install is separate to keep `sync` fast and sudo-free.
@@ -232,7 +263,7 @@ dj system-type desktop   # update persisted tier (does NOT install packages)
 dj doctor
 ```
 
-Reports `DOTFILES_OS/PKG/DISTRO/SYSTEM_TYPE`. Checks: sops/age present; age key readable; `.sops.yaml` decrypts canary; SSH key perms 0600; every tool in active tier installed or SKIP-marked. Missing desktop binaries on `server` tier not flagged.
+Reports `DOTFILES_OS/PKG/DISTRO/SYSTEM_TYPE`. Checks: sops/age present; age key readable; `.sops.yaml` decrypts canary; SSH key perms 0600; every tool in the active personal package lists (common + type + host, §2.7) installed or SKIP-marked. Tools only listed for other types aren't flagged as missing.
 
 ---
 
@@ -283,11 +314,11 @@ dot push
 - **OS detection**: centralized in `os-detect.sh` and `shell/init.sh`. Names: `darwin`, `linux`, `wsl`.
 - **Pkg manager**: `apt | pacman | brew` (preference order). Exported as `DOTFILES_PKG`.
 - **Distro**: reads `ID` from `/etc/os-release` (e.g. `ubuntu`, `debian`, `arch`). Exported as `DOTFILES_DISTRO`. Used to resolve renames via `renames/$DISTRO.txt` before falling back to `renames/$PKG.txt`.
-- **System tier**: read from `~/.config/dotfiles/system-type`; exported as `DOTFILES_SYSTEM_TYPE`.
+- **System type**: read from `~/.config/dotfiles/system-type`; exported as `DOTFILES_SYSTEM_TYPE`. Any identifier — a lookup key for `~/.config/dj/packages/types/<type>.txt`, not an enum (§2.7).
 - **Shell detection**: implicit via `.bashrc`/`.zshrc`. Never branch on `$SHELL` inside `shell/*`.
 - **Per-OS config**: `~/.config/shell/os/<os>.sh` (sourced after shared layer).
 - **Per-host config**: `~/.config/shell/host/<hostname>.sh` (sourced last; optional).
-- **Package lists**: `common.txt` is source of truth; renames files carry only per-manager name overrides.
+- **Package lists**: the personal `~/.config/dj/packages/{common,types/<type>,hosts/<host>}.txt` (private repo) are the source of truth for what's installed; `~/.dotfiles/packages/template/` only seeds them on a fresh machine; `renames/` files carry per-manager name overrides (§2.7).
 
 ---
 
@@ -309,12 +340,13 @@ Two orthogonal rules:
 
 ## 8. Implementation status
 
-**Complete:** install.sh (POSIX, idempotent, --system-type, --on-conflict, --age-key, three-bucket conflict classification, auto sops-init, shell consolidation, git setup); Justfile (sync, upgrade, add, secret-add, secret-edit, apply-secrets, install-packages, system-type, sops-init, doctor, config-diff, audit-config, test); os-detect.sh; install-packages.sh (SKIP semantics, fallback scripts); packages/scripts/{sops,just,starship}.sh; rebuild-secrets.sh (PRIVATE_DIR-based); secret-add.sh (encrypt + manifest update + stage); pre-commit-secrets.sh (guards .private/secrets/); sops-init.sh (auto-called from install.sh, writes to PRIVATE_DIR); shell-consolidate.sh (migrate or create ~/.config/{shell,bash,zsh}/, atomic conflict check); git-setup.sh (identity + SSH + GPG, idempotent); config-diff.sh; audit-config.sh; packages/{common,desktop,server}.txt (gpg in common); renames/{apt,pacman,brew}.txt; shell/{init,env,aliases,functions,secrets}.sh; shell/os/{linux,darwin,wsl}.sh; bash/{init,functions,completion,prompt}.sh; zsh/{init,functions,completion,prompt}.sh; bats coverage for all scripts (245 tests, ~20 skipped pending sops/age/zsh); claude-creds-snapshot.sh; install-claude.sh; `dj claude`; project skills (install-package, query-config, dispatch-just, edit-config); **public/private repo split** (public `~/.dotfiles/.git`, private bare `~/.config.git`, secrets at `~/.private/`).
+**Complete:** install.sh (POSIX, idempotent, --system-type, --on-conflict, --age-key, three-bucket conflict classification, auto sops-init, shell consolidation, git setup); Justfile (sync, upgrade, add, secret-add, secret-edit, apply-secrets, install-packages, system-type, sops-init, doctor, config-diff, audit-config, test); os-detect.sh; install-packages.sh (SKIP semantics, fallback scripts); packages/scripts/{sops,just,starship}.sh; rebuild-secrets.sh (PRIVATE_DIR-based); secret-add.sh (encrypt + manifest update + stage); pre-commit-secrets.sh (guards .private/secrets/); sops-init.sh (auto-called from install.sh, writes to PRIVATE_DIR); shell-consolidate.sh (migrate or create ~/.config/{shell,bash,zsh}/, atomic conflict check); git-setup.sh (identity + SSH + GPG, idempotent); config-diff.sh; audit-config.sh; generic `--system-type` + personal package lists at `~/.config/dj/packages/{common,types/<type>,hosts/<host>}.txt` (private repo) seeded from `packages/template/{common,types/{desktop,server}}.txt`; renames/{apt,pacman,brew}.txt; shell/{init,env,aliases,functions,secrets}.sh; shell/os/{linux,darwin,wsl}.sh; bash/{init,functions,completion,prompt}.sh; zsh/{init,functions,completion,prompt}.sh; bats coverage for all scripts (245 tests, ~20 skipped pending sops/age/zsh); claude-creds-snapshot.sh; install-claude.sh; `dj claude`; project skills (install-package, query-config, dispatch-just, edit-config); **public/private repo split** (public `~/.dotfiles/.git`, private bare `~/.config.git`, secrets at `~/.private/`).
 
 **Outstanding (user task only):**
 - [ ] Push public repo: `cd ~/.dotfiles && git remote add origin https://github.com/endotronic/dotfiles.git && git push -u origin master`
 - [ ] Populate manifest: run `dj secret-add` for each secret in `~/.private/secrets/` to write `manifest.txt.enc`.
 - [ ] Stage `~/.config/*` files identified by `dj audit-config -q` via `dot add` (private bare repo).
+- [ ] Migrate package lists: the old `packages/{common,desktop,server}.txt` (now `packages/template/...`, seed-only) was this machine's live list. Create `~/.config/dj/packages/common.txt` (e.g. `cp ~/.dotfiles/packages/template/common.txt ~/.config/dj/packages/common.txt`, trim as desired, repeat for `types/{desktop,server}.txt` if applicable) and `dot add`/`commit`/`push` it — otherwise `dj install-packages` resolves an empty list.
 
 ---
 
@@ -332,9 +364,9 @@ Two orthogonal rules:
 - **`status.showUntrackedFiles=no`** on the bare repo — don't "fix" it; it's load-bearing.
 - **Every `scripts/` script gets bats coverage** in `.dotfiles/tests/<name>.bats` in the same commit. Use sandbox helpers in `test_helper.bash`.
 - **Use `dj` not `just`** — Justfile is at `~/.dotfiles/Justfile`, not `$HOME`.
-- **Configs deploy everywhere; software is tiered** — guard tier-specific binaries with `command -v <tool> >/dev/null 2>&1 &&`.
-- **Don't auto-detect system tier** — persisted via `--system-type`; inferring from `$DISPLAY` will be wrong in edge cases.
-- **`~/.config/dotfiles/system-type` is host-local state** — never track in the repo; refuse if asked and explain.
+- **Configs deploy everywhere; software is typed** — guard type-specific binaries with `command -v <tool> >/dev/null 2>&1 &&`.
+- **Don't auto-detect system type** — persisted via `--system-type`; inferring from `$DISPLAY` will be wrong in edge cases. It's a generic lookup key (any identifier), not a `desktop|server` enum (§2.7).
+- **`~/.config/dotfiles/system-type` is host-local state** — never track in the repo; refuse if asked and explain. (The package *lists* it keys into, however, ARE tracked — in the private repo, at `~/.config/dj/packages/`, §2.7.)
 
 ---
 
@@ -357,7 +389,7 @@ dj claude install pv and add to common  # one-shot (claude -p)
 
 | Skill | Purpose |
 |---|---|
-| `install-package` | Install tool + register in `packages/` with per-OS renames |
+| `install-package` | Install tool + register in the personal package lists (`~/.config/dj/packages/`) with per-OS renames |
 | `query-config` | Answer questions about config and machine state |
 | `dispatch-just` | Map natural-language intent to the right `dj` verb |
 | `edit-config` | Edit tracked config honoring override-hook and POSIX-layer rules |
@@ -366,7 +398,7 @@ Kept project-scope intentionally. They live under `~/.dotfiles/`, **not** at the
 
 ### 10.3 Claude Code as a package
 
-`claude` in `common.txt`, marked `SKIP` in all renames files (no apt/pacman/brew package). `install.sh` runs `install-claude.sh` after package installs:
+`claude` in the personal `common.txt` (and `packages/template/common.txt`, so fresh installs offer it), marked `SKIP` in all renames files (no apt/pacman/brew package). `install.sh` runs `install-claude.sh` after package installs:
 
 ```sh
 curl -fsSL https://claude.ai/install.sh | sh   # overridable via $CLAUDE_INSTALL_URL
