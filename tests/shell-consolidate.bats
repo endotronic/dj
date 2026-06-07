@@ -257,6 +257,18 @@ staged_files() {
   [ -d "$HOME/.config/shell/host" ]
 }
 
+@test "shared layer seeds dot alias and dot_add/mkcd/dj functions" {
+  write_plain_bashrc
+  sh "$SCRIPT" --yes >/dev/null
+  grep -q "alias dot='git --git-dir=\"\$HOME/.config.git\" --work-tree=\"\$HOME\"'" \
+    "$HOME/.config/shell/aliases.sh"
+  grep -q 'dot_add()' "$HOME/.config/shell/functions.sh"
+  grep -q "alias dot-add='dot_add'" "$HOME/.config/shell/functions.sh"
+  grep -q 'mkcd()' "$HOME/.config/shell/functions.sh"
+  grep -q 'dj()' "$HOME/.config/shell/functions.sh"
+  grep -q '\.config\.git' "$HOME/.config/shell/functions.sh"
+}
+
 @test "OS stub files created for linux, darwin, wsl" {
   write_plain_bashrc
   sh "$SCRIPT" --yes >/dev/null

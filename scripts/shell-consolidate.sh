@@ -187,8 +187,44 @@ export XDG_CACHE_HOME="${XDG_CACHE_HOME:-$HOME/.cache}"
 export XDG_STATE_HOME="${XDG_STATE_HOME:-$HOME/.local/state}"
 ENV_SH
 
-printf '# Shared aliases. POSIX only -- no bashisms/zshisms.\n' > "$shell_dir/aliases.sh"
-printf '# Shared functions. POSIX only -- no bashisms/zshisms.\n' > "$shell_dir/functions.sh"
+cat > "$shell_dir/aliases.sh" << 'ALIASES_SH'
+# Shared aliases. POSIX only -- no bashisms/zshisms.
+
+# `dot`: operate on the private bare dotfiles repo (work-tree $HOME).
+# `dot status` is intentionally blind to untracked files
+# (status.showUntrackedFiles=no) -- use dot_add/dot-add to discover and
+# stage new files.
+alias dot='git --git-dir="$HOME/.config.git" --work-tree="$HOME"'
+ALIASES_SH
+
+cat > "$shell_dir/functions.sh" << 'FUNCTIONS_SH'
+# Shared functions. POSIX only -- no bashisms/zshisms.
+
+# `dot_add <path>`: stage a file from $HOME into the private bare repo.
+# Necessary because `dot status` is intentionally blind to untracked
+# files, so you can't discover what's not yet tracked.
+dot_add() {
+  if [ $# -eq 0 ]; then
+    printf 'usage: dot_add <path> [<path> ...]\n' >&2
+    return 2
+  fi
+  git --git-dir="$HOME/.config.git" --work-tree="$HOME" add "$@" \
+    && git --git-dir="$HOME/.config.git" --work-tree="$HOME" status
+}
+# Convenience: an alias-friendly hyphenated name.
+alias dot-add='dot_add'
+
+# `mkcd <dir>`: mkdir -p and cd into it.
+mkcd() {
+  [ $# -eq 1 ] || { printf 'usage: mkcd <dir>\n' >&2; return 2; }
+  mkdir -p -- "$1" && cd -- "$1"
+}
+
+# `dj [args...]`: run `just` against the dotfiles Justfile from anywhere.
+dj() {
+  JUST_JUSTFILE="$HOME/.dotfiles/Justfile" just "$@"
+}
+FUNCTIONS_SH
 printf '# Sourced last; load decrypted secrets into the environment here.\n' \
   > "$shell_dir/secrets.sh"
 
