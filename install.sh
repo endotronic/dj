@@ -579,8 +579,15 @@ if [ -n "$PUBLIC_LOCAL_SOURCE" ] && [ "$PUBLIC_LOCAL_SOURCE" != "$HOME" ]; then
   log "source clone at $PUBLIC_LOCAL_SOURCE is now redundant"
   log "(the checkout at $DOTFILES_DIR is your source of truth from here on)"
   remove_source_clone() {
-    # cd somewhere safe so we don't delete the dir we're standing on.
-    ( cd "$HOME" && rm -rf "$PUBLIC_LOCAL_SOURCE" ) \
+    # If the invoking shell's cwd is inside the source clone (e.g. the
+    # user ran `cd ~/temp && sh ~/.dotfiles/install.sh ...`), step out
+    # *in this shell* first -- a subshell `cd` wouldn't help: removing
+    # the real cwd out from under the parent shell leaves it unable to
+    # getcwd() for any command it runs afterward (clone, sh, git, ...).
+    case "$(pwd -P 2>/dev/null || true)" in
+      "$PUBLIC_LOCAL_SOURCE"|"$PUBLIC_LOCAL_SOURCE"/*) cd "$HOME" ;;
+    esac
+    rm -rf "$PUBLIC_LOCAL_SOURCE" \
       && log "removed $PUBLIC_LOCAL_SOURCE" \
       || log "warn: failed to remove $PUBLIC_LOCAL_SOURCE"
   }

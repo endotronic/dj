@@ -453,6 +453,26 @@ _make_fake_repo_dir() {
   [[ "$output" =~ "removed $fake" ]]
 }
 
+@test "--remove-source yes from inside the source clone doesn't break the shell's cwd" {
+  # Regression: removing the source clone while the invoking shell's
+  # cwd was inside it left the shell unable to getcwd() -- every
+  # subsequent command (sh, git, ...) failed with
+  # "getcwd() failed: No such file or directory" /
+  # "fatal: Unable to read current working directory".
+  # Fix: cd the *real* shell (not a subshell) out to $HOME first.
+  fake=$SANDBOX/src-public-repo
+  _make_fake_repo_dir "$fake" "marker"
+
+  run sh -c "cd '$fake' && sh '$INSTALL' --repo '$fake' --on-conflict backup --remove-source yes"
+  [ "$status" -eq 0 ]
+  [ ! -d "$fake" ]
+  [[ "$output" =~ "removed $fake" ]]
+  if [[ "$output" =~ "getcwd" ]] || [[ "$output" =~ "current working directory" ]]; then
+    printf 'cwd corruption surfaced after source-clone removal:\n%s\n' "$output" >&2
+    false
+  fi
+}
+
 @test "non-interactive default keeps the source clone and prints a hint" {
   fake=$SANDBOX/src-public-repo
   _make_fake_repo_dir "$fake" "marker"
