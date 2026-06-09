@@ -9,12 +9,12 @@
 # One logical name per line. The logical name is the binary that
 # `command -v` will look for. Package-manager-specific renames live in
 # packages/renames/<pkg-mgr>.txt.
+#
+# git, gpg, sops, age, and just are NOT listed here -- they're required
+# by the dotfiles workflow itself (cloning, signing, secrets, `dj`), so
+# install.sh always installs them (step 5) rather than offering them as
+# an optional checkbox choice.
 
-git
-gpg
-sops
-age
-just
 nvim
 tmux
 starship

@@ -209,18 +209,19 @@ curl -fsSL https://raw.githubusercontent.com/<you>/dotfiles/main/install.sh \
 2. Bootstrap git if missing.
 3. Persist `--system-type` (any identifier — just a lookup key for `~/.config/dj/packages/types/<type>.txt`, see §2.7).
 4. Clone the public tooling repo to `~/.dotfiles/` (or use in place).
-5. `git clone --bare … $HOME/.config.git` (private bare repo).
-6. Conflict-aware checkout — classify existing files as **identical** (silently remove, git re-creates), **symlink** (always back up), or **conflict**. Conflicts dispatch on `--on-conflict {ask|backup|keep|abort}` (default `ask`; non-interactive shells must pass explicit mode).
-7. Seed `~/.config/dj/packages/common.txt` from `~/.dotfiles/packages/template/common.txt` if it doesn't already exist (i.e. nothing was checked out for it — a genuinely fresh machine). Interactive: yes/no checkbox per tool. Non-interactive: seed the full template. Returning machines skip this — checkout in step 6 already materialized the tracked list.
-8. Install pre-commit hook into `.config.git/hooks/`.
-9. Resolve the active package list (common + type + host, §2.7) and install via `install-packages.sh`.
-10. Install age key — from `--age-key <path>` if provided, or interactive paste, or skip.
-11. Initialize SOPS — run `sops-init.sh` (generate age key + write `~/.private/.sops.yaml`) if sops and age-keygen are present and not yet done.
-12. Apply secrets (`dj apply-secrets`) if age key is present — decrypts from `~/.private/secrets/` to target paths.
-13. Optional cleanup of local source clone.
-14. Offer shell consolidation (`shell-consolidate.sh`) — migrate or create `~/.config/{shell,bash,zsh}/`.
-15. Git identity, SSH key, GPG key (`git-setup.sh`) — adopt existing config, prompt if missing, generate keys if absent.
-16. Print next steps.
+5. Install required dependencies — `git gpg sops age just` are core to the workflow itself (cloning, signing, secrets, `dj`), not a personal preference, so they're always installed here (via the same renames + fallback-script mechanism as personal packages, through a throwaway list) rather than offered in the seeding checkbox in step 8.
+6. `git clone --bare … $HOME/.config.git` (private bare repo).
+7. Conflict-aware checkout — classify existing files as **identical** (silently remove, git re-creates), **symlink** (always back up), or **conflict**. Conflicts dispatch on `--on-conflict {ask|backup|keep|abort}` (default `ask`; non-interactive shells must pass explicit mode).
+8. Seed `~/.config/dj/packages/common.txt` from `~/.dotfiles/packages/template/common.txt` if it doesn't already exist (i.e. nothing was checked out for it — a genuinely fresh machine). Interactive: yes/no checkbox per tool (git/gpg/sops/age/just are excluded — they're always installed in step 5, not optional). Non-interactive: seed the full template. Returning machines skip this — checkout in step 7 already materialized the tracked list.
+9. Install pre-commit hook into `.config.git/hooks/`.
+10. Resolve the active package list (common + type + host, §2.7) and install via `install-packages.sh`.
+11. Install age key — from `--age-key <path>` if provided, or interactive paste, or skip.
+12. Initialize SOPS — run `sops-init.sh` (generate age key + write `~/.private/.sops.yaml`) if sops and age-keygen are present and not yet done.
+13. Apply secrets (`dj apply-secrets`) if age key is present — decrypts from `~/.private/secrets/` to target paths.
+14. Optional cleanup of local source clone.
+15. Offer shell consolidation (`shell-consolidate.sh`) — migrate or create `~/.config/{shell,bash,zsh}/`.
+16. Git identity, SSH key, GPG key (`git-setup.sh`) — adopt existing config, prompt if missing, generate keys if absent.
+17. Print next steps.
 
 Multi-user: steps 1–3 may `sudo` for system packages (idempotent); steps 4+ touch only invoking user's `$HOME`.
 

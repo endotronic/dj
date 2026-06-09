@@ -271,7 +271,28 @@ if [ "$PUBLIC_CLONED" -eq 1 ] && [ -n "$PUBLIC_LOCAL_SOURCE" ]; then
   unset _origin
 fi
 
-# ---------- 5. Private bare repo (~/.config.git) ----------
+# ---------- 5. Required dependencies (git, gpg, sops, age, just) ----------
+#
+# These five are core to the dotfiles workflow itself -- not a personal
+# preference -- so they are never offered in the package-list seeding
+# checkbox (step 8) and always get installed here, regardless of what
+# ends up in the user's personal package lists. git is already present
+# (step 2, needed to clone); re-listing it is harmless and documents the
+# full required set in one place. Installed through the same renames +
+# fallback-script mechanism as personal packages, via a throwaway list
+# so the user's own selection is untouched.
+
+if [ -x "$HOME/.dotfiles/scripts/install-packages.sh" ]; then
+  _req_dir=$(mktemp -d)
+  printf '%s\n' git gpg sops age just > "$_req_dir/common.txt"
+  log "installing required dependencies: git gpg sops age just"
+  DOTFILES_DJ_PACKAGES_DIR="$_req_dir" sh "$HOME/.dotfiles/scripts/install-packages.sh" \
+    || log "warn: required-dependency install reported problems; see above"
+  rm -rf "$_req_dir"
+  unset _req_dir
+fi
+
+# ---------- 6. Private bare repo (~/.config.git) ----------
 #
 # Tracks personal config (~/.bashrc, ~/.config/**) and ~/.private/
 # secrets, work-tree $HOME. It's private, so there's no public clone
@@ -344,7 +365,7 @@ fi
 
 dot config status.showUntrackedFiles no
 
-# ---------- 6. Conflict-aware checkout (only if the private repo has commits) ----------
+# ---------- 7. Conflict-aware checkout (only if the private repo has commits) ----------
 #
 # Walk every tracked path. For each path that currently exists in
 # $HOME, classify it:
@@ -476,7 +497,7 @@ else
   log "private repo has no commits yet; nothing to check out"
 fi
 
-# ---------- 7. Seed personal package list (if absent) ----------
+# ---------- 8. Seed personal package list (if absent) ----------
 #
 # ~/.config/dj/packages/{common.txt,types/<type>.txt,hosts/<host>.txt}
 # is the personal, tracked package selection -- it lives in the
@@ -517,7 +538,7 @@ if [ ! -f "$DJ_PACKAGES_DIR/common.txt" ] && [ -f "$DJ_PACKAGES_TEMPLATE" ]; the
   log "wrote $DJ_PACKAGES_DIR/common.txt -- track it: dot add $DJ_PACKAGES_DIR/common.txt"
 fi
 
-# ---------- 8. Install pre-commit hook (if present) ----------
+# ---------- 9. Install pre-commit hook (if present) ----------
 
 HOOK_SRC=$HOME/.dotfiles/scripts/pre-commit-secrets.sh
 HOOK_DST=$DOT_DIR/hooks/pre-commit
@@ -528,7 +549,7 @@ if [ -f "$HOOK_SRC" ]; then
   log "linked pre-commit hook -> $HOOK_SRC"
 fi
 
-# ---------- 9. Full package install ----------
+# ---------- 10. Full package install ----------
 
 if [ -x "$HOME/.dotfiles/scripts/install-packages.sh" ]; then
   log "running install-packages.sh"
@@ -556,7 +577,7 @@ if [ -x "$HOME/.dotfiles/scripts/install-gemini.sh" ]; then
     || log "warn: gemini install failed; skipping (non-fatal)"
 fi
 
-# ---------- 10. Install age key (if provided via flag or interactive paste) ---
+# ---------- 11. Install age key (if provided via flag or interactive paste) ---
 
 AGE_KEY=${XDG_CONFIG_HOME:-$HOME/.config}/sops/age/keys.txt
 
@@ -592,7 +613,7 @@ if [ ! -r "$AGE_KEY" ]; then
   fi
 fi
 
-# ---------- 11. Initialize SOPS/age (generate key + .sops.yaml if absent) -----
+# ---------- 12. Initialize SOPS/age (generate key + .sops.yaml if absent) -----
 
 if [ -x "$HOME/.dotfiles/scripts/sops-init.sh" ]; then
   if command -v sops >/dev/null 2>&1 && command -v age-keygen >/dev/null 2>&1; then
@@ -604,7 +625,7 @@ if [ -x "$HOME/.dotfiles/scripts/sops-init.sh" ]; then
   fi
 fi
 
-# ---------- 12. Apply secrets (only if age key is present) ----------
+# ---------- 13. Apply secrets (only if age key is present) ----------
 
 if [ -r "$AGE_KEY" ] && [ -x "$HOME/.dotfiles/scripts/rebuild-secrets.sh" ]; then
   log "rematerializing secrets"
@@ -614,7 +635,7 @@ elif [ ! -r "$AGE_KEY" ]; then
   log "transport the age key, then run: dj apply-secrets"
 fi
 
-# ---------- 13. Optional cleanup of local public-repo source clone ----------
+# ---------- 14. Optional cleanup of local public-repo source clone ----------
 
 # If --repo was a local directory other than ~/.dotfiles itself, that
 # source clone is now redundant -- its content lives in $DOTFILES_DIR.
@@ -652,19 +673,19 @@ if [ -n "$PUBLIC_LOCAL_SOURCE" ] && [ "$PUBLIC_LOCAL_SOURCE" != "$HOME" ]; then
   esac
 fi
 
-# ---------- 14. Offer shell consolidation ----------
+# ---------- 15. Offer shell consolidation ----------
 
 if [ -x "$HOME/.dotfiles/scripts/shell-consolidate.sh" ] && [ -d "$DOT_DIR" ]; then
   sh "$HOME/.dotfiles/scripts/shell-consolidate.sh"
 fi
 
-# ---------- 15. Git identity, SSH key, GPG key ----------
+# ---------- 16. Git identity, SSH key, GPG key ----------
 
 if [ -x "$HOME/.dotfiles/scripts/git-setup.sh" ]; then
   sh "$HOME/.dotfiles/scripts/git-setup.sh"
 fi
 
-# ---------- 16. Done ----------
+# ---------- 17. Done ----------
 
 cat <<EOF
 
