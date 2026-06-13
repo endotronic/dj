@@ -138,11 +138,15 @@ dot() {
 install_shell_layer() {
   cp "$_DOTFILES_SHELL_ROOT/.bashrc"       "$HOME/.bashrc"
   cp "$_DOTFILES_SHELL_ROOT/.bash_profile" "$HOME/.bash_profile"
-  cp "$_DOTFILES_SHELL_ROOT/.zshrc"        "$HOME/.zshrc"
-  cp "$_DOTFILES_SHELL_ROOT/.zprofile"     "$HOME/.zprofile"
   mkdir -p "$HOME/.config" "$HOME/.dotfiles/scripts"
   cp -r "$_DOTFILES_SHELL_ROOT/.config/shell" "$HOME/.config/"
   cp -r "$_DOTFILES_SHELL_ROOT/.config/bash"  "$HOME/.config/"
-  cp -r "$_DOTFILES_SHELL_ROOT/.config/zsh"   "$HOME/.config/"
+  # zsh consolidation is only run on hosts with zsh installed (see
+  # shell-consolidate.sh), so .zshrc/.zprofile/.config/zsh may not
+  # exist on the live tree. The zsh tests in shell-init.bats already
+  # skip when zsh isn't installed.
+  [ -f "$_DOTFILES_SHELL_ROOT/.zshrc" ]      && cp "$_DOTFILES_SHELL_ROOT/.zshrc"    "$HOME/.zshrc"
+  [ -f "$_DOTFILES_SHELL_ROOT/.zprofile" ]   && cp "$_DOTFILES_SHELL_ROOT/.zprofile" "$HOME/.zprofile"
+  [ -d "$_DOTFILES_SHELL_ROOT/.config/zsh" ] && cp -r "$_DOTFILES_SHELL_ROOT/.config/zsh" "$HOME/.config/"
   cp "$DOTFILES_REPO_ROOT/scripts/os-detect.sh" "$HOME/.dotfiles/scripts/"
 }

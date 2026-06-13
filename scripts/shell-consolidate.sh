@@ -195,6 +195,9 @@ export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
 export XDG_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
 export XDG_CACHE_HOME="${XDG_CACHE_HOME:-$HOME/.cache}"
 export XDG_STATE_HOME="${XDG_STATE_HOME:-$HOME/.local/state}"
+
+export EDITOR="${EDITOR:-nvim}"
+export VISUAL="${VISUAL:-nvim}"
 ENV_SH
 
 cat > "$shell_dir/aliases.sh" << 'ALIASES_SH'
@@ -235,8 +238,21 @@ dj() {
   JUST_JUSTFILE="$HOME/.dotfiles/Justfile" just "$@"
 }
 FUNCTIONS_SH
-printf '# Sourced last; load decrypted secrets into the environment here.\n' \
-  > "$shell_dir/secrets.sh"
+cat > "$shell_dir/secrets.sh" << 'SECRETS_SH'
+# Sourced last; load decrypted secrets into the environment here.
+# rebuild-secrets.sh materializes manifest entries under ~/.secrets/ --
+# source any *.env files there so their vars are exported.
+
+if [ -d "$HOME/.secrets" ]; then
+  for _dotfiles_secret_env in "$HOME"/.secrets/*.env; do
+    [ -r "$_dotfiles_secret_env" ] || continue
+    set -a
+    . "$_dotfiles_secret_env"
+    set +a
+  done
+  unset _dotfiles_secret_env
+fi
+SECRETS_SH
 
 for _os in linux darwin wsl; do
   printf '# OS-specific init for %s. POSIX only.\n' "$_os" \
@@ -256,6 +272,19 @@ if [ -n "$needs_bash_migrate" ] || [ -n "$needs_bash_create" ]; then
     # Preserve existing .bashrc content in the bash-specific init.
     cp "$HOME/.bashrc" "$bash_dir/init.sh"
     log "preserved .bashrc → $bash_dir/init.sh"
+
+    # Append standard history settings, since a migrated .bashrc
+    # typically predates this layout and won't have them.
+    cat >> "$bash_dir/init.sh" << 'BASH_HISTORY'
+
+HISTSIZE=100000
+HISTFILESIZE=200000
+HISTCONTROL=ignoreboth:erasedups
+HISTTIMEFORMAT='%F %T '
+shopt -s histappend checkwinsize
+shopt -s globstar   2>/dev/null || true
+shopt -s nocaseglob 2>/dev/null || true
+BASH_HISTORY
   else
 cat > "$bash_dir/init.sh" << 'BASH_INIT'
 # Bash-only init. Sourced from ~/.bashrc after the shared layer.

@@ -184,6 +184,10 @@ staged_files() {
 
 @test "gpg missing: GPG step skipped gracefully" {
   rm -f "$STUB_BIN/gpg"
+  if command -v gpg >/dev/null 2>&1; then
+    skip "real gpg found in PATH; cannot simulate absence"
+  fi
+
   run sh "$SCRIPT" --yes
   [ "$status" -eq 0 ]
   [[ "$output" =~ "gpg not found" ]]
