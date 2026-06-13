@@ -73,7 +73,7 @@ elif ! command -v ssh-keygen >/dev/null 2>&1; then
 else
   mkdir -p "$HOME/.ssh"
   chmod 700 "$HOME/.ssh"
-  _comment="${git_email:-$(id -un)@$(hostname -s 2>/dev/null || hostname)}"
+  _comment="${git_email:-$(id -un)@$(hostname -s 2>/dev/null || uname -n 2>/dev/null || echo unknown)}"
   ssh-keygen -t ed25519 -C "$_comment" -f "$ssh_key" -N ""
   log "generated SSH key at $ssh_key"
   log "public key: $(cat "${ssh_key}.pub")"

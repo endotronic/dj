@@ -161,7 +161,7 @@ for _dotfiles_f in \
   "$_dotfiles_shell_dir/aliases.sh" \
   "$_dotfiles_shell_dir/functions.sh" \
   "$_dotfiles_shell_dir/os/${DOTFILES_OS:-unknown}.sh" \
-  "$_dotfiles_shell_dir/host/$(hostname -s 2>/dev/null || hostname 2>/dev/null || echo unknown).sh" \
+  "$_dotfiles_shell_dir/host/$(hostname -s 2>/dev/null || uname -n 2>/dev/null || echo unknown).sh" \
   "$_dotfiles_shell_dir/secrets.sh"
 do
   [ -r "$_dotfiles_f" ] && . "$_dotfiles_f"

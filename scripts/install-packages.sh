@@ -95,7 +95,7 @@ read_pkglist() {
   awk 'NF && $1 !~ /^#/ { print $1 }' "$1" >> "$active_list"
 }
 
-_hostname=$(hostname -s 2>/dev/null || hostname 2>/dev/null || printf '')
+_hostname=$(hostname -s 2>/dev/null || uname -n 2>/dev/null || printf '')
 
 read_pkglist "$lists_dir/common.txt"
 [ -n "${DOTFILES_SYSTEM_TYPE:-}" ] && read_pkglist "$lists_dir/types/$DOTFILES_SYSTEM_TYPE.txt"

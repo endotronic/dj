@@ -161,7 +161,7 @@ teardown() {
   fake_pkgs="$SANDBOX/fake-pkgs"
   mkdir -p "$fake_pkgs/renames" "$fake_pkgs/hosts"
   : > "$fake_pkgs/common.txt"
-  _host=$(hostname -s 2>/dev/null || hostname)
+  _host=$(hostname -s 2>/dev/null || uname -n 2>/dev/null || echo unknown)
   printf 'dotfiles-test-pkg-host\n' > "$fake_pkgs/hosts/$_host.txt"
 
   stub_cmd apt

@@ -136,7 +136,7 @@ EOF
 }
 
 @test "per-host file is sourced when one matches hostname" {
-  hn=$(hostname -s 2>/dev/null || hostname)
+  hn=$(hostname -s 2>/dev/null || uname -n 2>/dev/null || echo unknown)
   mkdir -p "$HOME/.config/shell/host"
   printf 'export DOTFILES_HOST_FILE_LOADED=yes\n' \
     > "$HOME/.config/shell/host/$hn.sh"
