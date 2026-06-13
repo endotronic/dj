@@ -166,3 +166,80 @@ EOF
   [ "$status" -eq 0 ]
   grep -q content-foo "$HOME/out/foo"
 }
+
+# --- GPG key/ownertrust import ---------------------------------------------
+
+# GPG stub: logs every invocation; --import and --import-ownertrust succeed.
+stub_gpg_import_ok() {
+  cat > "$STUB_BIN/gpg" << 'EOF'
+#!/bin/sh
+{ printf 'gpg'; for a in "$@"; do printf ' %s' "$a"; done; printf '\n'; } \
+  >> "$SANDBOX/stub.log"
+exit 0
+EOF
+  chmod +x "$STUB_BIN/gpg"
+}
+
+@test "imports GPG key and ownertrust when manifest restores them" {
+  sops_sandbox
+  stub_gpg_import_ok
+  sops_encrypt_to secrets/.private/gpg/private-key.asc.enc "fake-armored-key"
+  sops_encrypt_to secrets/.private/gpg/ownertrust.txt.enc "fake-ownertrust"
+  manifest="$SANDBOX/manifest-plain"
+  cat > "$manifest" <<EOF
+secrets/.private/gpg/private-key.asc.enc  ~/.private/gpg/private-key.asc  0600
+secrets/.private/gpg/ownertrust.txt.enc   ~/.private/gpg/ownertrust.txt   0600
+EOF
+  ( cd "$FAKE_REPO" && sops -e --input-type binary --output-type binary \
+      --filename-override secrets/manifest.txt.enc "$manifest" \
+      > secrets/manifest.txt.enc )
+
+  run sh "$FAKE_REPO/scripts/rebuild-secrets.sh"
+  [ "$status" -eq 0 ]
+  [ -f "$HOME/.private/gpg/private-key.asc" ]
+  [ -f "$HOME/.private/gpg/ownertrust.txt" ]
+  [[ "$output" =~ "imported GPG key" ]]
+  [[ "$output" =~ "imported GPG ownertrust" ]]
+  grep -q -- '--import .*private-key.asc' "$SANDBOX/stub.log"
+  grep -q -- '--import-ownertrust' "$SANDBOX/stub.log"
+}
+
+@test "no GPG files materialized: import step is a no-op" {
+  sops_sandbox
+  stub_gpg_import_ok
+  sops_encrypt_to secrets/foo.enc "content-foo"
+  manifest="$SANDBOX/manifest-plain"
+  cat > "$manifest" <<EOF
+secrets/foo.enc  ~/out/foo  0600
+EOF
+  ( cd "$FAKE_REPO" && sops -e --input-type binary --output-type binary \
+      --filename-override secrets/manifest.txt.enc "$manifest" \
+      > secrets/manifest.txt.enc )
+
+  run sh "$FAKE_REPO/scripts/rebuild-secrets.sh"
+  [ "$status" -eq 0 ]
+  ! grep -q -- '--import' "$SANDBOX/stub.log" 2>/dev/null || {
+    echo "gpg --import unexpectedly called"; return 1
+  }
+}
+
+@test "GPG key materialized but gpg missing: warns and continues" {
+  sops_sandbox
+  sops_encrypt_to secrets/.private/gpg/private-key.asc.enc "fake-armored-key"
+  manifest="$SANDBOX/manifest-plain"
+  cat > "$manifest" <<EOF
+secrets/.private/gpg/private-key.asc.enc  ~/.private/gpg/private-key.asc  0600
+EOF
+  ( cd "$FAKE_REPO" && sops -e --input-type binary --output-type binary \
+      --filename-override secrets/manifest.txt.enc "$manifest" \
+      > secrets/manifest.txt.enc )
+
+  rm -f "$STUB_BIN/gpg"
+  if command -v gpg >/dev/null 2>&1; then
+    skip "real gpg found in PATH; cannot simulate absence"
+  fi
+
+  run sh "$FAKE_REPO/scripts/rebuild-secrets.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "gpg not found" ]]
+}

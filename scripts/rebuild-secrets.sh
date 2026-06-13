@@ -82,3 +82,35 @@ while IFS= read -r line || [ -n "$line" ]; do
 done < "$tmp_manifest"
 
 log "applied=$n_applied skipped=$n_skipped"
+
+# ---------- Import GPG private key / ownertrust, if registered ----------
+#
+# If a GPG private key was registered via secret-add (see
+# git-setup.sh), the manifest entries above just materialized it at
+# ~/.private/gpg/{private-key.asc,ownertrust.txt}. Import it into the
+# local keyring so git-setup.sh finds an existing secret key and skips
+# generating a new one.
+
+gpg_key="$HOME/.private/gpg/private-key.asc"
+gpg_trust="$HOME/.private/gpg/ownertrust.txt"
+
+if [ -r "$gpg_key" ] || [ -r "$gpg_trust" ]; then
+  if ! command -v gpg >/dev/null 2>&1; then
+    log "warn: gpg not found; cannot import GPG key/ownertrust"
+  else
+    if [ -r "$gpg_key" ]; then
+      if gpg --import "$gpg_key" >/dev/null 2>&1; then
+        log "imported GPG key from $gpg_key"
+      else
+        log "warn: failed to import GPG key from $gpg_key"
+      fi
+    fi
+    if [ -r "$gpg_trust" ]; then
+      if gpg --import-ownertrust "$gpg_trust" >/dev/null 2>&1; then
+        log "imported GPG ownertrust from $gpg_trust"
+      else
+        log "warn: failed to import GPG ownertrust from $gpg_trust"
+      fi
+    fi
+  fi
+fi

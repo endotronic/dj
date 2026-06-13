@@ -241,6 +241,70 @@ staged_files() {
   }
 }
 
+@test "GPG key restored from private repo: not regenerated, signing configured" {
+  stub_gpg_existing_key
+  git config --global user.name  "Jane Dev"
+  git config --global user.email "jane@example.com"
+  mkdir -p "$HOME/.private/gpg"
+  printf 'fake-armored-key\n' > "$HOME/.private/gpg/private-key.asc"
+
+  run sh "$SCRIPT" --yes
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "restored from private repo" ]]
+
+  ! grep -q -- '--quick-gen-key' "$SANDBOX/stub.log" 2>/dev/null || {
+    echo "quick-gen-key was unexpectedly called"; return 1
+  }
+
+  [ "$(gitcfg commit.gpgsign)" = "true" ]
+  [ -n "$(gitcfg user.signingkey)" ]
+}
+
+# --- Registering new keys as secrets -----------------------------------------
+
+@test "new SSH key: registration skipped (and hinted) when secrets infra absent" {
+  git config --global user.name  "Jane Dev"
+  git config --global user.email "jane@example.com"
+
+  run sh "$SCRIPT" --yes
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "skipped registering SSH key" ]]
+  # No secret-add side effects: nothing under ~/.private.
+  [ ! -d "$HOME/.private" ]
+}
+
+@test "new GPG key: registration skipped (and hinted) when secrets infra absent" {
+  git config --global user.name  "Jane Dev"
+  git config --global user.email "jane@example.com"
+
+  run sh "$SCRIPT" --yes
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "skipped registering GPG key" ]]
+  [ ! -d "$HOME/.private" ]
+}
+
+@test "no registration prompt when SSH key already present" {
+  mkdir -p "$HOME/.ssh"
+  printf 'existing-key\n' > "$HOME/.ssh/id_ed25519"
+  printf 'ssh-ed25519 EXISTING test\n' > "$HOME/.ssh/id_ed25519.pub"
+  git config --global user.name  "Jane Dev"
+  git config --global user.email "jane@example.com"
+
+  run sh "$SCRIPT" --yes
+  [ "$status" -eq 0 ]
+  ! [[ "$output" =~ "registering SSH key" ]]
+}
+
+@test "no registration prompt when GPG key already existed" {
+  stub_gpg_existing_key
+  git config --global user.name  "Jane Dev"
+  git config --global user.email "jane@example.com"
+
+  run sh "$SCRIPT" --yes
+  [ "$status" -eq 0 ]
+  ! [[ "$output" =~ "registering GPG key" ]]
+}
+
 # --- Staging -----------------------------------------------------------------
 
 @test ".gitconfig staged in bare repo after identity set" {
