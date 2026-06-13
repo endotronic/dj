@@ -31,6 +31,16 @@ done
 log() { printf '[git-setup] %s\n' "$*"; }
 dot() { git --git-dir="$DOT_DIR" --work-tree="$HOME" "$@"; }
 
+# True if we can prompt the user, even when stdin is consumed by a
+# pipe (curl | sh): requires stdout to be a terminal and /dev/tty to
+# be openable for reading. Reads in the calling block should
+# redirect from `/dev/tty` directly (a regular builtin like `read`,
+# so a redirection failure there is a normal nonzero exit -- unlike
+# `exec`, which would abort the whole script under `set -e`).
+can_prompt() {
+  [ -t 1 ] && true 2>/dev/null </dev/tty
+}
+
 [ "$SETUP" = no ] && exit 0
 
 # ---------- Git identity ----------
@@ -41,15 +51,15 @@ git_email=$(git config --global user.email 2>/dev/null || true)
 if [ -n "$git_name" ] && [ -n "$git_email" ]; then
   log "git identity already configured: $git_name <$git_email>"
 else
-  if [ -t 0 ] && [ -t 1 ] && [ "$SETUP" = ask ]; then
+  if [ "$SETUP" = ask ] && can_prompt; then
     printf '\n[git-setup] Git identity not fully configured.\n'
     if [ -z "$git_name" ]; then
       printf '[git-setup] Name (for git commits): '
-      read -r git_name || git_name=
+      read -r git_name </dev/tty || git_name=
     fi
     if [ -z "$git_email" ]; then
       printf '[git-setup] Email (for git commits): '
-      read -r git_email || git_email=
+      read -r git_email </dev/tty || git_email=
     fi
   fi
   [ -n "$git_name"  ] && git config --global user.name  "$git_name"

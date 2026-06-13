@@ -176,6 +176,16 @@ fi
 
 log() { printf '[install] %s\n' "$*"; }
 
+# True if we can prompt the user, even when stdin is consumed by a
+# pipe (curl | sh): requires stdout to be a terminal and /dev/tty to
+# be openable for reading. Reads in the calling block should
+# redirect from `/dev/tty` directly (a regular builtin like `read`,
+# so a redirection failure there is a normal nonzero exit -- unlike
+# `exec`, which would abort the whole script under `set -e`).
+can_prompt() {
+  [ -t 1 ] && true 2>/dev/null </dev/tty
+}
+
 # A directory "looks like our repo" when it has the public tooling
 # repo's recognizable shape at its toplevel (install.sh alongside
 # scripts/os-detect.sh).
@@ -309,13 +319,13 @@ elif [ -n "$PRIVATE_REPO_URL" ]; then
   log "cloning private repo from $PRIVATE_REPO_URL into $DOT_DIR"
   case "$PRIVATE_REPO_URL" in
     http://*|https://*)
-      if [ -t 0 ] && [ -t 1 ]; then
+      if can_prompt; then
         printf '[install] private repo username: '
-        read -r DOTFILES_GIT_USER
+        read -r DOTFILES_GIT_USER </dev/tty
         printf '[install] private repo password: '
-        stty -echo 2>/dev/null || true
-        read -r DOTFILES_GIT_PASS || true
-        stty echo 2>/dev/null || true
+        stty -echo </dev/tty 2>/dev/null || true
+        read -r DOTFILES_GIT_PASS </dev/tty || true
+        stty echo </dev/tty 2>/dev/null || true
         printf '\n'
 
         _askpass=$(mktemp)
@@ -417,9 +427,9 @@ if [ "$n_conflicts" -eq 0 ]; then
 else
   mode=$CONFLICT_MODE
   if [ "$mode" = ask ]; then
-    if [ -t 0 ] && [ -t 1 ]; then
+    if can_prompt; then
       printf '\n[install] choose: (b)ackup-and-overwrite, (k)eep-yours, (a)bort [b]: '
-      read -r ans || ans=
+      read -r ans </dev/tty || ans=
       case "${ans:-b}" in
         b|B|backup) mode=backup ;;
         k|K|keep)   mode=keep ;;
@@ -512,7 +522,7 @@ DJ_PACKAGES_TEMPLATE=$HOME/.dotfiles/packages/template/common.txt
 
 if [ ! -f "$DJ_PACKAGES_DIR/common.txt" ] && [ -f "$DJ_PACKAGES_TEMPLATE" ]; then
   mkdir -p "$DJ_PACKAGES_DIR"
-  if [ -t 0 ] && [ -t 1 ]; then
+  if can_prompt; then
     printf '\n[install] Seeding your personal package list from the template.\n'
     printf '[install] Answer y/n for each tool (Enter = yes):\n'
     : > "$DJ_PACKAGES_DIR/common.txt"
@@ -591,7 +601,7 @@ if [ ! -r "$AGE_KEY" ]; then
       chmod 0600 "$AGE_KEY"
       log "installed age key from $AGE_KEY_SRC"
     fi
-  elif [ -t 0 ] && [ -t 1 ]; then
+  elif can_prompt; then
     printf '\n[install] Age key not found at %s\n' "$AGE_KEY"
     printf '[install] Paste your age key (press Enter on a blank line when done,\n'
     printf '[install] or just press Enter to skip and apply secrets later):\n'
@@ -600,7 +610,7 @@ if [ ! -r "$AGE_KEY" ]; then
       [ -z "$_line" ] && break
       key_content="${key_content}${_line}
 "
-    done || true
+    done </dev/tty || true
     if [ -n "$key_content" ]; then
       mkdir -p "$(dirname "$AGE_KEY")"
       printf '%s' "$key_content" > "$AGE_KEY"
@@ -660,9 +670,9 @@ if [ -n "$PUBLIC_LOCAL_SOURCE" ] && [ "$PUBLIC_LOCAL_SOURCE" != "$HOME" ]; then
     yes) remove_source_clone ;;
     no)  log "leaving source clone in place (--remove-source no)" ;;
     ask)
-      if [ -t 0 ] && [ -t 1 ]; then
+      if can_prompt; then
         printf '\n[install] remove source clone %s? [y/N]: ' "$PUBLIC_LOCAL_SOURCE"
-        read -r ans || ans=
+        read -r ans </dev/tty || ans=
         case "$ans" in
           y|Y|yes) remove_source_clone ;;
           *)       log "leaving source clone in place" ;;

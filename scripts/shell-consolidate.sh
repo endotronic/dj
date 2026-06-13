@@ -32,6 +32,16 @@ done
 log() { printf '[shell-consolidate] %s\n' "$*"; }
 dot() { git --git-dir="$DOT_DIR" --work-tree="$HOME" "$@"; }
 
+# True if we can prompt the user, even when stdin is consumed by a
+# pipe (curl | sh): requires stdout to be a terminal and /dev/tty to
+# be openable for reading. Reads in the calling block should
+# redirect from `/dev/tty` directly (a regular builtin like `read`,
+# so a redirection failure there is a normal nonzero exit -- unlike
+# `exec`, which would abort the whole script under `set -e`).
+can_prompt() {
+  [ -t 1 ] && true 2>/dev/null </dev/tty
+}
+
 is_thin_loader() {
   grep -q '\.config/shell/init\.sh' "$1" 2>/dev/null
 }
@@ -71,7 +81,7 @@ fi
 [ "$CONSOLIDATE" = no ] && exit 0
 
 if [ "$CONSOLIDATE" = ask ]; then
-  if [ -t 0 ] && [ -t 1 ]; then
+  if can_prompt; then
     printf '\n[shell-consolidate] Shell config to set up:\n'
     [ -n "$needs_bash_migrate" ] && \
       printf '  bash: .bashrc exists — migrate to .config/bash/init.sh\n'
@@ -82,7 +92,7 @@ if [ "$CONSOLIDATE" = ask ]; then
     [ -n "$needs_zsh_create"   ] && \
       printf '  zsh:  no .zshrc — create fresh structured config\n'
     printf '[shell-consolidate] Set up ~/.config/{shell,bash,zsh}/? [Y/n]: '
-    read -r _ans || _ans=y
+    read -r _ans </dev/tty || _ans=y
     case "${_ans:-y}" in
       y|Y|yes|YES) ;;
       *) log "skipped"; exit 0 ;;
