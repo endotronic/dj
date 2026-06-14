@@ -176,12 +176,26 @@ staged_files() {
   grep -q 'plain bashrc' "$HOME/.config/bash/init.sh"
 }
 
-@test "migrate: does NOT create completion/prompt/functions sub-files" {
+@test "migrate: creates completion/prompt/functions sub-files" {
   write_plain_bashrc
   sh "$SCRIPT" --yes >/dev/null
-  [ ! -f "$HOME/.config/bash/completion.sh" ]
-  [ ! -f "$HOME/.config/bash/prompt.sh" ]
-  [ ! -f "$HOME/.config/bash/functions.sh" ]
+  [ -f "$HOME/.config/bash/completion.sh" ]
+  [ -f "$HOME/.config/bash/prompt.sh" ]
+  [ -f "$HOME/.config/bash/functions.sh" ]
+}
+
+@test "migrate: bash/init.sh sources sub-files" {
+  write_plain_bashrc
+  sh "$SCRIPT" --yes >/dev/null
+  grep -q 'completion\.sh' "$HOME/.config/bash/init.sh"
+  grep -q 'prompt\.sh'     "$HOME/.config/bash/init.sh"
+}
+
+@test "migrate: prompt.sh has starship guard" {
+  write_plain_bashrc
+  sh "$SCRIPT" --yes >/dev/null
+  grep -q 'command -v starship' "$HOME/.config/bash/prompt.sh"
+  grep -q 'PS1=' "$HOME/.config/bash/prompt.sh"
 }
 
 @test "migrate: .bash_profile created" {
@@ -204,6 +218,8 @@ staged_files() {
   staged=$(staged_files)
   printf '%s\n' "$staged" | grep -q '\.bashrc'
   printf '%s\n' "$staged" | grep -q '\.config/bash/init\.sh'
+  printf '%s\n' "$staged" | grep -q '\.config/bash/completion\.sh'
+  printf '%s\n' "$staged" | grep -q '\.config/bash/prompt\.sh'
 }
 
 # --- create mode (no .bashrc) ------------------------------------------------
@@ -300,12 +316,25 @@ staged_files() {
   grep -q 'plain zshrc' "$HOME/.config/zsh/init.sh"
 }
 
-@test "migrate zsh: does NOT create completion/prompt/functions sub-files" {
+@test "migrate zsh: creates completion/prompt/functions sub-files" {
   write_plain_zshrc
   sh "$SCRIPT" --yes >/dev/null
-  [ ! -f "$HOME/.config/zsh/completion.zsh" ]
-  [ ! -f "$HOME/.config/zsh/prompt.zsh" ]
-  [ ! -f "$HOME/.config/zsh/functions.zsh" ]
+  [ -f "$HOME/.config/zsh/completion.zsh" ]
+  [ -f "$HOME/.config/zsh/prompt.zsh" ]
+  [ -f "$HOME/.config/zsh/functions.zsh" ]
+}
+
+@test "migrate zsh: init.sh sources sub-files" {
+  write_plain_zshrc
+  sh "$SCRIPT" --yes >/dev/null
+  grep -q 'completion\.zsh' "$HOME/.config/zsh/init.sh"
+  grep -q 'prompt\.zsh'     "$HOME/.config/zsh/init.sh"
+}
+
+@test "migrate zsh: prompt.zsh has starship guard" {
+  write_plain_zshrc
+  sh "$SCRIPT" --yes >/dev/null
+  grep -q 'command -v starship' "$HOME/.config/zsh/prompt.zsh"
 }
 
 # --- both shells -------------------------------------------------------------

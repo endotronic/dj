@@ -124,22 +124,22 @@ _chk "$shell_dir/os/wsl.sh"
 
 if [ -n "$needs_bash_migrate" ] || [ -n "$needs_bash_create" ]; then
   _chk "$bash_dir/init.sh"
-fi
-if [ -n "$needs_bash_create" ]; then
-  _chk "$HOME/.bashrc"
   _chk "$bash_dir/completion.sh"
   _chk "$bash_dir/prompt.sh"
   _chk "$bash_dir/functions.sh"
 fi
+if [ -n "$needs_bash_create" ]; then
+  _chk "$HOME/.bashrc"
+fi
 
 if [ -n "$needs_zsh_migrate" ] || [ -n "$needs_zsh_create" ]; then
   _chk "$zsh_dir/init.sh"
-fi
-if [ -n "$needs_zsh_create" ]; then
-  _chk "$HOME/.zshrc"
   _chk "$zsh_dir/completion.zsh"
   _chk "$zsh_dir/prompt.zsh"
   _chk "$zsh_dir/functions.zsh"
+fi
+if [ -n "$needs_zsh_create" ]; then
+  _chk "$HOME/.zshrc"
 fi
 
 if [ -n "$_conflicts" ]; then
@@ -297,6 +297,13 @@ HISTTIMEFORMAT='%F %T '
 shopt -s histappend checkwinsize
 shopt -s globstar   2>/dev/null || true
 shopt -s nocaseglob 2>/dev/null || true
+BASH_INIT
+    log "created fresh bash config at $bash_dir/"
+  fi
+
+  # Sub-files (completion, prompt, functions) and the loop that sources
+  # them apply in both migrate and create modes.
+  cat >> "$bash_dir/init.sh" << 'BASH_INIT_SUBFILES'
 
 _bash_dir="$HOME/.config/bash"
 for f in "$_bash_dir/completion.sh" "$_bash_dir/functions.sh" \
@@ -304,7 +311,7 @@ for f in "$_bash_dir/completion.sh" "$_bash_dir/functions.sh" \
   [ -r "$f" ] && . "$f"
 done
 unset _bash_dir f
-BASH_INIT
+BASH_INIT_SUBFILES
 
 cat > "$bash_dir/completion.sh" << 'BASH_COMP'
 # Bash completion. Sourced from ~/.config/bash/init.sh.
@@ -352,9 +359,7 @@ else
 fi
 BASH_PROMPT
 
-    printf '# Bash-specific functions. Bashisms welcome.\n' > "$bash_dir/functions.sh"
-    log "created fresh bash config at $bash_dir/"
-  fi
+  printf '# Bash-specific functions. Bashisms welcome.\n' > "$bash_dir/functions.sh"
 
 cat > "$HOME/.bashrc" << 'BASHRC'
 # Interactive bash. Tiny loader -- real config lives in
@@ -387,6 +392,20 @@ if [ -n "$needs_zsh_migrate" ] || [ -n "$needs_zsh_create" ]; then
   if [ -n "$needs_zsh_migrate" ]; then
     cp "$HOME/.zshrc" "$zsh_dir/init.sh"
     log "preserved .zshrc → $zsh_dir/init.sh"
+
+    # Append standard history settings, since a migrated .zshrc
+    # typically predates this layout and won't have them.
+    cat >> "$zsh_dir/init.sh" << 'ZSH_HISTORY'
+
+HISTSIZE=100000
+SAVEHIST=200000
+HISTFILE="${XDG_STATE_HOME:-$HOME/.local/state}/zsh/history"
+mkdir -p "$(dirname "$HISTFILE")"
+
+setopt APPEND_HISTORY INC_APPEND_HISTORY HIST_IGNORE_DUPS HIST_IGNORE_ALL_DUPS \
+       HIST_IGNORE_SPACE HIST_REDUCE_BLANKS SHARE_HISTORY EXTENDED_HISTORY \
+       INTERACTIVE_COMMENTS NO_BEEP AUTO_CD EXTENDED_GLOB
+ZSH_HISTORY
   else
 cat > "$zsh_dir/init.sh" << 'ZSH_INIT'
 # Zsh-only init. Sourced from ~/.zshrc after the shared layer.
@@ -400,6 +419,13 @@ mkdir -p "$(dirname "$HISTFILE")"
 setopt APPEND_HISTORY INC_APPEND_HISTORY HIST_IGNORE_DUPS HIST_IGNORE_ALL_DUPS \
        HIST_IGNORE_SPACE HIST_REDUCE_BLANKS SHARE_HISTORY EXTENDED_HISTORY \
        INTERACTIVE_COMMENTS NO_BEEP AUTO_CD EXTENDED_GLOB
+ZSH_INIT
+    log "created fresh zsh config at $zsh_dir/"
+  fi
+
+  # Sub-files (completion, prompt, functions) and the loop that sources
+  # them apply in both migrate and create modes.
+  cat >> "$zsh_dir/init.sh" << 'ZSH_INIT_SUBFILES'
 
 _zsh_dir="$HOME/.config/zsh"
 for f in "$_zsh_dir/completion.zsh" "$_zsh_dir/functions.zsh" \
@@ -407,7 +433,7 @@ for f in "$_zsh_dir/completion.zsh" "$_zsh_dir/functions.zsh" \
   [ -r "$f" ] && . "$f"
 done
 unset _zsh_dir f
-ZSH_INIT
+ZSH_INIT_SUBFILES
 
 cat > "$zsh_dir/completion.zsh" << 'ZSH_COMP'
 # Zsh completion. Sourced from ~/.config/zsh/init.sh.
@@ -456,9 +482,7 @@ else
 fi
 ZSH_PROMPT
 
-    printf '# Zsh-specific functions. Zshisms welcome.\n' > "$zsh_dir/functions.zsh"
-    log "created fresh zsh config at $zsh_dir/"
-  fi
+  printf '# Zsh-specific functions. Zshisms welcome.\n' > "$zsh_dir/functions.zsh"
 
 cat > "$HOME/.zshrc" << 'ZSHRC'
 # Interactive zsh. Tiny loader -- real config lives in
