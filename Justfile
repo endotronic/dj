@@ -113,6 +113,7 @@ claude-creds-snapshot:
 # directly via the bare repo (`dot`); there is no separate dev clone.
 # Args become a one-shot query via `claude -p`; no args -> interactive.
 # Pass -y or --yolo (anywhere in args) to add --dangerously-skip-permissions.
+# Remote Control is enabled by default; pass --no-remote-control to opt out.
 alias c := claude
 
 claude *ARGS:
@@ -120,21 +121,23 @@ claude *ARGS:
     set -eu
     command -v claude >/dev/null 2>&1 || { echo "claude not on PATH; install Claude Code first" >&2; exit 127; }
     yolo_flag=""
+    remote_flag="--remote-control"
     prompt=""
     for arg in {{ARGS}}; do
       case "$arg" in
-        -y|--yolo) yolo_flag="--dangerously-skip-permissions" ;;
-        *)         prompt="$prompt $arg" ;;
+        -y|--yolo)            yolo_flag="--dangerously-skip-permissions" ;;
+        --no-remote-control)  remote_flag="" ;;
+        *)                    prompt="$prompt $arg" ;;
       esac
     done
     prompt="${prompt# }"
     cd "$HOME/.dotfiles"
     if [ -z "$prompt" ]; then
-      claude $yolo_flag
+      claude $yolo_flag $remote_flag
     else
       tmpout=$(mktemp)
       tmperr=$(mktemp)
-      claude -p "$prompt" $yolo_flag >"$tmpout" 2>"$tmperr" &
+      claude -p "$prompt" $yolo_flag $remote_flag >"$tmpout" 2>"$tmperr" &
       pid=$!
       i=0
       while kill -0 "$pid" 2>/dev/null; do
