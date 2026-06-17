@@ -114,6 +114,8 @@ claude-creds-snapshot:
 # Args become a one-shot query via `claude -p`; no args -> interactive.
 # Pass -y or --yolo (anywhere in args) to add --dangerously-skip-permissions.
 # Remote Control is enabled by default; pass --no-remote-control to opt out.
+# Always disables 1M context and enables auto-mode. If -r/--resume is
+# present, -p/--print is skipped (resume implies an interactive session).
 alias c := claude
 
 claude *ARGS:
@@ -122,22 +124,27 @@ claude *ARGS:
     command -v claude >/dev/null 2>&1 || { echo "claude not on PATH; install Claude Code first" >&2; exit 127; }
     yolo_flag=""
     remote_flag="--remote-control"
-    prompt=""
+    resuming=0
+    rest=""
     for arg in {{ARGS}}; do
       case "$arg" in
         -y|--yolo)            yolo_flag="--dangerously-skip-permissions" ;;
         --no-remote-control)  remote_flag="" ;;
-        *)                    prompt="$prompt $arg" ;;
+        -r|--resume)          resuming=1; rest="$rest $arg" ;;
+        *)                    rest="$rest $arg" ;;
       esac
     done
-    prompt="${prompt# }"
+    rest="${rest# }"
     cd "$HOME/.dotfiles"
-    if [ -z "$prompt" ]; then
-      claude $yolo_flag $remote_flag
+    export CLAUDE_CODE_DISABLE_1M_CONTEXT=1
+    if [ "$resuming" -eq 1 ]; then
+      claude $rest $yolo_flag $remote_flag --enable-auto-mode
+    elif [ -z "$rest" ]; then
+      claude $yolo_flag $remote_flag --enable-auto-mode
     else
       tmpout=$(mktemp)
       tmperr=$(mktemp)
-      claude -p "$prompt" $yolo_flag $remote_flag >"$tmpout" 2>"$tmperr" &
+      claude -p "$rest" $yolo_flag $remote_flag --enable-auto-mode >"$tmpout" 2>"$tmperr" &
       pid=$!
       i=0
       while kill -0 "$pid" 2>/dev/null; do
