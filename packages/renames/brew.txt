@@ -7,6 +7,16 @@ gpg gnupg
 npm node
 rg ripgrep
 bats bats-core
+# Real Docker on macOS needs Docker Desktop (a GUI cask), not the
+# headless `docker` formula -- this mechanism only does `brew install
+# <formula>`, so it can't drive a cask install. Install Docker Desktop
+# manually: `brew install --cask docker`.
+docker SKIP
+# Same reasoning as `docker` above: Docker Desktop already bundles
+# Compose v2, and a plain `brew install docker-compose` formula doesn't
+# register itself as a `docker compose` plugin without manual symlinking
+# into ~/.docker/cli-plugins/.
+docker-compose SKIP
 # Claude Code: install.sh runs scripts/install-claude.sh (vendor
 # curl-pipe) for the latest version, even on macOS.
 claude SKIP

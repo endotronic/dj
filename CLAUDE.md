@@ -117,6 +117,47 @@ personal lists.
   skill) — it picks the right personal list (common / type / host),
   edits renames if needed, installs, and verifies.
 
+### 2.8 Post-install hooks
+
+A plain package-manager install can't express follow-up system state:
+"enable this systemd service," "add me to this group," or — a future,
+*unrelated* example — "add this line to `/etc/fstab`." Post-install
+hooks are a second, generic mechanism, structured exactly like §2.7's
+package lists so it's just as extensible:
+
+```
+~/.config/dj/postinstall/          # private repo, travels via `dj sync`
+├── common.txt                     # hook names to run on every machine
+├── types/<type>.txt               # added when DOTFILES_SYSTEM_TYPE == <type>
+└── hosts/<hostname>.txt           # added only on that one host
+
+~/.dotfiles/packages/postinstall/  # public repo, shared mechanism
+└── <name>.sh                      # idempotent POSIX sh, one per hook
+```
+
+`scripts/run-postinstall.sh` resolves the active hook list (common +
+type + host, same precedence as packages) and runs each listed name's
+`packages/postinstall/<name>.sh` if present; a missing script warns
+but doesn't abort the rest. A hook name has no required relationship
+to a package name — `docker` (follows the `docker` package, enabling
+its service and group) and a future `fstab-nas-mount` (no associated
+package at all) are both just entries in the same list.
+
+- **Hooks may use `sudo` for narrow, explicit, idempotent system
+  changes** — this is the sanctioned place for the `/etc` writes that
+  §9's "multi-user safety" rule otherwise forbids elsewhere. Each hook
+  script owns its own idempotence (e.g. check `systemctl is-enabled`
+  before `enable --now`; check group membership before `usermod -aG`;
+  check for an existing `/etc/fstab` line before appending).
+- Wired into `dj upgrade` (`sync install-packages postinstall`) and
+  into `install.sh` (step 10b, right after the full package install).
+  Not part of `dj sync` — like package installs, hooks need sudo and
+  shouldn't run on every pull.
+- Run directly with `dj postinstall` (or `sh scripts/run-postinstall.sh`).
+- Every hook script needs bats coverage, same as `packages/scripts/`
+  fallback installers (see `tests/run-postinstall.bats` for the
+  `docker.sh` example).
+
 ---
 
 ## 3. Repository layout
@@ -141,6 +182,8 @@ $HOME
 │   ├── hypr/  waybar/  mako/  walker/  omarchy/
 │   ├── dj/packages/                    # PERSONAL package lists (tracked by .config.git)
 │   │   └── common.txt  types/<type>.txt  hosts/<hostname>.txt
+│   ├── dj/postinstall/                  # PERSONAL post-install hook lists (tracked by .config.git)
+│   │   └── common.txt  types/<type>.txt  hosts/<hostname>.txt
 │   └── sops/age/keys.txt               # NOT tracked; out-of-band transport target
 ├── .dotfiles/                          # PUBLIC git repo (.git/ inside)
 │   ├── CLAUDE.md                       # this file (Claude project memory)
@@ -150,6 +193,7 @@ $HOME
 │   ├── scripts/
 │   │   ├── os-detect.sh               # DOTFILES_OS, _PKG, _DISTRO, _SYSTEM_TYPE
 │   │   ├── install-packages.sh        # idempotent, SKIP semantics, fallback scripts
+│   │   ├── run-postinstall.sh         # idempotent hook runner (§2.8)
 │   │   ├── rebuild-secrets.sh         # manifest → target paths
 │   │   ├── pre-commit-secrets.sh      # rejects plaintext secrets + gitleaks scan
 │   │   ├── shell-consolidate.sh       # migrate/create ~/.config/{shell,bash,zsh}/
@@ -162,7 +206,8 @@ $HOME
 │   │   │   ├── common.txt
 │   │   │   └── types/{desktop,server}.txt
 │   │   ├── renames/{apt,pacman,brew}.txt   # `logical actual` per line; SKIP to omit
-│   │   └── scripts/{sops,just,starship}.sh # fallback installers
+│   │   ├── scripts/{sops,just,starship}.sh # fallback installers
+│   │   └── postinstall/<name>.sh           # post-install hooks (§2.8), e.g. docker.sh
 │   └── tests/                         # bats suite
 ├── .private/                           # tracked by .config.git (private bare repo)
 │   ├── .sops.yaml                      # SOPS age recipient config
@@ -252,11 +297,12 @@ dj apply-secrets                # re-materialize to target paths
 
 ```sh
 dj sync            # dot pull --rebase && dj apply-secrets
-dj upgrade         # dj sync && dj install-packages
+dj upgrade         # dj sync && dj install-packages && dj postinstall
+dj postinstall     # run post-install hooks alone (§2.8)
 dj system-type desktop   # update persisted type (does NOT install packages)
 ```
 
-`apply-secrets` is bundled with `sync` because pulls can update encrypted material. Package install is separate to keep `sync` fast and sudo-free.
+`apply-secrets` is bundled with `sync` because pulls can update encrypted material. Package install and post-install hooks are separate to keep `sync` fast and sudo-free.
 
 ### 4.6 Sanity check
 
@@ -341,7 +387,7 @@ Two orthogonal rules:
 
 ## 8. Implementation status
 
-**Complete:** install.sh (POSIX, idempotent, --system-type, --on-conflict, --age-key, three-bucket conflict classification, auto sops-init, shell consolidation, git setup); Justfile (sync, upgrade, add, secret-add, secret-edit, apply-secrets, install-packages, system-type, sops-init, doctor, config-diff, audit-config, test); os-detect.sh; install-packages.sh (SKIP semantics, fallback scripts); packages/scripts/{sops,just,starship}.sh; rebuild-secrets.sh (PRIVATE_DIR-based); secret-add.sh (encrypt + manifest update + stage); pre-commit-secrets.sh (guards .private/secrets/); sops-init.sh (auto-called from install.sh, writes to PRIVATE_DIR); shell-consolidate.sh (migrate or create ~/.config/{shell,bash,zsh}/, atomic conflict check); git-setup.sh (identity + SSH + GPG, idempotent); config-diff.sh; audit-config.sh; generic `--system-type` + personal package lists at `~/.config/dj/packages/{common,types/<type>,hosts/<host>}.txt` (private repo) seeded from `packages/template/{common,types/{desktop,server}}.txt`; renames/{apt,pacman,brew}.txt; shell/{init,env,aliases,functions,secrets}.sh; shell/os/{linux,darwin,wsl}.sh; bash/{init,functions,completion,prompt}.sh; zsh/{init,functions,completion,prompt}.sh; bats coverage for all scripts (245 tests, ~20 skipped pending sops/age/zsh); claude-creds-snapshot.sh; install-claude.sh; `dj claude`; project skills (install-package, query-config, dispatch-just, edit-config); **public/private repo split** (public `~/.dotfiles/.git`, private bare `~/.config.git`, secrets at `~/.private/`).
+**Complete:** install.sh (POSIX, idempotent, --system-type, --on-conflict, --age-key, three-bucket conflict classification, auto sops-init, shell consolidation, git setup); Justfile (sync, upgrade, add, secret-add, secret-edit, apply-secrets, install-packages, postinstall, system-type, sops-init, doctor, config-diff, audit-config, test); os-detect.sh; install-packages.sh (SKIP semantics, fallback scripts); run-postinstall.sh + packages/postinstall/<name>.sh (§2.8 hook mechanism, e.g. docker.sh); packages/scripts/{sops,just,starship}.sh; rebuild-secrets.sh (PRIVATE_DIR-based); secret-add.sh (encrypt + manifest update + stage); pre-commit-secrets.sh (guards .private/secrets/); sops-init.sh (auto-called from install.sh, writes to PRIVATE_DIR); shell-consolidate.sh (migrate or create ~/.config/{shell,bash,zsh}/, atomic conflict check); git-setup.sh (identity + SSH + GPG, idempotent); config-diff.sh; audit-config.sh; generic `--system-type` + personal package lists at `~/.config/dj/packages/{common,types/<type>,hosts/<host>}.txt` (private repo) seeded from `packages/template/{common,types/{desktop,server}}.txt`; renames/{apt,pacman,brew}.txt; shell/{init,env,aliases,functions,secrets}.sh; shell/os/{linux,darwin,wsl}.sh; bash/{init,functions,completion,prompt}.sh; zsh/{init,functions,completion,prompt}.sh; bats coverage for all scripts (245 tests, ~20 skipped pending sops/age/zsh); claude-creds-snapshot.sh; install-claude.sh; `dj claude`; project skills (install-package, query-config, dispatch-just, edit-config); **public/private repo split** (public `~/.dotfiles/.git`, private bare `~/.config.git`, secrets at `~/.private/`).
 
 **Outstanding (user task only):**
 - [ ] Push public repo: `cd ~/.dotfiles && git remote add origin https://github.com/endotronic/dotfiles.git && git push -u origin master`
@@ -359,7 +405,7 @@ Two orthogonal rules:
 - **Never write plaintext secrets to disk** — only `rebuild-secrets.sh` (to declared `dst`) and sops temp file.
 - **One home for OS/pkg detection** — `os-detect.sh` and `shell/init.sh`. If they disagree, fix the script.
 - **Fallback installers** — when a tool is absent from apt/pacman/brew, mark it `SKIP` in the renames file and add `packages/scripts/<name>.sh`. Must be POSIX sh, idempotent, install to `/usr/local/bin` via `sudo`. `install-packages.sh` runs matching scripts automatically.
-- **Multi-user safety** — nothing outside `$HOME` except via the package manager. No `/etc/`, `/usr/local/etc/`, `~root/` writes.
+- **Multi-user safety** — nothing outside `$HOME` except via the package manager, or via a post-install hook (§2.8) — the sanctioned, opt-in place for narrow `/etc/` writes (e.g. `/etc/fstab`) and other system-level mutations a package install can't express. No ad hoc `/etc/`, `/usr/local/etc/`, `~root/` writes outside those two mechanisms.
 - **Use override hooks** — before replacing upstream files, run `dj config-diff`; only stage actual divergence.
 - **Invoke the `omarchy` Skill** for any change under `~/.config/{hypr,waybar,walker,alacritty,kitty,ghostty,mako,omarchy}` on Omarchy hosts (detect: `/etc/os-release` + presence of `~/.local/share/omarchy/`).
 - **`status.showUntrackedFiles=no`** on the bare repo — don't "fix" it; it's load-bearing.

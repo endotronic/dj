@@ -22,8 +22,8 @@ sync:
     git --git-dir="{{DOT_DIR}}" --work-tree="$HOME" pull --rebase
     @just apply-secrets
 
-# Pull, then install any newly-added packages.
-upgrade: sync install-packages
+# Pull, then install any newly-added packages and run their post-install hooks.
+upgrade: sync install-packages postinstall
 
 # Stage a file or directory from $HOME into the bare repo and show status.
 add +PATHS:
@@ -51,6 +51,13 @@ diff:
 # Install (or update) packages per the active tier.
 install-packages:
     sh "{{SCRIPTS}}/install-packages.sh"
+
+# Run post-install hooks listed in ~/.config/dj/postinstall/ (idempotent
+# system-level setup beyond a plain package install: enabling a service,
+# group membership, an /etc/fstab entry, etc -- see
+# packages/postinstall/<name>.sh for the mechanism).
+postinstall:
+    sh "{{SCRIPTS}}/run-postinstall.sh"
 
 # Persist a new system type (any identifier, e.g. desktop|server|laptop|none).
 # Does not install -- the type is just a lookup key for

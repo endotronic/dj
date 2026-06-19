@@ -7,6 +7,14 @@ nvim neovim
 gpg gnupg
 rg ripgrep
 fd fd-find
+docker docker.io
+# docker-compose-v2 is the Compose v2 plugin in Debian 12+/Ubuntu 22.04+
+# repos. It often only installs into a cli-plugins dir, not onto PATH,
+# so `command -v docker-compose` may report "missing" even when it's
+# present -- harmless (the apt install itself is idempotent) and
+# self-healed by packages/postinstall/docker-compose.sh, which
+# symlinks the plugin onto PATH if needed.
+docker-compose docker-compose-v2
 # Not in Debian/Ubuntu apt repos; installed via packages/scripts/sops.sh.
 sops SKIP
 # Not in Debian/Ubuntu apt repos; installed via packages/scripts/just.sh.

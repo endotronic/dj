@@ -19,6 +19,7 @@ load test_helper
   for f in "$DOTFILES_REPO_ROOT/install.sh" \
            "$DOTFILES_REPO_ROOT"/scripts/*.sh \
            "$DOTFILES_REPO_ROOT"/packages/scripts/*.sh \
+           "$DOTFILES_REPO_ROOT"/packages/postinstall/*.sh \
            "$_DOTFILES_SHELL_ROOT"/.config/shell/*.sh \
            "$_DOTFILES_SHELL_ROOT"/.config/shell/os/*.sh; do
     [ -e "$f" ] || continue
@@ -69,7 +70,8 @@ load test_helper
 @test "all scripts/*.sh are executable" {
   missing=""
   for f in "$DOTFILES_REPO_ROOT"/scripts/*.sh \
-           "$DOTFILES_REPO_ROOT"/packages/scripts/*.sh; do
+           "$DOTFILES_REPO_ROOT"/packages/scripts/*.sh \
+           "$DOTFILES_REPO_ROOT"/packages/postinstall/*.sh; do
     [ -e "$f" ] || continue
     [ -x "$f" ] || missing="$missing $f"
   done

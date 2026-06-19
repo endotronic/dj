@@ -566,6 +566,21 @@ if [ -x "$HOME/.dotfiles/scripts/install-packages.sh" ]; then
   sh "$HOME/.dotfiles/scripts/install-packages.sh"
 fi
 
+# ---------- 10b. Post-install hooks ----------
+#
+# Package-list-driven, but a separate idempotent step: a plain
+# package-manager install can't express things like "enable this
+# systemd service" or "add me to this group" (or, in the future,
+# unrelated host setup like an /etc/fstab entry). Hooks are listed in
+# ~/.config/dj/postinstall/{common,types/<type>,hosts/<host>}.txt and
+# implemented in packages/postinstall/<name>.sh.
+
+if [ -x "$HOME/.dotfiles/scripts/run-postinstall.sh" ]; then
+  log "running post-install hooks"
+  sh "$HOME/.dotfiles/scripts/run-postinstall.sh" \
+    || log "warn: some post-install hooks reported problems; see above"
+fi
+
 # Ensure ~/.local/bin is in PATH before calling install-claude.sh so
 # the post-install verification can find the just-installed binary.
 case ":$PATH:" in
