@@ -269,6 +269,52 @@ EOF
   }
 }
 
+stub_gpg_import_fail() {
+  cat > "$STUB_BIN/gpg" << 'EOF'
+#!/bin/sh
+{ printf 'gpg'; for a in "$@"; do printf ' %s' "$a"; done; printf '\n'; } \
+  >> "$SANDBOX/stub.log"
+echo "gpg: error sending to agent: No such file or directory" >&2
+exit 2
+EOF
+  chmod +x "$STUB_BIN/gpg"
+}
+
+@test "GPG import failure: warning includes gpg's stderr, not swallowed" {
+  sops_sandbox
+  stub_gpg_import_fail
+  sops_encrypt_to secrets/.private/gpg/private-key.asc.enc "fake-armored-key"
+  manifest="$SANDBOX/manifest-plain"
+  cat > "$manifest" <<EOF
+secrets/.private/gpg/private-key.asc.enc  ~/.private/gpg/private-key.asc  0600
+EOF
+  ( cd "$FAKE_REPO" && sops -e --input-type binary --output-type binary \
+      --filename-override secrets/manifest.txt.enc "$manifest" \
+      > secrets/manifest.txt.enc )
+
+  run sh "$FAKE_REPO/scripts/rebuild-secrets.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "warn: failed to import GPG key" ]]
+  [[ "$output" =~ "error sending to agent" ]]
+}
+
+@test "GPG key materialized: creates private-keys-v1.d before import" {
+  sops_sandbox
+  stub_gpg_import_ok
+  sops_encrypt_to secrets/.private/gpg/private-key.asc.enc "fake-armored-key"
+  manifest="$SANDBOX/manifest-plain"
+  cat > "$manifest" <<EOF
+secrets/.private/gpg/private-key.asc.enc  ~/.private/gpg/private-key.asc  0600
+EOF
+  ( cd "$FAKE_REPO" && sops -e --input-type binary --output-type binary \
+      --filename-override secrets/manifest.txt.enc "$manifest" \
+      > secrets/manifest.txt.enc )
+
+  run sh "$FAKE_REPO/scripts/rebuild-secrets.sh"
+  [ "$status" -eq 0 ]
+  [ -d "$HOME/.gnupg/private-keys-v1.d" ]
+}
+
 @test "GPG key materialized but gpg missing: warns and continues" {
   sops_sandbox
   sops_encrypt_to secrets/.private/gpg/private-key.asc.enc "fake-armored-key"

@@ -116,18 +116,28 @@ if [ -r "$gpg_key" ] || [ -r "$gpg_trust" ]; then
   if ! command -v gpg >/dev/null 2>&1; then
     log "warn: gpg not found; cannot import GPG key/ownertrust"
   else
+    # gpg-agent needs this dir to store imported secret keys; on a
+    # fresh ~/.gnupg it doesn't exist yet, which makes `gpg --import`
+    # of a secret key fail with "error sending to agent: No such file
+    # or directory" (the public part still imports, masking the issue).
+    mkdir -p -m 700 "$HOME/.gnupg/private-keys-v1.d"
+
     if [ -r "$gpg_key" ]; then
-      if gpg --import "$gpg_key" >/dev/null 2>&1; then
+      import_err=$(gpg --import "$gpg_key" 2>&1 >/dev/null) && rc=0 || rc=$?
+      if [ "$rc" -eq 0 ]; then
         log "imported GPG key from $gpg_key"
       else
-        log "warn: failed to import GPG key from $gpg_key"
+        log "warn: failed to import GPG key from $gpg_key:"
+        printf '%s\n' "$import_err" | sed 's/^/[rebuild-secrets]   /' >&2
       fi
     fi
     if [ -r "$gpg_trust" ]; then
-      if gpg --import-ownertrust "$gpg_trust" >/dev/null 2>&1; then
+      trust_err=$(gpg --import-ownertrust "$gpg_trust" 2>&1 >/dev/null) && rc=0 || rc=$?
+      if [ "$rc" -eq 0 ]; then
         log "imported GPG ownertrust from $gpg_trust"
       else
-        log "warn: failed to import GPG ownertrust from $gpg_trust"
+        log "warn: failed to import GPG ownertrust from $gpg_trust:"
+        printf '%s\n' "$trust_err" | sed 's/^/[rebuild-secrets]   /' >&2
       fi
     fi
   fi
