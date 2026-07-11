@@ -167,6 +167,52 @@ EOF
   grep -q content-foo "$HOME/out/foo"
 }
 
+# --- pre-existing target backup --------------------------------------------
+
+@test "pre-existing target with different content is backed up, not silently overwritten" {
+  sops_sandbox
+  sops_encrypt_to secrets/id_ed25519.enc "incoming-private-key"
+  manifest="$SANDBOX/manifest-plain"
+  cat > "$manifest" <<EOF
+secrets/id_ed25519.enc  ~/.ssh/id_ed25519  0600
+EOF
+  ( cd "$FAKE_REPO" && sops -e --input-type binary --output-type binary \
+      --filename-override secrets/manifest.txt.enc "$manifest" \
+      > secrets/manifest.txt.enc )
+
+  mkdir -p "$HOME/.ssh"
+  printf 'pre-existing-local-key' > "$HOME/.ssh/id_ed25519"
+
+  export BACKUP_DIR="$SANDBOX/backup"
+  run sh "$FAKE_REPO/scripts/rebuild-secrets.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "already existed with different content" ]]
+  [[ "$output" =~ "backed_up=1" ]]
+  grep -q incoming-private-key "$HOME/.ssh/id_ed25519"
+  grep -q pre-existing-local-key "$BACKUP_DIR/$HOME/.ssh/id_ed25519"
+}
+
+@test "pre-existing target with identical content is not flagged as backed up" {
+  sops_sandbox
+  sops_encrypt_to secrets/foo.enc "same-content"
+  manifest="$SANDBOX/manifest-plain"
+  cat > "$manifest" <<EOF
+secrets/foo.enc  ~/out/foo  0600
+EOF
+  ( cd "$FAKE_REPO" && sops -e --input-type binary --output-type binary \
+      --filename-override secrets/manifest.txt.enc "$manifest" \
+      > secrets/manifest.txt.enc )
+
+  mkdir -p "$HOME/out"
+  printf 'same-content' > "$HOME/out/foo"
+
+  export BACKUP_DIR="$SANDBOX/backup"
+  run sh "$FAKE_REPO/scripts/rebuild-secrets.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "backed_up=0" ]]
+  [ ! -d "$BACKUP_DIR" ]
+}
+
 # --- GPG key/ownertrust import ---------------------------------------------
 
 # GPG stub: logs every invocation; --import and --import-ownertrust succeed.

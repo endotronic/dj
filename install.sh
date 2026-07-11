@@ -11,7 +11,12 @@
 # Idempotent: re-running on an installed machine converges rather than
 # replaces. Package installs are skipped when the binary is already on
 # PATH. The `dot checkout` step backs up any colliding files in $HOME
-# to ~/.dotfiles-backup/<utc-timestamp>/ before overwriting.
+# to ~/.dotfiles-backup/<utc-timestamp>/ before overwriting. The
+# apply-secrets step does the same for any secret target path (e.g.
+# ~/.ssh/id_ed25519) that already exists with different content --
+# untracked files like that aren't visible to `dot checkout`'s conflict
+# check, so this is the backstop that keeps decrypting secrets from
+# silently clobbering a key you already had in place.
 #
 # Two repos get bootstrapped here:
 #   ~/.dotfiles/    public tooling repo -- plain `git clone` (or used
@@ -654,7 +659,7 @@ fi
 
 if [ -r "$AGE_KEY" ] && [ -x "$HOME/.dotfiles/scripts/rebuild-secrets.sh" ]; then
   log "rematerializing secrets"
-  PRIVATE_DIR="$PRIVATE_DIR" sh "$HOME/.dotfiles/scripts/rebuild-secrets.sh"
+  PRIVATE_DIR="$PRIVATE_DIR" BACKUP_DIR="$BACKUP_DIR" sh "$HOME/.dotfiles/scripts/rebuild-secrets.sh"
 elif [ ! -r "$AGE_KEY" ]; then
   log "no age key at $AGE_KEY -- skipping secrets"
   log "transport the age key, then run: dj apply-secrets"

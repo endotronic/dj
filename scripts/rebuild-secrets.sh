@@ -1,6 +1,10 @@
 #!/bin/sh
 # Decrypt every entry in secrets/manifest.txt.enc to its target path.
-# Idempotent: re-running overwrites the target.
+# Idempotent: re-running overwrites the target. If a target already
+# exists with content that differs from the incoming secret (e.g. an
+# SSH key generated locally before secrets were ever applied), the
+# existing file is backed up to BACKUP_DIR first and the overwrite is
+# flagged in the log -- it's never silently lost.
 #
 # Manifest format (one entry per non-comment, non-blank line):
 #   <src>  <dst>  <mode>
@@ -14,6 +18,7 @@ set -eu
 PRIVATE_DIR=${PRIVATE_DIR:-$HOME/.private}
 MANIFEST_ENC=$PRIVATE_DIR/secrets/manifest.txt.enc
 AGE_KEY=${XDG_CONFIG_HOME:-$HOME/.config}/sops/age/keys.txt
+BACKUP_DIR=${BACKUP_DIR:-$HOME/.dotfiles-backup/$(date -u +%Y%m%dT%H%M%SZ)}
 
 log() { printf '[rebuild-secrets] %s\n' "$*"; }
 
@@ -35,12 +40,14 @@ fi
 
 umask 077
 tmp_manifest=$(mktemp)
-trap 'rm -f "$tmp_manifest"' EXIT INT TERM
+secret_tmp=$(mktemp)
+trap 'rm -f "$tmp_manifest" "$secret_tmp"' EXIT INT TERM
 
 sops -d "$MANIFEST_ENC" > "$tmp_manifest"
 
 n_applied=0
 n_skipped=0
+n_backed_up=0
 while IFS= read -r line || [ -n "$line" ]; do
   cleaned=$(printf '%s\n' "$line" | sed 's/#.*//' | awk '{$1=$1; print}')
   [ -z "$cleaned" ] && continue
@@ -72,8 +79,18 @@ while IFS= read -r line || [ -n "$line" ]; do
     continue
   fi
 
+  sops -d "$src_full" > "$secret_tmp"
+
+  if [ -e "$dst" ] && [ ! -L "$dst" ] && ! cmp -s "$secret_tmp" "$dst"; then
+    backup_dst=$BACKUP_DIR$dst
+    mkdir -p "$(dirname "$backup_dst")"
+    mv "$dst" "$backup_dst"
+    log "warn: $dst already existed with different content -- backed up to $backup_dst"
+    n_backed_up=$((n_backed_up + 1))
+  fi
+
   mkdir -p "$(dirname "$dst")"
-  sops -d "$src_full" > "$dst"
+  cp "$secret_tmp" "$dst"
   if [ -n "$mode" ]; then
     chmod "$mode" "$dst"
   fi
@@ -81,7 +98,8 @@ while IFS= read -r line || [ -n "$line" ]; do
   n_applied=$((n_applied + 1))
 done < "$tmp_manifest"
 
-log "applied=$n_applied skipped=$n_skipped"
+log "applied=$n_applied skipped=$n_skipped backed_up=$n_backed_up"
+[ "$n_backed_up" -gt 0 ] && log "pre-existing files were backed up under $BACKUP_DIR before being overwritten"
 
 # ---------- Import GPG private key / ownertrust, if registered ----------
 #
