@@ -20,5 +20,7 @@ docker-compose SKIP
 # Claude Code: install.sh runs scripts/install-claude.sh (vendor
 # curl-pipe) for the latest version, even on macOS.
 claude SKIP
-# Gemini CLI: install.sh runs scripts/install-gemini.sh (npm install).
-gemini SKIP
+# Antigravity CLI (binary: agy): install.sh runs
+# scripts/install-antigravity.sh (vendor curl-pipe) for the latest
+# version, even on macOS.
+agy SKIP

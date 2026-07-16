@@ -28,5 +28,5 @@ curl
 openssl
 bats
 claude
-gemini
+agy
 

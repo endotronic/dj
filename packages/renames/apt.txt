@@ -24,6 +24,7 @@ starship SKIP
 # Claude Code is not in apt; install.sh runs scripts/install-claude.sh
 # (vendor curl-pipe) after install-packages.sh to handle it.
 claude SKIP
-# Gemini CLI is not in apt; install.sh runs scripts/install-gemini.sh
-# (npm install) after install-packages.sh to handle it.
-gemini SKIP
+# Antigravity CLI (binary: agy) is not in apt; install.sh runs
+# scripts/install-antigravity.sh (vendor curl-pipe) after
+# install-packages.sh to handle it.
+agy SKIP

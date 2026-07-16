@@ -601,10 +601,12 @@ if [ -x "$HOME/.dotfiles/scripts/install-claude.sh" ]; then
   sh "$HOME/.dotfiles/scripts/install-claude.sh"
 fi
 
-if [ -x "$HOME/.dotfiles/scripts/install-gemini.sh" ]; then
-  log "running install-gemini.sh"
-  sh "$HOME/.dotfiles/scripts/install-gemini.sh" \
-    || log "warn: gemini install failed; skipping (non-fatal)"
+# Antigravity CLI (Google's replacement for Gemini CLI) isn't shipped
+# through apt/pacman/brew either -- same vendor curl-pipe treatment as
+# Claude Code. Idempotent: no-op if `agy` is already on PATH.
+if [ -x "$HOME/.dotfiles/scripts/install-antigravity.sh" ]; then
+  log "running install-antigravity.sh"
+  sh "$HOME/.dotfiles/scripts/install-antigravity.sh"
 fi
 
 # ---------- 11. Install age key (if provided via flag or interactive paste) ---

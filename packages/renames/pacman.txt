@@ -8,6 +8,7 @@ rg ripgrep
 # assume an AUR helper is present. install.sh runs
 # scripts/install-claude.sh (vendor curl-pipe) instead.
 claude SKIP
-# Gemini CLI is not in the official repos; install.sh runs
-# scripts/install-gemini.sh (npm install) instead.
-gemini SKIP
+# Antigravity CLI (binary: agy) is not in the official repos;
+# install.sh runs scripts/install-antigravity.sh (vendor curl-pipe)
+# instead.
+agy SKIP
