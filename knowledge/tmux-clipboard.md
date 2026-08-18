@@ -212,13 +212,65 @@ left in place — they're harmless, resolve correctly, and may work in other
 tmux clients/transports (e.g. a local, non-mosh terminal) where the relay
 isn't broken. They're just not sufficient on their own for this stack.
 
+## Nested tmux (one level)
+
+Starting from the working single-hop setup above: attach to the outer tmux
+session on nexus (reached via mosh, as above), `ssh` to another host from
+inside a pane, and start a *second* tmux session there. Copying inside that
+inner session did not update the clipboard, even though the outer session's
+copy-mode bindings worked fine.
+
+### Cause
+
+`#{client_tty}` for the inner tmux resolves to the pty `sshd` allocated for
+the ssh session — not a real terminal device. Writing raw OSC 52 there just
+sends it down the ssh channel to the `ssh` client process, which is running
+*inside a pane of the outer tmux*. That lands the raw sequence as ordinary
+pane output in the outer tmux, which hits the exact same broken
+`set-clipboard`/`Ms` relay from section 4 above — so it goes nowhere, one
+level up.
+
+### Fix: tmux DCS passthrough
+
+tmux has a separate mechanism for exactly this: a pane can send
+`\033Ptmux;<payload, ESC bytes doubled>\033\\` and, if the receiving tmux
+has `allow-passthrough on` (already set in this config), it unwraps the
+payload and forwards it *raw* to its own client — i.e. straight to
+`client_tty`, bypassing its OSC-52 interception entirely. This is a
+different code path from the broken `set-clipboard`/`Ms` relay, so it isn't
+affected by the same bug.
+
+`osc52-copy.sh` now takes a second argument, `#{client_termname}`, to
+detect nesting: tmux sets `TERM=tmux-256color` (via `default-terminal`) for
+processes running in its own panes, so if the *inner* tmux's client
+reports a termname starting with `tmux` or `screen`, its client is itself
+an outer tmux pane. In that case, wrap the OSC 52 sequence in the DCS
+passthrough envelope before writing it; otherwise (real terminal client)
+write it raw as before:
+
+```sh
+case "$termname" in
+  tmux*|screen*)
+    printf '\033Ptmux;\033\033]52;c;%s\033\033\\\033\\' "$b64" > "$tty"
+    ;;
+  *)
+    printf '\033]52;c;%s\033\\' "$b64" > "$tty"
+    ;;
+esac
+```
+
+Verified independently that `client_termname` distinguishes the two cases
+on this stack: on nexus, `$TERM` inside an outer-tmux pane is
+`tmux-256color` (from `default-terminal`), while `tmux display-message -p
+'#{client_termname}'` for that same outer session reports `xterm-256color`
+(Alacritty's real TERM, forwarded through mosh) — confirming a nested
+tmux's client would see `tmux-256color` and a top-level one wouldn't.
+
+Only one level of nesting is handled — tmux-in-tmux-in-tmux would need the
+sequence wrapped once per level, which this doesn't attempt.
+
 ## Caveats / things not covered
 
-- **Nested tmux** (tmux-in-tmux, e.g. a local tmux on the client machine
-  with an inner tmux session reached via ssh) is not specifically handled.
-  `#{client_tty}` for the inner tmux's client would point at a pty owned by
-  the *outer* tmux's pane, which would then need its own relay to work —
-  same failure mode as the one fixed here, one level up.
 - The exact internal reason tmux's `set-clipboard`/`Ms` path produces no
   output was not root-caused (no `strace`, and tmux's `SIGUSR1`
   debug-logging toggle didn't produce a log file in this environment). If
