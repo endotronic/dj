@@ -28,3 +28,6 @@ claude SKIP
 # scripts/install-antigravity.sh (vendor curl-pipe) after
 # install-packages.sh to handle it.
 agy SKIP
+# Not in Debian/Ubuntu apt repos (only snap or the vendor script);
+# installed via packages/scripts/opencode.sh.
+opencode SKIP
