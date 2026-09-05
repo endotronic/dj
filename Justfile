@@ -121,8 +121,8 @@ claude-creds-snapshot:
 # Args become a one-shot query via `claude -p`; no args -> interactive.
 # Pass -y or --yolo (anywhere in args) to add --dangerously-skip-permissions.
 # Remote Control is enabled by default; pass --no-remote-control to opt out.
-# Always disables 1M context and enables auto-mode. If -r/--resume is
-# present, -p/--print is skipped (resume implies an interactive session).
+# Always enables auto-mode. If -r/--resume is present, -p/--print is
+# skipped (resume implies an interactive session).
 alias c := claude
 
 claude *ARGS:
@@ -143,7 +143,6 @@ claude *ARGS:
     done
     rest="${rest# }"
     cd "$HOME/.dotfiles"
-    export CLAUDE_CODE_DISABLE_1M_CONTEXT=1
     if [ "$resuming" -eq 1 ]; then
       claude $rest $yolo_flag $remote_flag --enable-auto-mode
     elif [ -z "$rest" ]; then
