@@ -28,6 +28,11 @@ claude SKIP
 # scripts/install-antigravity.sh (vendor curl-pipe) after
 # install-packages.sh to handle it.
 agy SKIP
-# Not in Debian/Ubuntu apt repos (only snap or the vendor script);
-# installed via packages/scripts/opencode.sh.
+# Not in Debian/Ubuntu apt repos; installed via packages/scripts/opencode.sh.
 opencode SKIP
+# Not in Debian/Ubuntu apt repos (only Debian sid has it); installed
+# via packages/scripts/glow.sh.
+glow SKIP
+# Debian/Ubuntu apt only ships a stale version (needed to compile
+# nvim-treesitter parsers); installed via packages/scripts/tree-sitter.sh.
+tree-sitter SKIP

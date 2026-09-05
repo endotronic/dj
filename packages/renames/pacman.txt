@@ -4,6 +4,7 @@
 nvim neovim
 gpg gnupg
 rg ripgrep
+tree-sitter tree-sitter-cli
 # Claude Code is in the AUR but not the official repos; we don't
 # assume an AUR helper is present. install.sh runs
 # scripts/install-claude.sh (vendor curl-pipe) instead.

@@ -7,6 +7,7 @@ gpg gnupg
 npm node
 rg ripgrep
 bats bats-core
+tree-sitter tree-sitter-cli
 # Real Docker on macOS needs Docker Desktop (a GUI cask), not the
 # headless `docker` formula -- this mechanism only does `brew install
 # <formula>`, so it can't drive a cask install. Install Docker Desktop
@@ -24,3 +25,7 @@ claude SKIP
 # scripts/install-antigravity.sh (vendor curl-pipe) for the latest
 # version, even on macOS.
 agy SKIP
+# wl-clipboard is a Wayland tool; macOS already has pbcopy/pbpaste
+# built in, which nvim's clipboard provider finds natively -- nothing
+# to install.
+wl-clipboard SKIP
