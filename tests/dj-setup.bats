@@ -2,12 +2,13 @@
 #
 # Tests for scripts/dj-setup.sh (`dj setup [user@]host ...`). It
 # bootstraps a brand-new machine over `ssh -A -t`, filling in this
-# machine's own --private-repo and --sops from local git state. ssh,
-# ssh-agent, ssh-add, and ssh-keygen are all stubbed -- no real
-# network or agent involved. git and the SSH key file are real (a
-# throwaway repo/bare-repo under the sandboxed $HOME), since the
-# remote-URL and branch derivation logic is the part worth exercising
-# for real.
+# machine's own --private-repo (from ~/.config.git's remote) and
+# pushing its own age key to the target via a plain scp (replacing an
+# --sops round trip). ssh, scp, ssh-agent, ssh-add, and ssh-keygen are
+# all stubbed -- no real network or agent involved. git and the SSH
+# key file are real (a throwaway repo/bare-repo under the sandboxed
+# $HOME), since the remote-URL and branch derivation logic is the part
+# worth exercising for real.
 
 load test_helper
 
@@ -17,8 +18,10 @@ setup() {
   export SETUP="$DOTFILES_REPO_ROOT/scripts/dj-setup.sh"
   export DOT_DIR="$HOME/.config.git"
   export DOTFILES_DIR="$HOME/.dotfiles"
-  mkdir -p "$HOME/.ssh"
+  mkdir -p "$HOME/.ssh" "$XDG_CONFIG_HOME/sops/age"
   printf 'fake-private-key\n' > "$HOME/.ssh/id_ed25519"
+  printf 'AGE-SECRET-KEY-1FAKE\n' > "$XDG_CONFIG_HOME/sops/age/keys.txt"
+  stub_cmd scp
 }
 
 teardown() {
@@ -232,7 +235,7 @@ default_stubs() {
   [ "$(cat "$SANDBOX/ssh_argv_3")" = "kevin@testhost" ]
 }
 
-@test "remote command includes this machine's own private-repo URL and identity" {
+@test "remote command includes this machine's own private-repo URL" {
   default_stubs ""
   private_repo_with_remote git@git.example.com:kevin/dotfiles.git
   dotfiles_repo_with_origin git@github.com:someuser/somerepo.git
@@ -241,9 +244,69 @@ default_stubs() {
   [ "$status" -eq 0 ]
   remote_cmd=$(cat "$SANDBOX/ssh_argv_4")
   [[ "$remote_cmd" == *"--private-repo 'git@git.example.com:kevin/dotfiles.git'"* ]]
-  expected_user=$(id -un)
-  expected_host=$(hostname -s 2>/dev/null || uname -n)
-  [[ "$remote_cmd" == *"--sops '$expected_user@$expected_host'"* ]]
+}
+
+# ---------- age-key push (replaces an --sops round trip) ----------------
+
+@test "no local age key exits 1 before touching the target" {
+  rm -f "$XDG_CONFIG_HOME/sops/age/keys.txt"
+  default_stubs ""
+  private_repo_with_remote
+  dotfiles_repo_with_origin git@github.com:someuser/somerepo.git
+
+  run sh "$SETUP" testhost
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "no age key at" ]]
+  ! stub_called scp
+}
+
+@test "pushes the local age key to a /tmp path on the target via scp" {
+  default_stubs ""
+  private_repo_with_remote
+  dotfiles_repo_with_origin git@github.com:someuser/somerepo.git
+
+  run sh "$SETUP" testhost
+  [ "$status" -eq 0 ]
+  grep -q "^scp -q .*sops/age/keys.txt testhost:/tmp/dj-setup-agekey-" "$SANDBOX/stub.log"
+}
+
+@test "remote command uses --age-key with the pushed temp path, not --sops" {
+  default_stubs ""
+  private_repo_with_remote
+  dotfiles_repo_with_origin git@github.com:someuser/somerepo.git
+
+  run sh "$SETUP" testhost
+  [ "$status" -eq 0 ]
+  remote_cmd=$(cat "$SANDBOX/ssh_argv_4")
+  [[ "$remote_cmd" == *"--age-key '/tmp/dj-setup-agekey-"* ]]
+  [[ "$remote_cmd" != *"--sops"* ]]
+}
+
+@test "remote command cleans up the temp key afterward and preserves install.sh's exit status" {
+  default_stubs ""
+  private_repo_with_remote
+  dotfiles_repo_with_origin git@github.com:someuser/somerepo.git
+
+  run sh "$SETUP" testhost
+  [ "$status" -eq 0 ]
+  remote_cmd=$(cat "$SANDBOX/ssh_argv_4")
+  [[ "$remote_cmd" == *"shred -u '/tmp/dj-setup-agekey-"* ]]
+  [[ "$remote_cmd" == *"rm -f '/tmp/dj-setup-agekey-"* ]]
+  [[ "$remote_cmd" == *'exit $rc'* ]]
+
+  # Prove the exit-status preservation for real: run the captured
+  # command with a stubbed inner pipeline that exits 7, and confirm
+  # that status -- not the cleanup command's -- is what comes back.
+  cat > "$STUB_BIN/curl" <<'EOF'
+#!/bin/sh
+cat <<'SCRIPT'
+#!/bin/sh
+exit 7
+SCRIPT
+EOF
+  chmod +x "$STUB_BIN/curl"
+  run sh -c "$remote_cmd"
+  [ "$status" -eq 7 ]
 }
 
 # ---------- curl-ensure: install it on the target if missing ------------

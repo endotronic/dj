@@ -12,16 +12,18 @@
 #   1. Ensures a reachable ssh-agent with this machine's shared
 #      identity (~/.ssh/id_ed25519) loaded, starting one if needed.
 #   2. Resolves this machine's own private-repo remote URL (from
-#      ~/.config.git) and its own [user@]host (for --sops) so the
-#      target doesn't need either spelled out by hand.
+#      ~/.config.git) so the target doesn't need it spelled out by
+#      hand, then pushes this machine's own age key to a temp path on
+#      the target via a plain scp (one fewer round trip and prompt
+#      than making the target dial back out via --sops); the temp
+#      copy is removed after install.sh finishes, success or failure.
 #   3. Resolves the raw install.sh URL from ~/.dotfiles' own origin
 #      remote + current branch, so a fork just works without editing
 #      this script.
 #   4. Runs install.sh on the target via `ssh -A -t`: the forwarded
-#      agent covers both the private-repo clone AND the --sops scp
-#      fetch back to this machine (same shared identity, already
-#      authorized on both ends per this repo's cross-machine SSH
-#      trust setup).
+#      agent covers the private-repo clone (the age key was already
+#      pushed directly in step 2, so no --sops round trip is needed
+#      for that part).
 #
 # Any extra arguments (--system-type, --theme, --on-conflict, ...) are
 # passed through to the remote install.sh unchanged and safely
@@ -69,7 +71,7 @@ if [ -z "$FPR" ] || ! ssh-add -l 2>/dev/null | grep -qF "$FPR"; then
   ssh-add "$SSH_KEY"
 fi
 
-# ---------- 2. This machine's own private-repo remote and identity ---------
+# ---------- 2. This machine's own private-repo remote ----------------------
 
 PRIVATE_REMOTE_NAME=$(git --git-dir="$DOT_DIR" remote 2>/dev/null | head -n1)
 if [ -z "$PRIVATE_REMOTE_NAME" ]; then
@@ -78,7 +80,24 @@ if [ -z "$PRIVATE_REMOTE_NAME" ]; then
 fi
 PRIVATE_REPO_URL=$(git --git-dir="$DOT_DIR" remote get-url "$PRIVATE_REMOTE_NAME")
 
-SOPS_SRC="$(id -un)@$(hostname -s 2>/dev/null || uname -n)"
+# ---------- 2b. Push this machine's age key to a temp path on the target ---
+#
+# install.sh also supports --sops [user@]host to have the *target*
+# scp the key back from here -- but since we're already about to have
+# a live, authenticated connection to the target (that's how step 4's
+# ssh -A -t works at all), pushing it there ourselves up front is one
+# fewer round trip and one fewer credential prompt than making the
+# target dial back out to us. The temp copy is removed after
+# install.sh runs, success or failure, by the trailing cleanup in the
+# remote command built below.
+
+AGE_KEY_LOCAL=${XDG_CONFIG_HOME:-$HOME/.config}/sops/age/keys.txt
+if [ ! -r "$AGE_KEY_LOCAL" ]; then
+  printf 'error: no age key at %s -- nothing to push for secrets decryption\n' "$AGE_KEY_LOCAL" >&2
+  exit 1
+fi
+REMOTE_TMP_KEY="/tmp/dj-setup-agekey-$$"
+scp -q "$AGE_KEY_LOCAL" "$HOSTSPEC:$REMOTE_TMP_KEY"
 
 # ---------- 3. Raw install.sh URL, derived from ~/.dotfiles' own origin ----
 
@@ -109,10 +128,16 @@ ENSURE_CURL='command -v curl >/dev/null 2>&1 || \
 { command -v brew >/dev/null 2>&1 && brew install curl; } || \
 { printf "error: curl is missing and no known package manager was found\n" >&2; exit 1; }'
 
-REMOTE_CMD="$ENSURE_CURL && curl -fsSL $(q "$RAW_INSTALL_URL") | sh -s -- --private-repo $(q "$PRIVATE_REPO_URL") --sops $(q "$SOPS_SRC")"
+MAIN_CMD="$ENSURE_CURL && curl -fsSL $(q "$RAW_INSTALL_URL") | sh -s -- --private-repo $(q "$PRIVATE_REPO_URL") --age-key $(q "$REMOTE_TMP_KEY")"
 for arg in "$@"; do
-  REMOTE_CMD="$REMOTE_CMD $(q "$arg")"
+  MAIN_CMD="$MAIN_CMD $(q "$arg")"
 done
 
-log "bootstrapping $HOSTSPEC (private-repo=$PRIVATE_REPO_URL sops=$SOPS_SRC)"
+# Clean up the pushed age key afterward regardless of outcome, while
+# preserving install.sh's own exit status rather than masking it with
+# the cleanup command's.
+CLEANUP="rc=\$?; shred -u $(q "$REMOTE_TMP_KEY") 2>/dev/null || rm -f $(q "$REMOTE_TMP_KEY"); exit \$rc"
+REMOTE_CMD="{ $MAIN_CMD; }; $CLEANUP"
+
+log "bootstrapping $HOSTSPEC (private-repo=$PRIVATE_REPO_URL)"
 ssh -A -t "$HOSTSPEC" "$REMOTE_CMD"
