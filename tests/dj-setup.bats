@@ -22,6 +22,18 @@ setup() {
   printf 'fake-private-key\n' > "$HOME/.ssh/id_ed25519"
   printf 'AGE-SECRET-KEY-1FAKE\n' > "$XDG_CONFIG_HOME/sops/age/keys.txt"
   stub_cmd scp
+  # $STUB_BIN is only prepended to PATH, not exclusive -- without a
+  # stub here, `command -v claude` would fall through to the REAL
+  # claude binary (this repo is developed inside Claude Code, so it's
+  # genuinely on PATH) and every test reaching the theme-auto-generate
+  # code would fire a real, non-hermetic invocation of it. Default to
+  # "unavailable" (exit 1, no output); tests that actually exercise
+  # theme generation install their own working stub instead.
+  cat > "$STUB_BIN/claude" <<'EOF'
+#!/bin/sh
+exit 1
+EOF
+  chmod +x "$STUB_BIN/claude"
 }
 
 teardown() {
@@ -110,6 +122,70 @@ default_stubs() {
   stub_ssh_agent
   stub_ssh_keygen
   stub_ssh_records_argv
+}
+
+# ---------- theme auto-generation via claude when omitted ---------------
+
+@test "generates --theme via claude when omitted and claude returns a valid hex color" {
+  default_stubs ""
+  private_repo_with_remote
+  dotfiles_repo_with_origin git@github.com:someuser/somerepo.git
+  cat > "$STUB_BIN/claude" <<'EOF'
+#!/bin/sh
+printf 'Sure! #ff0000 seems fitting.\n'
+EOF
+  chmod +x "$STUB_BIN/claude"
+
+  run sh "$SETUP" testhost --system-type server < /dev/null
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "generated tmux theme color for testhost: #ff0000" ]]
+  remote_cmd=$(cat "$SANDBOX/ssh_argv_6")
+  [[ "$remote_cmd" == *"'--theme' '#ff0000'"* ]]
+}
+
+@test "no --theme added when claude produces no valid hex color" {
+  default_stubs ""
+  private_repo_with_remote
+  dotfiles_repo_with_origin git@github.com:someuser/somerepo.git
+  cat > "$STUB_BIN/claude" <<'EOF'
+#!/bin/sh
+printf 'I cannot help with that.\n'
+EOF
+  chmod +x "$STUB_BIN/claude"
+
+  run sh "$SETUP" testhost --system-type server < /dev/null
+  [ "$status" -eq 0 ]
+  remote_cmd=$(cat "$SANDBOX/ssh_argv_6")
+  [[ "$remote_cmd" != *"--theme"* ]]
+}
+
+@test "claude is never invoked when --theme is already supplied" {
+  default_stubs ""
+  private_repo_with_remote
+  dotfiles_repo_with_origin git@github.com:someuser/somerepo.git
+  stub_cmd claude
+
+  run sh "$SETUP" testhost --system-type server --theme '#2596be' < /dev/null
+  [ "$status" -eq 0 ]
+  ! stub_called claude
+}
+
+@test "claude is never invoked when the timeout binary is unavailable" {
+  default_stubs ""
+  private_repo_with_remote
+  dotfiles_repo_with_origin git@github.com:someuser/somerepo.git
+  stub_cmd claude
+  # unstub_cmd alone isn't enough -- PATH still falls through to the
+  # real system `timeout` further down. Restrict PATH to $STUB_BIN
+  # (which never had a `timeout` stub) instead, symlinking in the
+  # other real utilities dj-setup.sh still needs.
+  for u in git awk basename sed grep head; do
+    ln -sf "$(command -v "$u")" "$STUB_BIN/$u"
+  done
+
+  PATH="$STUB_BIN" run /bin/sh "$SETUP" testhost --system-type server < /dev/null
+  [ "$status" -eq 0 ]
+  ! stub_called claude
 }
 
 # ---------- system-type prompt when omitted -----------------------------
