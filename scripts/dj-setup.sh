@@ -77,16 +77,18 @@ done
 
 if [ "$_has_system_type" -eq 0 ]; then
   TYPES_DIR=${XDG_CONFIG_HOME:-$HOME/.config}/dj/packages/types
-  _known_types=
+  _have_known_types=0
   if [ -d "$TYPES_DIR" ]; then
     for _f in "$TYPES_DIR"/*.txt; do
       [ -e "$_f" ] || continue
-      _b=$(basename "$_f" .txt)
-      _known_types="${_known_types:+$_known_types, }$_b"
+      if [ "$_have_known_types" -eq 0 ]; then
+        printf '[dj-setup] known system types:\n' >&2
+        _have_known_types=1
+      fi
+      printf '  - %s\n' "$(basename "$_f" .txt)" >&2
     done
   fi
-  printf '[dj-setup] system type for %s%s [blank = common-only]: ' \
-    "$HOSTSPEC" "${_known_types:+ (known: $_known_types)}" >&2
+  printf '[dj-setup] system type for %s [blank = common-only]: ' "$HOSTSPEC" >&2
   read -r _system_type_answer || _system_type_answer=
   case "$_system_type_answer" in
     '') ;;
