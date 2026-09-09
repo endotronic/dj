@@ -80,6 +80,17 @@ system-type TYPE:
         ;;
     esac
 
+# Bootstrap a brand-new machine over SSH from this one: ensures a
+# reachable ssh-agent with this machine's shared identity loaded, then
+# forwards it to run install.sh on the target with this machine's own
+# --private-repo remote and --sops (so the target fetches the age key
+# back over the same forwarded connection) filled in automatically.
+# Extra args (--system-type, --theme, ...) pass through to install.sh.
+#
+# Usage: dj setup [user@]hostname [--system-type TYPE] [--theme '#rrggbb']
+setup HOSTSPEC *ARGS:
+    sh "{{SCRIPTS}}/dj-setup.sh" "{{HOSTSPEC}}" {{ARGS}}
+
 # First-time SOPS setup: generate age key and write .sops.yaml.
 sops-init:
     sh "{{SCRIPTS}}/sops-init.sh"
