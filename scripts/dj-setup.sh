@@ -101,18 +101,24 @@ if [ "$_has_system_type" -eq 0 ]; then
   esac
 fi
 
-# ---------- 0b. Auto-generate --theme via claude if omitted ----------------
+# ---------- 0b. Determine --theme if omitted: claude, else random ----------
 #
-# Best-effort only: skip silently on any failure (claude missing, no
-# `timeout` binary to bound it, a non-hex or empty response, an actual
-# timeout) rather than risk blocking or hanging an otherwise-unattended
-# bootstrap. Only claude is attempted here -- its non-interactive `-p`
-# query is the same invocation already relied on elsewhere in this
-# repo (the `claude` Justfile recipe), so it's a known-good contract.
-# agy/opencode's exact non-interactive query syntax isn't confidently
-# known, and guessing wrong risks a hang the timeout can't fully
-# guard against (e.g. if it drops into an interactive prompt that
-# itself ignores the outer timeout's signal) -- not attempted.
+# First choice is claude, best-effort: skip straight to the random
+# fallback below on any failure (claude missing, no `timeout` binary
+# to bound it, a non-hex or empty response, an actual timeout) rather
+# than risk blocking or hanging an otherwise-unattended bootstrap.
+# Only claude is attempted here -- its non-interactive `-p` query is
+# the same invocation already relied on elsewhere in this repo (the
+# `claude` Justfile recipe), so it's a known-good contract. agy/
+# opencode's exact non-interactive query syntax isn't confidently
+# known, and guessing wrong risks a hang the timeout can't fully guard
+# against (e.g. if it drops into an interactive prompt that itself
+# ignores the outer timeout's signal) -- not attempted.
+#
+# If claude didn't produce one either, generate a random hex color --
+# unlike the claude attempt, this tier always succeeds, so every
+# machine ends up with *some* distinct accent color instead of
+# falling through to install.sh's single shared #2596be default.
 
 _has_theme=0
 for _arg in "$@"; do
@@ -121,13 +127,26 @@ for _arg in "$@"; do
   esac
 done
 
-if [ "$_has_theme" -eq 0 ] && command -v claude >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1; then
-  _theme_prompt="Respond with ONLY a 6-digit hex color code (like #2596be) and nothing else -- no explanation, no markdown -- that you associate with or that is evocative of the word \"$HOSTSPEC\" (for example, what a similar-sounding color name suggests). If nothing specific comes to mind, pick any pleasant accent color."
-  _generated_theme=$(timeout 20 claude -p "$_theme_prompt" 2>/dev/null | grep -oE '#[0-9a-fA-F]{6}' | head -n1) || _generated_theme=
-  if [ -n "$_generated_theme" ]; then
-    log "generated tmux theme color for $HOSTSPEC: $_generated_theme"
-    set -- "$@" --theme "$_generated_theme"
+if [ "$_has_theme" -eq 0 ]; then
+  _generated_theme=
+  if command -v claude >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1; then
+    _theme_prompt="Respond with ONLY a 6-digit hex color code (like #2596be) and nothing else -- no explanation, no markdown -- that you associate with or that is evocative of the word \"$HOSTSPEC\" (for example, what a similar-sounding color name suggests). If nothing specific comes to mind, pick any pleasant accent color."
+    _generated_theme=$(timeout 20 claude -p "$_theme_prompt" 2>/dev/null | grep -oE '#[0-9a-fA-F]{6}' | head -n1) || _generated_theme=
   fi
+  if [ -n "$_generated_theme" ]; then
+    log "generated tmux theme color for $HOSTSPEC via claude: $_generated_theme"
+  else
+    _rand_hex=$(od -An -N3 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n')
+    if [ -z "$_rand_hex" ]; then
+      # /dev/urandom missing/unreadable (shouldn't happen on any OS
+      # this repo targets, but this tier must always succeed): fall
+      # back to awk's rand(), seeded from pid + time.
+      _rand_hex=$(awk -v seed="$$$(date +%s)" 'BEGIN { srand(seed); printf "%06x", int(rand() * 16777216) }')
+    fi
+    _generated_theme="#$_rand_hex"
+    log "no theme from claude; generated a random one for $HOSTSPEC: $_generated_theme"
+  fi
+  set -- "$@" --theme "$_generated_theme"
 fi
 
 # Single-quote a value for safe embedding in a reconstructed shell

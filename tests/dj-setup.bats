@@ -138,12 +138,12 @@ EOF
 
   run sh "$SETUP" testhost --system-type server < /dev/null
   [ "$status" -eq 0 ]
-  [[ "$output" =~ "generated tmux theme color for testhost: #ff0000" ]]
+  [[ "$output" =~ "generated tmux theme color for testhost via claude: #ff0000" ]]
   remote_cmd=$(cat "$SANDBOX/ssh_argv_6")
   [[ "$remote_cmd" == *"'--theme' '#ff0000'"* ]]
 }
 
-@test "no --theme added when claude produces no valid hex color" {
+@test "falls back to a random --theme when claude produces no valid hex color" {
   default_stubs ""
   private_repo_with_remote
   dotfiles_repo_with_origin git@github.com:someuser/somerepo.git
@@ -155,8 +155,27 @@ EOF
 
   run sh "$SETUP" testhost --system-type server < /dev/null
   [ "$status" -eq 0 ]
+  [[ "$output" =~ "no theme from claude; generated a random one for testhost:" ]]
   remote_cmd=$(cat "$SANDBOX/ssh_argv_6")
-  [[ "$remote_cmd" != *"--theme"* ]]
+  [[ "$remote_cmd" =~ \'--theme\'\ \'#[0-9a-f]{6}\' ]]
+}
+
+@test "falls back to a random --theme when claude isn't on PATH at all" {
+  default_stubs ""
+  private_repo_with_remote
+  dotfiles_repo_with_origin git@github.com:someuser/somerepo.git
+  unstub_cmd claude
+  # Same PATH-restriction technique as the timeout-unavailable test
+  # below: unstub_cmd alone isn't enough since PATH still falls
+  # through to the real system `claude` further down.
+  for u in git awk basename sed grep head od tr date; do
+    ln -sf "$(command -v "$u")" "$STUB_BIN/$u"
+  done
+
+  PATH="$STUB_BIN" run /bin/sh "$SETUP" testhost --system-type server < /dev/null
+  [ "$status" -eq 0 ]
+  remote_cmd=$(cat "$SANDBOX/ssh_argv_6")
+  [[ "$remote_cmd" =~ \'--theme\'\ \'#[0-9a-f]{6}\' ]]
 }
 
 @test "claude is never invoked when --theme is already supplied" {
@@ -170,7 +189,7 @@ EOF
   ! stub_called claude
 }
 
-@test "claude is never invoked when the timeout binary is unavailable" {
+@test "claude is never invoked, and theme still falls back to random, when timeout is unavailable" {
   default_stubs ""
   private_repo_with_remote
   dotfiles_repo_with_origin git@github.com:someuser/somerepo.git
@@ -179,13 +198,15 @@ EOF
   # real system `timeout` further down. Restrict PATH to $STUB_BIN
   # (which never had a `timeout` stub) instead, symlinking in the
   # other real utilities dj-setup.sh still needs.
-  for u in git awk basename sed grep head; do
+  for u in git awk basename sed grep head od tr date; do
     ln -sf "$(command -v "$u")" "$STUB_BIN/$u"
   done
 
   PATH="$STUB_BIN" run /bin/sh "$SETUP" testhost --system-type server < /dev/null
   [ "$status" -eq 0 ]
   ! stub_called claude
+  remote_cmd=$(cat "$SANDBOX/ssh_argv_6")
+  [[ "$remote_cmd" =~ \'--theme\'\ \'#[0-9a-f]{6}\' ]]
 }
 
 # ---------- system-type prompt when omitted -----------------------------
