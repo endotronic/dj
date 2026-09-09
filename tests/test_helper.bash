@@ -84,6 +84,30 @@ unstub_cmd() {
   rm -f "$STUB_BIN/$1"
 }
 
+# Stub `scp` as a plain local copy: `scp [-q] SRC DST` -> `cp SRC DST`.
+# install.sh always invokes it with exactly that shape (fetching the
+# age key), so this is enough to exercise the real fetch-and-install
+# path without a network or an actual remote host.
+stub_scp_copies() {
+  cat > "$STUB_BIN/scp" <<'EOF'
+#!/bin/sh
+{ printf 'scp'; for a in "$@"; do printf ' %s' "$a"; done; printf '\n'; } \
+  >> "$SANDBOX/stub.log"
+shift $(( $# - 2 ))
+cp "$1" "$2"
+EOF
+  chmod +x "$STUB_BIN/scp"
+}
+
+# Stub `scp` that always fails (simulates an unreachable host/bad path).
+stub_scp_fails() {
+  cat > "$STUB_BIN/scp" <<'EOF'
+#!/bin/sh
+exit 1
+EOF
+  chmod +x "$STUB_BIN/scp"
+}
+
 # Dump the stub call log (empty string if nothing called).
 stub_log() {
   cat "$SANDBOX/stub.log" 2>/dev/null || true

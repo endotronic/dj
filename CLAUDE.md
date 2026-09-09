@@ -242,17 +242,21 @@ Always use `dj` not `just` — the Justfile is at `~/.dotfiles/Justfile`, not `$
 ### 4.1 Fresh machine
 
 ```sh
-# Transport ~/.config/sops/age/keys.txt first (or pass --age-key <path>).
+# Transport ~/.config/sops/age/keys.txt first (or pass --age-key <path>,
+# or --sops user@host:path to have install.sh scp it in automatically).
 curl -fsSL https://raw.githubusercontent.com/<you>/dotfiles/main/install.sh | sh
-# With type and inline age key:
+# With type, inline age key, and tmux theme color:
 curl -fsSL https://raw.githubusercontent.com/<you>/dotfiles/main/install.sh \
-  | sh -s -- --system-type desktop --age-key ~/keys.txt
+  | sh -s -- --system-type desktop --age-key ~/keys.txt --theme '#2596be'
+# Or fetch the age key via scp from an already-bootstrapped machine instead:
+curl -fsSL https://raw.githubusercontent.com/<you>/dotfiles/main/install.sh \
+  | sh -s -- --system-type server --sops kevin@oldhost:~/.config/sops/age/keys.txt
 ```
 
 `install.sh` steps:
 1. Detect OS + pkg manager (abort if none of apt/pacman/brew).
 2. Bootstrap git if missing.
-3. Persist `--system-type` (any identifier — just a lookup key for `~/.config/dj/packages/types/<type>.txt`, see §2.7).
+3. Persist `--system-type` (any identifier — just a lookup key for `~/.config/dj/packages/types/<type>.txt`, see §2.7) and, separately, `--theme` (a 6-digit hex color) to `~/.config/dotfiles/tmux-theme-color` — both host-local state, never tracked.
 4. Clone the public tooling repo to `~/.dotfiles/` (or use in place).
 5. Install required dependencies — `git gpg sops age just` are core to the workflow itself (cloning, signing, secrets, `dj`), not a personal preference, so they're always installed here (via the same renames + fallback-script mechanism as personal packages, through a throwaway list) rather than offered in the seeding checkbox in step 8.
 6. `git clone --bare … $HOME/.config.git` (private bare repo).
@@ -260,7 +264,7 @@ curl -fsSL https://raw.githubusercontent.com/<you>/dotfiles/main/install.sh \
 8. Seed `~/.config/dj/packages/common.txt` from `~/.dotfiles/packages/template/common.txt` if it doesn't already exist (i.e. nothing was checked out for it — a genuinely fresh machine). Interactive: yes/no checkbox per tool (git/gpg/sops/age/just are excluded — they're always installed in step 5, not optional). Non-interactive: seed the full template. Returning machines skip this — checkout in step 7 already materialized the tracked list.
 9. Install pre-commit hook into `.config.git/hooks/`.
 10. Resolve the active package list (common + type + host, §2.7) and install via `install-packages.sh`.
-11. Install age key — from `--age-key <path>` if provided, or interactive paste, or skip.
+11. Install age key — from `--age-key <path>` if provided, via `scp` from `--sops user@host:path` (mutually exclusive with `--age-key`), or interactive paste, or skip.
 12. Initialize SOPS — run `sops-init.sh` (generate age key + write `~/.private/.sops.yaml`) if sops and age-keygen are present and not yet done.
 13. Apply secrets (`dj apply-secrets`) if age key is present — decrypts from `~/.private/secrets/` to target paths.
 14. Optional cleanup of local source clone.
@@ -414,6 +418,7 @@ Two orthogonal rules:
 - **Configs deploy everywhere; software is typed** — guard type-specific binaries with `command -v <tool> >/dev/null 2>&1 &&`.
 - **Don't auto-detect system type** — persisted via `--system-type`; inferring from `$DISPLAY` will be wrong in edge cases. It's a generic lookup key (any identifier), not a `desktop|server` enum (§2.7).
 - **`~/.config/dotfiles/system-type` is host-local state** — never track in the repo; refuse if asked and explain. (The package *lists* it keys into, however, ARE tracked — in the private repo, at `~/.config/dj/packages/`, §2.7.)
+- **`~/.config/dotfiles/tmux-theme-color` is host-local state too**, same rule — set via `install.sh --theme #rrggbb` or by hand; never track it. tmux.conf's `@theme_color` reads it at runtime if present, falling back to the tracked default otherwise. starship's prompt color is a separate, tracked, repo-wide hex in `starship.toml` and does not follow this file (see the comment there).
 
 ---
 

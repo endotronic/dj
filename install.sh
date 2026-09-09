@@ -7,6 +7,8 @@
 # Or, when curl-piped from a fresh machine:
 #   curl -fsSL <raw-install.sh> | sh
 #   curl -fsSL <raw-install.sh> | sh -s -- --system-type desktop
+#   curl -fsSL <raw-install.sh> | sh -s -- --system-type server \
+#     --sops user@oldhost:~/.config/sops/age/keys.txt --theme '#2596be'
 #
 # Idempotent: re-running on an installed machine converges rather than
 # replaces. Package installs are skipped when the binary is already on
@@ -41,6 +43,8 @@ SYSTEM_TYPE=
 CONFLICT_MODE=ask
 REMOVE_SOURCE=ask
 AGE_KEY_SRC=
+SOPS_KEY_SRC=
+THEME_COLOR=
 while [ $# -gt 0 ]; do
   case "$1" in
     --system-type)    shift; SYSTEM_TYPE=${1:-} ;;
@@ -55,6 +59,10 @@ while [ $# -gt 0 ]; do
     --remove-source=*) REMOVE_SOURCE=${1#*=} ;;
     --age-key)        shift; AGE_KEY_SRC=${1:-} ;;
     --age-key=*)      AGE_KEY_SRC=${1#*=} ;;
+    --sops)           shift; SOPS_KEY_SRC=${1:-} ;;
+    --sops=*)         SOPS_KEY_SRC=${1#*=} ;;
+    --theme)          shift; THEME_COLOR=${1:-} ;;
+    --theme=*)        THEME_COLOR=${1#*=} ;;
     -h|--help)
       cat <<EOF
 Usage: install.sh [OPTIONS]
@@ -112,6 +120,19 @@ Options:
         immediately during bootstrap. When omitted and the key is absent,
         an interactive install will prompt you to paste it; press Enter
         on a blank line to finish, or Enter immediately to skip.
+  --sops USER@HOST:PATH
+        Fetch the age private key via scp from a remote path (e.g. an
+        already-bootstrapped machine) instead of transporting it
+        out-of-band first. Relies on your existing SSH credentials/
+        agent for auth (scp will prompt interactively if needed);
+        mutually exclusive with --age-key.
+  --theme COLOR
+        6-digit hex color (e.g. #2596be) to persist to
+        ~/.config/dotfiles/tmux-theme-color -- a host-local override
+        that tmux.conf picks up at runtime for its accent color.
+        Host-local, like --system-type: never tracked in the repo.
+        (starship's prompt color is not affected; it's tracked
+        repo-wide and the same on every machine.)
   -h, --help
         Show this help.
 EOF
@@ -144,6 +165,20 @@ case "$REMOVE_SOURCE" in
   *)
     printf 'error: --remove-source must be ask|yes|no (got: %s)\n' \
       "$REMOVE_SOURCE" >&2
+    exit 2 ;;
+esac
+
+if [ -n "$AGE_KEY_SRC" ] && [ -n "$SOPS_KEY_SRC" ]; then
+  printf 'error: --age-key and --sops are mutually exclusive\n' >&2
+  exit 2
+fi
+
+case "$THEME_COLOR" in
+  '') ;;
+  '#'[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]) ;;
+  *)
+    printf 'error: --theme must be a 6-digit hex color like #2596be (got: %s)\n' \
+      "$THEME_COLOR" >&2
     exit 2 ;;
 esac
 
@@ -219,7 +254,7 @@ if [ -z "$REPO_URL" ]; then
   REPO_URL=$REPO_URL_DEFAULT
 fi
 
-log "OS=$OS PKG=$PKG TIER=${SYSTEM_TYPE:-none} REPO=$REPO_URL"
+log "OS=$OS PKG=$PKG TIER=${SYSTEM_TYPE:-none} THEME=${THEME_COLOR:-none} REPO=$REPO_URL"
 
 # ---------- 2. Bootstrap prerequisite: git ----------
 # install-packages.sh handles the full set later; here we only need
@@ -244,6 +279,15 @@ if [ -n "$SYSTEM_TYPE" ]; then
   mkdir -p "$(dirname "$TIER_FILE")"
   printf '%s\n' "$SYSTEM_TYPE" > "$TIER_FILE"
   log "persisted system-type=$SYSTEM_TYPE"
+fi
+
+# ---------- 3b. Persist tmux theme color (host-local, not tracked) ---------
+
+if [ -n "$THEME_COLOR" ]; then
+  THEME_FILE=${XDG_CONFIG_HOME:-$HOME/.config}/dotfiles/tmux-theme-color
+  mkdir -p "$(dirname "$THEME_FILE")"
+  printf '%s\n' "$THEME_COLOR" > "$THEME_FILE"
+  log "persisted tmux theme color=$THEME_COLOR"
 fi
 
 # ---------- 4. Public tooling repo (~/.dotfiles/) ----------
@@ -609,9 +653,26 @@ if [ -x "$HOME/.dotfiles/scripts/install-antigravity.sh" ]; then
   sh "$HOME/.dotfiles/scripts/install-antigravity.sh"
 fi
 
-# ---------- 11. Install age key (if provided via flag or interactive paste) ---
+# ---------- 11. Install age key (via flag, scp fetch, or interactive paste) ---
 
 AGE_KEY=${XDG_CONFIG_HOME:-$HOME/.config}/sops/age/keys.txt
+SCP_TMP=
+
+if [ ! -r "$AGE_KEY" ] && [ -n "$SOPS_KEY_SRC" ]; then
+  if ! command -v scp >/dev/null 2>&1; then
+    log "warn: --sops given but scp not found on PATH; skipping"
+  else
+    SCP_TMP=$(mktemp)
+    if scp -q "$SOPS_KEY_SRC" "$SCP_TMP" 2>/dev/null; then
+      AGE_KEY_SRC=$SCP_TMP
+      log "fetched age key via scp from $SOPS_KEY_SRC"
+    else
+      log "warn: scp from $SOPS_KEY_SRC failed; skipping"
+      rm -f "$SCP_TMP"
+      SCP_TMP=
+    fi
+  fi
+fi
 
 if [ ! -r "$AGE_KEY" ]; then
   if [ -n "$AGE_KEY_SRC" ]; then
@@ -644,6 +705,8 @@ if [ ! -r "$AGE_KEY" ]; then
     fi
   fi
 fi
+
+[ -n "$SCP_TMP" ] && rm -f "$SCP_TMP"
 
 # ---------- 12. Initialize SOPS/age (generate key + .sops.yaml if absent) -----
 
