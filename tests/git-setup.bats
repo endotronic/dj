@@ -266,15 +266,29 @@ staged_files() {
 
 # --- Registering new keys as secrets -----------------------------------------
 
-@test "new SSH key: registration skipped (and hinted) when secrets infra absent" {
+@test "new SSH key is never registered as a secret" {
+  # The SSH private key identifies this *machine* and must not be
+  # distributed to others -- only its public half travels, via
+  # authorized-keys.sh. GPG (which identifies the person) still is.
   git config --global user.name  "Jane Dev"
   git config --global user.email "jane@example.com"
 
   run sh "$SCRIPT" --yes
   [ "$status" -eq 0 ]
-  [[ "$output" =~ "skipped registering SSH key" ]]
-  # No secret-add side effects: nothing under ~/.private.
+  ! [[ "$output" =~ "registering SSH" ]]
+  # No secret-add side effects for the SSH key: nothing under ~/.private.
   [ ! -d "$HOME/.private" ]
+}
+
+@test "new SSH key's public half is registered into authorized_keys.d" {
+  git config --global user.name  "Jane Dev"
+  git config --global user.email "jane@example.com"
+
+  run sh "$SCRIPT" --yes
+  [ "$status" -eq 0 ]
+  host=$(hostname -s 2>/dev/null || uname -n)
+  [ -f "$HOME/.ssh/authorized_keys.d/$host.pub" ]
+  cmp -s "$HOME/.ssh/id_ed25519.pub" "$HOME/.ssh/authorized_keys.d/$host.pub"
 }
 
 @test "new GPG key: registration skipped (and hinted) when secrets infra absent" {
@@ -321,14 +335,19 @@ staged_files() {
   printf '%s\n' "$staged" | grep -q '\.gitconfig'
 }
 
-@test "SSH public key staged in bare repo after generation" {
+@test "authorized_keys.d entry staged in bare repo, but never id_ed25519.pub" {
+  # Regression: ~/.ssh/id_ed25519.pub used to be tracked directly,
+  # which would check one machine's public key out over every other
+  # machine's, leaving each with a .pub not matching its private key.
   git config --global user.name  "Jane Dev"
   git config --global user.email "jane@example.com"
 
   sh "$SCRIPT" --yes >/dev/null
 
   staged=$(staged_files)
-  printf '%s\n' "$staged" | grep -q '\.ssh/id_ed25519\.pub'
+  host=$(hostname -s 2>/dev/null || uname -n)
+  printf '%s\n' "$staged" | grep -q "\.ssh/authorized_keys\.d/$host\.pub"
+  ! printf '%s\n' "$staged" | grep -q '\.ssh/id_ed25519\.pub'
 }
 
 @test "no DOT_DIR: staging skipped but script succeeds" {

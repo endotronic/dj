@@ -290,7 +290,7 @@ curl -fsSL https://raw.githubusercontent.com/<you>/dotfiles/main/install.sh \
 13. Apply secrets (`dj apply-secrets`) if age key is present — decrypts from `~/.private/secrets/` to target paths.
 14. Optional cleanup of local source clone.
 15. Offer shell consolidation (`shell-consolidate.sh`) — migrate or create `~/.config/{shell,bash,zsh}/`.
-16. Git identity, SSH key, GPG key (`git-setup.sh`) — adopt existing config, prompt if missing, generate keys if absent.
+16. Git identity, SSH key, GPG key (`git-setup.sh`) — adopt existing config, prompt if missing, generate keys if absent. The SSH key is per-machine and never registered as a secret; its public half is published via `authorized-keys.sh` (§5.3).
 17. Print next steps.
 
 Multi-user: steps 1–3 may `sudo` for system packages (idempotent); steps 4+ touch only invoking user's `$HOME`.
@@ -361,17 +361,41 @@ Rejects a commit when:
 
 The hook is installed in `~/.config.git/hooks/pre-commit` (private bare repo). Backstop only — primary control is that `sops` editing never produces a plaintext working file.
 
-### 5.3 Cross-machine SSH trust
+### 5.3 SSH keys: per-machine identity, shared trust
 
-All machines share the same identity (`~/.private/secrets/.ssh/id_ed25519.enc` → `~/.ssh/id_ed25519`). Track `~/.ssh/authorized_keys` so every machine gets the public key on bootstrap:
+**No SSH private key is ever distributed.** Each machine generates its own `~/.ssh/id_ed25519` (`git-setup.sh`, on first run) and that private key never leaves it. Only public keys travel.
+
+This replaced an earlier design where one keypair was copied to every machine via the secrets manifest. That's a genuine anti-pattern: one compromised machine yields a key valid on *every* machine and *every* git host at once, and revoking it means rotating everywhere. Per-machine keys make a compromise containable and revocation a one-line change.
+
+**Mutual trust** — `~/.ssh/authorized_keys.d/<hostname>.pub`, one tracked file per machine:
+
+| | |
+|---|---|
+| `~/.ssh/authorized_keys.d/*.pub` | **tracked**; each machine writes only its own `<hostname>.pub` |
+| `~/.ssh/authorized_keys` | **generated**, never tracked — rebuilt from the `.d` entries |
+
+A directory rather than one shared `authorized_keys` because machines only ever write their own file: two bootstrapping in parallel can't conflict, and revoking a machine is `rm ~/.ssh/authorized_keys.d/<host>.pub` + push instead of an edit everyone else is also making.
 
 ```sh
-cp ~/.ssh/id_ed25519.pub ~/.ssh/authorized_keys
-chmod 0600 ~/.ssh/authorized_keys
-dot add ~/.ssh/authorized_keys
-dot commit -m 'ssh: track authorized_keys for cross-machine trust'
-dot push
+dj authorized-keys      # register this machine + rebuild authorized_keys
+dot commit -m 'ssh: trust <host>' && dot push
 ```
+
+`dj sync` runs the rebuild (with `--no-register`, so it never stages anything of its own) so keys from other machines land automatically. `git-setup.sh` registers during bootstrap. Safety properties in `authorized-keys.sh`: an empty `.d` never truncates an existing `authorized_keys` (that would lock everyone out), and a key present only in `authorized_keys` is backed up before being dropped.
+
+**Never track `~/.ssh/id_ed25519.pub`.** It's a per-machine path, so tracking it checks one machine's public key out over every other's, leaving each with a `.pub` that doesn't match its own private key.
+
+### 5.3.1 Git host access: deploy key, not a personal key
+
+The private repo is cloned over SSH, which needs credentials *before* anything has been restored. That's a **repo-scoped deploy key** (`~/.ssh/id_gitea`), not a personal account key — blast radius is one repo rather than the whole account, which is what deploy keys exist for.
+
+- Distributed via the manifest (`secrets/.ssh/id_gitea.enc` → `~/.ssh/id_gitea`, 0600) so every machine restores it on `dj sync`.
+- Selected via a tracked `~/.ssh/config` stanza for the git host (`IdentityFile ~/.ssh/id_gitea`, `IdentitiesOnly yes`).
+- Bootstrap chicken-and-egg (the first clone predates both the manifest and the tracked config) is solved exactly like the age key: `dj setup` pushes it to the target over scp and passes `install.sh --deploy-key`.
+
+GitHub (the public repo) needs no equivalent: `install.sh` clones it over https, and pushing happens only from machines where you actually develop, using that machine's own key registered normally.
+
+GPG is deliberately *not* treated this way — it identifies the person, not the machine, so one signing key across your own machines is normal practice and stays in the manifest (§5.1).
 
 ### 5.4 Rotating the age key
 
@@ -412,7 +436,7 @@ Two orthogonal rules:
 
 ## 8. Implementation status
 
-**Complete:** install.sh (POSIX, idempotent, --system-type, --on-conflict, --age-key, three-bucket conflict classification, auto sops-init, shell consolidation, git setup); Justfile (sync, upgrade, add, secret-add, secret-edit, apply-secrets, install-packages, postinstall, system-type, sops-init, doctor, config-diff, audit-config, test, setup); dj-setup.sh (`dj setup [user@]host` -- ssh-agent bootstrap, curl-ensure, direct age-key push, forwarded `ssh -A -t` install.sh launch with this machine's own --private-repo filled in); os-detect.sh; install-packages.sh (SKIP semantics, fallback scripts); run-postinstall.sh + packages/postinstall/<name>.sh (§2.8 hook mechanism, e.g. docker.sh); packages/scripts/{sops,just,starship}.sh; rebuild-secrets.sh (PRIVATE_DIR-based); secret-add.sh (encrypt + manifest update + stage); pre-commit-secrets.sh (guards .private/secrets/); sops-init.sh (auto-called from install.sh, writes to PRIVATE_DIR); shell-consolidate.sh (migrate or create ~/.config/{shell,bash,zsh}/, atomic conflict check); git-setup.sh (identity + SSH + GPG, idempotent); config-diff.sh; audit-config.sh; generic `--system-type` + personal package lists at `~/.config/dj/packages/{common,types/<type>,hosts/<host>}.txt` (private repo) seeded from `packages/template/{common,types/{desktop,server}}.txt`; renames/{apt,pacman,brew}.txt; shell/{init,env,aliases,functions,secrets}.sh; shell/os/{linux,darwin,wsl}.sh; bash/{init,functions,completion,prompt}.sh; zsh/{init,functions,completion,prompt}.sh; bats coverage for all scripts (245 tests, ~20 skipped pending sops/age/zsh); claude-creds-snapshot.sh; install-claude.sh; `dj claude`; project skills (install-package, query-config, dispatch-just, edit-config); **public/private repo split** (public `~/.dotfiles/.git`, private bare `~/.config.git`, secrets at `~/.private/`).
+**Complete:** install.sh (POSIX, idempotent, --system-type, --on-conflict, --age-key, three-bucket conflict classification, auto sops-init, shell consolidation, git setup); Justfile (sync, upgrade, add, secret-add, secret-edit, apply-secrets, install-packages, postinstall, system-type, sops-init, doctor, config-diff, audit-config, test, setup, authorized-keys); authorized-keys.sh (per-machine SSH identity + shared `authorized_keys.d` trust, §5.3); dj-setup.sh (`dj setup [user@]host` -- ssh-agent bootstrap, curl-ensure, direct age-key push, forwarded `ssh -A -t` install.sh launch with this machine's own --private-repo filled in); os-detect.sh; install-packages.sh (SKIP semantics, fallback scripts); run-postinstall.sh + packages/postinstall/<name>.sh (§2.8 hook mechanism, e.g. docker.sh); packages/scripts/{sops,just,starship}.sh; rebuild-secrets.sh (PRIVATE_DIR-based); secret-add.sh (encrypt + manifest update + stage); pre-commit-secrets.sh (guards .private/secrets/); sops-init.sh (auto-called from install.sh, writes to PRIVATE_DIR); shell-consolidate.sh (migrate or create ~/.config/{shell,bash,zsh}/, atomic conflict check); git-setup.sh (identity + SSH + GPG, idempotent); config-diff.sh; audit-config.sh; generic `--system-type` + personal package lists at `~/.config/dj/packages/{common,types/<type>,hosts/<host>}.txt` (private repo) seeded from `packages/template/{common,types/{desktop,server}}.txt`; renames/{apt,pacman,brew}.txt; shell/{init,env,aliases,functions,secrets}.sh; shell/os/{linux,darwin,wsl}.sh; bash/{init,functions,completion,prompt}.sh; zsh/{init,functions,completion,prompt}.sh; bats coverage for all scripts (245 tests, ~20 skipped pending sops/age/zsh); claude-creds-snapshot.sh; install-claude.sh; `dj claude`; project skills (install-package, query-config, dispatch-just, edit-config); **public/private repo split** (public `~/.dotfiles/.git`, private bare `~/.config.git`, secrets at `~/.private/`).
 
 **Outstanding (user task only):**
 - [ ] Push public repo: `cd ~/.dotfiles && git remote add origin https://github.com/endotronic/dotfiles.git && git push -u origin master`

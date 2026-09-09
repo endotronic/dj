@@ -451,6 +451,34 @@ EOF
   [[ "$remote_cmd" == "export DOTFILES_ACCEPT_NEW_HOSTS=1;"* ]]
 }
 
+@test "pushes the git-host deploy key too, and points install.sh at it" {
+  default_stubs ""
+  private_repo_with_remote
+  dotfiles_repo_with_origin git@github.com:someuser/somerepo.git
+  printf 'FAKE-DEPLOY-KEY\n' > "$HOME/.ssh/id_gitea"
+
+  run sh "$SETUP" testhost --system-type server < /dev/null
+  [ "$status" -eq 0 ]
+  grep -q "^scp -q -o StrictHostKeyChecking=accept-new .*id_gitea testhost:/tmp/dj-setup-deploykey-" "$SANDBOX/stub.log"
+  remote_cmd=$(cat "$SANDBOX/ssh_argv_6")
+  [[ "$remote_cmd" == *"--deploy-key '/tmp/dj-setup-deploykey-"* ]]
+  [[ "$remote_cmd" == *"shred -u '/tmp/dj-setup-deploykey-"* ]]
+}
+
+@test "no local deploy key: nothing pushed, no --deploy-key, install still proceeds" {
+  default_stubs ""
+  private_repo_with_remote
+  dotfiles_repo_with_origin git@github.com:someuser/somerepo.git
+  rm -f "$HOME/.ssh/id_gitea"
+
+  run sh "$SETUP" testhost --system-type server < /dev/null
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "rely on the forwarded agent" ]]
+  remote_cmd=$(cat "$SANDBOX/ssh_argv_6")
+  [[ "$remote_cmd" != *"--deploy-key"* ]]
+  [[ "$remote_cmd" != *"deploykey"* ]]
+}
+
 @test "remote command uses --age-key with the pushed temp path, not --sops" {
   default_stubs ""
   private_repo_with_remote

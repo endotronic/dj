@@ -18,9 +18,20 @@ test ARGS="tests/":
     cd "{{justfile_directory()}}" && bats {{ARGS}}
 
 # Pull latest changes and rematerialize any updated secrets.
+# The authorized-keys rebuild picks up any *other* machine's public key
+# that arrived in the pull; --no-register keeps sync from staging
+# anything of this machine's own in the repo as a side effect.
 sync:
     git --git-dir="{{DOT_DIR}}" --work-tree="$HOME" pull --rebase
     @just apply-secrets
+    @sh "{{SCRIPTS}}/authorized-keys.sh" --no-register
+
+# Register this machine's SSH public key in ~/.ssh/authorized_keys.d/
+# (tracked, so every other machine ends up trusting this one) and
+# rebuild ~/.ssh/authorized_keys from every machine's key there.
+# Commit and push afterward for the registration to reach the others.
+authorized-keys *ARGS:
+    sh "{{SCRIPTS}}/authorized-keys.sh" {{ARGS}}
 
 # Pull, then install any newly-added packages and run their post-install hooks.
 upgrade: sync install-packages postinstall
@@ -218,7 +229,22 @@ doctor:
     else
       echo "  miss  age key at $AGE_KEY (needed for secret decryption)"
     fi
-    for k in "$HOME/.ssh/id_ed25519" "$HOME/.ssh/id_rsa"; do
+    keys_d="$HOME/.ssh/authorized_keys.d"
+    if [ -d "$keys_d" ]; then
+      n=$(find "$keys_d" -name '*.pub' 2>/dev/null | wc -l)
+      printf '  ok    %s machine key(s) in authorized_keys.d\n' "$n"
+      host=$(hostname -s 2>/dev/null || uname -n)
+      if [ -f "$keys_d/$host.pub" ]; then
+        printf '  ok    this machine (%s) is registered for cross-machine SSH\n' "$host"
+      else
+        printf '  warn  this machine (%s) is not registered -- run: dj authorized-keys\n' "$host"
+        rc=1
+      fi
+    else
+      printf '  miss  %s -- run: dj authorized-keys\n' "$keys_d"
+      rc=1
+    fi
+    for k in "$HOME/.ssh/id_ed25519" "$HOME/.ssh/id_rsa" "$HOME/.ssh/id_gitea"; do
       if [ -e "$k" ]; then
         mode=$(stat -c '%a' "$k" 2>/dev/null || stat -f '%Lp' "$k" 2>/dev/null)
         if [ "$mode" = 600 ]; then

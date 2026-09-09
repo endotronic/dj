@@ -647,6 +647,52 @@ _make_fake_repo_dir() {
 
 # --- --age-key flag ----------------------------------------------------------
 
+# --- --deploy-key flag -------------------------------------------------------
+
+@test "--deploy-key installs the git-host key to ~/.ssh/id_gitea with mode 0600" {
+  stage_fake_dotfiles_checkout
+  key="$SANDBOX/deploy_key"
+  printf 'FAKE-DEPLOY-KEY\n' > "$key"
+
+  run sh "$INSTALL" --on-conflict backup --deploy-key "$key"
+  [ "$status" -eq 0 ]
+  grep -q FAKE-DEPLOY-KEY "$HOME/.ssh/id_gitea"
+  [ "$(stat -c '%a' "$HOME/.ssh/id_gitea")" = "600" ]
+  [ "$(stat -c '%a' "$HOME/.ssh")" = "700" ]
+}
+
+@test "--deploy-key with unreadable path warns and install still succeeds" {
+  stage_fake_dotfiles_checkout
+
+  run sh "$INSTALL" --on-conflict backup --deploy-key "$SANDBOX/nope"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "--deploy-key path not readable" ]]
+  [ ! -f "$HOME/.ssh/id_gitea" ]
+}
+
+@test "an installed deploy key is used as the private-repo clone's SSH identity" {
+  stage_fake_dotfiles_checkout
+  stub_cmd ssh
+  key="$SANDBOX/deploy_key"
+  printf 'FAKE-DEPLOY-KEY\n' > "$key"
+
+  run sh "$INSTALL" --private-repo "git@fakehost:kevin/dotfiles.git" \
+    --deploy-key "$key" --on-conflict backup
+  [ "$status" -eq 1 ]
+  grep -q -- "-i $HOME/.ssh/id_gitea" "$SANDBOX/stub.log"
+  grep -q "IdentitiesOnly=yes" "$SANDBOX/stub.log"
+}
+
+@test "without a deploy key the clone's SSH identity is left to ssh's defaults" {
+  stage_fake_dotfiles_checkout
+  stub_cmd ssh
+
+  run sh "$INSTALL" --private-repo "git@fakehost:kevin/dotfiles.git" --on-conflict backup
+  [ "$status" -eq 1 ]
+  stub_called ssh
+  ! grep -q "IdentitiesOnly=yes" "$SANDBOX/stub.log"
+}
+
 @test "--age-key installs key to XDG_CONFIG_HOME/sops/age/keys.txt" {
   stage_fake_dotfiles_checkout
 

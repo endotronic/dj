@@ -54,6 +54,7 @@ CONFLICT_MODE=ask
 REMOVE_SOURCE=ask
 AGE_KEY_SRC=
 SOPS_KEY_SRC=
+DEPLOY_KEY_SRC=
 THEME_COLOR=
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -69,6 +70,8 @@ while [ $# -gt 0 ]; do
     --remove-source=*) REMOVE_SOURCE=${1#*=} ;;
     --age-key)        shift; AGE_KEY_SRC=${1:-} ;;
     --age-key=*)      AGE_KEY_SRC=${1#*=} ;;
+    --deploy-key)     shift; DEPLOY_KEY_SRC=${1:-} ;;
+    --deploy-key=*)   DEPLOY_KEY_SRC=${1#*=} ;;
     --sops)           shift; SOPS_KEY_SRC=${1:-} ;;
     --sops=*)         SOPS_KEY_SRC=${1#*=} ;;
     --theme)          shift; THEME_COLOR=${1:-} ;;
@@ -134,6 +137,15 @@ Options:
         immediately during bootstrap. When omitted and the key is absent,
         an interactive install will prompt you to paste it; press Enter
         on a blank line to finish, or Enter immediately to skip.
+  --deploy-key PATH
+        Path to the SSH key that authenticates to the git host holding
+        your --private-repo (a repo-scoped *deploy key*, not your
+        personal account key -- see CLAUDE.md §5.3). Installed to
+        ~/.ssh/id_gitea (0600) and used for the private-repo clone
+        below. Needed only for the very first clone on a fresh
+        machine: the tracked ~/.ssh/config points at that same path
+        for subsequent pulls, and apply-secrets restores the key there
+        on every sync. \`dj setup\` passes this automatically.
   --sops [USER@]HOST[:PATH]
         Fetch the age private key via scp from a remote path (e.g. an
         already-bootstrapped machine) instead of transporting it
@@ -409,6 +421,26 @@ if [ -x "$HOME/.dotfiles/scripts/install-packages.sh" ]; then
   unset _req_dir
 fi
 
+# ---------- 5b. Git-host deploy key (if provided) ----------
+#
+# Must land before the clone below, which is the one operation that
+# can't wait for the tracked ~/.ssh/config (checked out in step 7) to
+# point ssh at this key. See --deploy-key in --help.
+
+DEPLOY_KEY=$HOME/.ssh/id_gitea
+
+if [ -n "$DEPLOY_KEY_SRC" ]; then
+  if [ ! -r "$DEPLOY_KEY_SRC" ]; then
+    log "warn: --deploy-key path not readable: $DEPLOY_KEY_SRC; skipping"
+  else
+    mkdir -p "$HOME/.ssh"
+    chmod 700 "$HOME/.ssh"
+    cp "$DEPLOY_KEY_SRC" "$DEPLOY_KEY"
+    chmod 600 "$DEPLOY_KEY"
+    log "installed git-host deploy key at $DEPLOY_KEY"
+  fi
+fi
+
 # ---------- 6. Private bare repo (~/.config.git) ----------
 #
 # Tracks personal config (~/.bashrc, ~/.config/**) and ~/.private/
@@ -500,9 +532,18 @@ EOF
       fi
       ;;
     *)
+      # IdentitiesOnly=yes alongside -i: without it ssh still offers
+      # every agent/default identity first, and a git host that
+      # rejects the first key it's offered can fail the clone before
+      # the deploy key is ever tried.
+      _ssh_opts=
+      [ -n "${DOTFILES_ACCEPT_NEW_HOSTS:-}" ] \
+        && _ssh_opts="$_ssh_opts -o StrictHostKeyChecking=accept-new"
+      [ -r "$DEPLOY_KEY" ] \
+        && _ssh_opts="$_ssh_opts -i $DEPLOY_KEY -o IdentitiesOnly=yes"
       _clone_rc=0
-      if [ -n "${DOTFILES_ACCEPT_NEW_HOSTS:-}" ]; then
-        GIT_SSH_COMMAND='ssh -o StrictHostKeyChecking=accept-new' \
+      if [ -n "$_ssh_opts" ]; then
+        GIT_SSH_COMMAND="ssh$_ssh_opts" \
           git clone --bare "$PRIVATE_REPO_URL" "$DOT_DIR" || _clone_rc=$?
       else
         git clone --bare "$PRIVATE_REPO_URL" "$DOT_DIR" || _clone_rc=$?

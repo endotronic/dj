@@ -207,6 +207,23 @@ fi
 REMOTE_TMP_KEY="/tmp/dj-setup-agekey-$$"
 scp -q $SSH_ACCEPT_NEW "$AGE_KEY_LOCAL" "$HOSTSPEC:$REMOTE_TMP_KEY"
 
+# ---------- 2c. Push the git-host deploy key the same way ------------------
+#
+# The target's very first private-repo clone happens before the
+# tracked ~/.ssh/config (which points ssh at this key for that host)
+# has been checked out, so the key has to arrive out of band exactly
+# like the age key does. Optional: without one, the clone falls back
+# to whatever the forwarded agent offers.
+
+DEPLOY_KEY_LOCAL=$HOME/.ssh/id_gitea
+REMOTE_TMP_DEPLOY=
+if [ -r "$DEPLOY_KEY_LOCAL" ]; then
+  REMOTE_TMP_DEPLOY="/tmp/dj-setup-deploykey-$$"
+  scp -q $SSH_ACCEPT_NEW "$DEPLOY_KEY_LOCAL" "$HOSTSPEC:$REMOTE_TMP_DEPLOY"
+else
+  log "no deploy key at $DEPLOY_KEY_LOCAL; the target's clone will rely on the forwarded agent"
+fi
+
 # ---------- 3. Raw install.sh URL, derived from ~/.dotfiles' own origin ----
 
 ORIGIN=$(git -C "$DOTFILES_DIR" remote get-url origin 2>/dev/null || true)
@@ -237,14 +254,20 @@ ENSURE_CURL='command -v curl >/dev/null 2>&1 || \
 { printf "error: curl is missing and no known package manager was found\n" >&2; exit 1; }'
 
 MAIN_CMD="$ENSURE_CURL && curl -fsSL $(q "$RAW_INSTALL_URL") | sh -s -- --private-repo $(q "$PRIVATE_REPO_URL") --age-key $(q "$REMOTE_TMP_KEY")"
+[ -n "$REMOTE_TMP_DEPLOY" ] \
+  && MAIN_CMD="$MAIN_CMD --deploy-key $(q "$REMOTE_TMP_DEPLOY")"
 for arg in "$@"; do
   MAIN_CMD="$MAIN_CMD $(q "$arg")"
 done
 
-# Clean up the pushed age key afterward regardless of outcome, while
+# Clean up both pushed keys afterward regardless of outcome, while
 # preserving install.sh's own exit status rather than masking it with
 # the cleanup command's.
-CLEANUP="rc=\$?; shred -u $(q "$REMOTE_TMP_KEY") 2>/dev/null || rm -f $(q "$REMOTE_TMP_KEY"); exit \$rc"
+CLEANUP="rc=\$?"
+for _tmp in "$REMOTE_TMP_KEY" ${REMOTE_TMP_DEPLOY:+"$REMOTE_TMP_DEPLOY"}; do
+  CLEANUP="$CLEANUP; shred -u $(q "$_tmp") 2>/dev/null || rm -f $(q "$_tmp")"
+done
+CLEANUP="$CLEANUP; exit \$rc"
 # DOTFILES_ACCEPT_NEW_HOSTS: see the comment above SSH_ACCEPT_NEW --
 # this is what makes install.sh apply the same accept-new treatment to
 # its own private-repo clone, connecting out from the target.

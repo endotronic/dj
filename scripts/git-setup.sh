@@ -5,17 +5,24 @@
 #
 # Idempotent: each step is skipped when already complete.
 #   - git user.name / user.email: adopted if already set; prompted otherwise
-#   - SSH key: generated at ~/.ssh/id_ed25519 only if absent (rebuild-secrets.sh
-#     restores it first if the private repo has one registered)
+#   - SSH key: generated at ~/.ssh/id_ed25519 only if absent. This key is
+#     this machine's own identity and never leaves it -- only its *public*
+#     half travels, via authorized-keys.sh (see below and CLAUDE.md §5.3)
 #   - GPG key: generated only if no secret keys exist (rebuild-secrets.sh
 #     imports one first if the private repo has one registered); git
 #     configured to sign with it if this script created or restored it
 #     and signing isn't already configured
 #
-# When a new SSH or GPG key is generated here (i.e. nothing was restored
-# from the private repo) and the SOPS/age secrets infrastructure is ready,
-# interactively offers to register the new private key via secret-add.sh
-# so other machines can restore it instead of generating their own.
+# SSH and GPG are deliberately handled differently here:
+#   - GPG identifies *the person* ("kevin signed this commit"), so one key
+#     shared across your own machines is normal practice -- a freshly
+#     generated one is offered to secret-add.sh so other machines restore
+#     it instead of signing as a stranger.
+#   - SSH identifies *the machine*. Copying one private key to every
+#     machine means one compromised machine yields a key valid on every
+#     machine and every git host at once, so that is NOT done: each
+#     machine keeps its own private key and authorized-keys.sh publishes
+#     only the public half for the others to trust.
 #
 # Pass --yes to skip the identity prompt (non-interactive use with
 # existing config). Pass --no to do nothing.
@@ -121,13 +128,22 @@ else
   ssh-keygen -t ed25519 -C "$_comment" -f "$ssh_key" -N ""
   log "generated SSH key at $ssh_key"
   log "public key: $(cat "${ssh_key}.pub")"
-
-  if confirm_register "SSH private key ($ssh_key)"; then
-    sh "$HOME/.dotfiles/scripts/secret-add.sh" "$ssh_key"
-  else
-    log "skipped registering SSH key; run 'dj secret-add $ssh_key' to share it with other machines"
-  fi
 fi
+
+# Publish this machine's *public* key so every other machine sharing
+# the private repo trusts it, and pick up theirs in return. Runs
+# whether the key was just generated or already existed -- registering
+# is idempotent, and an existing machine still needs to appear in the
+# shared list. The private key is never registered as a secret.
+# Resolved as a sibling of this script rather than under
+# ~/.dotfiles/scripts/ so it still works when the repo lives
+# elsewhere (and so the test suite doesn't need a staged $HOME copy).
+_here=$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd) || _here=
+if [ -n "$_here" ] && [ -f "$_here/authorized-keys.sh" ]; then
+  DOT_DIR="$DOT_DIR" sh "$_here/authorized-keys.sh" \
+    || log "warn: authorized-keys.sh reported problems; see above"
+fi
+unset _here
 
 # ---------- GPG key ----------
 
@@ -192,7 +208,11 @@ fi
 # ---------- Stage into private bare repo ----------
 
 if [ -d "$DOT_DIR" ]; then
-  [ -f "$HOME/.gitconfig" ]       && dot add "$HOME/.gitconfig"
-  [ -f "${ssh_key}.pub" ]         && dot add "${ssh_key}.pub"
-  log "staged .gitconfig and SSH public key"
+  # NOT ${ssh_key}.pub: that path is per-machine, so tracking it would
+  # check one machine's public key out over every other machine's,
+  # leaving each with a .pub that doesn't match its own private key.
+  # authorized-keys.sh above stages the shared copy instead, under
+  # ~/.ssh/authorized_keys.d/<hostname>.pub.
+  [ -f "$HOME/.gitconfig" ] && dot add "$HOME/.gitconfig"
+  log "staged .gitconfig"
 fi
