@@ -125,9 +125,17 @@ Options:
         already-bootstrapped machine) instead of transporting it
         out-of-band first. PATH is optional -- when omitted, assumes
         this repo's own convention, ~/.config/sops/age/keys.txt, on
-        the remote host. Relies on your existing SSH credentials/
-        agent for auth (scp will prompt interactively if needed);
-        mutually exclusive with --age-key.
+        the remote host. USER is also optional: with no '@', scp
+        would default to whichever user is running install.sh, which
+        is root under sudo -- almost never what you want (root's home
+        on the remote won't have your age key). If \$SUDO_USER is set
+        (i.e. install.sh itself was run via sudo) and isn't root,
+        that's used as the default remote user instead. Running
+        directly as root with no sudo leaves no way to infer the
+        right user, so a bare HOST there still resolves to root@HOST
+        -- spell out USER@HOST explicitly in that case. Relies on
+        your existing SSH credentials/agent for auth (scp will prompt
+        interactively if needed); mutually exclusive with --age-key.
   --theme COLOR
         6-digit hex color (e.g. #2596be) to persist to
         ~/.config/dotfiles/tmux-theme-color -- a host-local override
@@ -175,9 +183,27 @@ if [ -n "$AGE_KEY_SRC" ] && [ -n "$SOPS_KEY_SRC" ]; then
   exit 2
 fi
 
-# --sops with no ':' is a bare [user@]host -- assume this repo's own
-# age-key convention on the remote side rather than requiring the
-# caller to spell out the path every time.
+# --sops normalization, in two independent steps:
+#
+# 1. No '@' -- bare host, no explicit remote user. scp would otherwise
+#    default to the *invoking* user, which is root when install.sh
+#    itself is run under sudo (a likely mistake: root's home on the
+#    remote almost never holds anyone's age key). Prefer $SUDO_USER --
+#    the human behind the sudo, i.e. "the user who initiated
+#    installation" -- when it's set and isn't itself root. Run
+#    directly as root (no sudo, so $SUDO_USER is unset) and there's no
+#    way to infer intent, so it's left to scp's own default.
+# 2. No ':' -- bare [user@]host with no path. Assume this repo's own
+#    age-key convention on the remote side rather than requiring the
+#    caller to spell out the path every time.
+case "$SOPS_KEY_SRC" in
+  *@*) ;;
+  '') ;;
+  *)
+    if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ]; then
+      SOPS_KEY_SRC="$SUDO_USER@$SOPS_KEY_SRC"
+    fi ;;
+esac
 case "$SOPS_KEY_SRC" in
   ''|*:*) ;;
   *) SOPS_KEY_SRC="$SOPS_KEY_SRC:~/.config/sops/age/keys.txt" ;;

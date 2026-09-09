@@ -31,6 +31,13 @@ sandbox_setup() {
   export HOME="$SANDBOX/home"
   export XDG_CONFIG_HOME="$HOME/.config"
   mkdir -p "$HOME" "$XDG_CONFIG_HOME/dotfiles" "$XDG_CONFIG_HOME/sops/age"
+
+  # Whether SUDO_USER happens to be set in the ambient environment
+  # running the test suite is an accident of how it was invoked, not
+  # something a test should depend on -- unset it so every test starts
+  # from the same (unset) baseline; tests that care export it
+  # explicitly.
+  unset SUDO_USER
 }
 
 sandbox_teardown() {

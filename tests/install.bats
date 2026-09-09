@@ -67,6 +67,17 @@ _make_fake_repo_dir() {
   [[ "$output" =~ "--private-repo" ]]
 }
 
+@test "--help does not crash when SUDO_USER is unset" {
+  # Regression: the --sops help text mentioned $SUDO_USER unescaped
+  # inside an unquoted heredoc, so `set -u` treated it as an unbound
+  # variable and aborted the whole script -- on any machine not
+  # invoked via sudo, i.e. almost always.
+  unset SUDO_USER
+  run sh "$INSTALL" --help
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ '$SUDO_USER' ]]
+}
+
 @test "--system-type with invalid characters exits 2" {
   run sh "$INSTALL" --system-type 'not a type'
   [ "$status" -eq 2 ]
@@ -692,10 +703,51 @@ _make_fake_repo_dir() {
 @test "--sops with a bare host (no ':') assumes ~/.config/sops/age/keys.txt" {
   stage_fake_dotfiles_checkout
   stub_scp_fails
+  unset SUDO_USER
 
   run sh "$INSTALL" --on-conflict backup --sops "oldhost"
   [ "$status" -eq 0 ]
   [[ "$output" =~ "warn: scp from oldhost:~/.config/sops/age/keys.txt failed" ]]
+}
+
+@test "--sops with a bare host under sudo defaults to \$SUDO_USER, not root" {
+  stage_fake_dotfiles_checkout
+  stub_scp_fails
+  export SUDO_USER=kevin
+
+  run sh "$INSTALL" --on-conflict backup --sops "oldhost"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "warn: scp from kevin@oldhost:~/.config/sops/age/keys.txt failed" ]]
+}
+
+@test "--sops with a bare host when \$SUDO_USER is root itself is left alone" {
+  stage_fake_dotfiles_checkout
+  stub_scp_fails
+  export SUDO_USER=root
+
+  run sh "$INSTALL" --on-conflict backup --sops "oldhost"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "warn: scp from oldhost:~/.config/sops/age/keys.txt failed" ]]
+}
+
+@test "--sops with an explicit path still gets \$SUDO_USER prepended" {
+  stage_fake_dotfiles_checkout
+  stub_scp_fails
+  export SUDO_USER=kevin
+
+  run sh "$INSTALL" --on-conflict backup --sops "oldhost:/custom/path/keys.txt"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "warn: scp from kevin@oldhost:/custom/path/keys.txt failed" ]]
+}
+
+@test "--sops with an explicit user is never overridden by \$SUDO_USER" {
+  stage_fake_dotfiles_checkout
+  stub_scp_fails
+  export SUDO_USER=someoneelse
+
+  run sh "$INSTALL" --on-conflict backup --sops "kevin@oldhost"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "warn: scp from kevin@oldhost:~/.config/sops/age/keys.txt failed" ]]
 }
 
 @test "--sops with a bare user@host (no ':') assumes ~/.config/sops/age/keys.txt" {
