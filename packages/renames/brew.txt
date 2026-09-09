@@ -29,3 +29,6 @@ agy SKIP
 # built in, which nvim's clipboard provider finds natively -- nothing
 # to install.
 wl-clipboard SKIP
+# macOS ships an NFS client (mount_nfs) built into the OS; no brew
+# formula needed.
+mount.nfs SKIP
