@@ -60,6 +60,14 @@ fi
 HOSTSPEC=$1
 shift
 
+# Split once up front -- reused below both to seed ssh-menu-register.sh's
+# defaults (step 5) and, if bare, to derive $SUDO_USER-style guesses
+# nowhere else in this script actually needs.
+case "$HOSTSPEC" in
+  *@*) TARGET_USER=${HOSTSPEC%%@*}; TARGET_HOST=${HOSTSPEC#*@} ;;
+  *)   TARGET_USER=; TARGET_HOST=$HOSTSPEC ;;
+esac
+
 if [ ! -r "$SSH_KEY" ]; then
   printf 'error: no SSH key at %s -- nothing to forward\n' "$SSH_KEY" >&2
   exit 1
@@ -157,6 +165,25 @@ if [ "$_has_theme" -eq 0 ]; then
   fi
   set -- "$@" --theme "$_generated_theme"
 fi
+
+# Resolved --system-type value, whichever of the two paths above
+# supplied it (passed in by the caller, or just answered interactively)
+# -- needed again in step 5 to pick the right ~/.ssh/config section for
+# the target, since ssh-menu-register.sh runs *here*, on this machine,
+# and so can't fall back to reading the target's own persisted
+# system-type the way install.sh's own call to it does.
+RESOLVED_TYPE=
+_prev_arg=
+for _arg in "$@"; do
+  case "$_prev_arg" in
+    --system-type) RESOLVED_TYPE=$_arg ;;
+  esac
+  case "$_arg" in
+    --system-type=*) RESOLVED_TYPE=${_arg#*=} ;;
+  esac
+  _prev_arg=$_arg
+done
+unset _prev_arg _arg
 
 # Single-quote a value for safe embedding in a reconstructed shell
 # command line: close the quote, emit an escaped literal quote, reopen.
@@ -318,3 +345,21 @@ REMOTE_CMD="export DOTFILES_ACCEPT_NEW_HOSTS=1; { $MAIN_CMD; }; $CLEANUP"
 
 log "bootstrapping $HOSTSPEC (private-repo=$PRIVATE_REPO_URL)"
 ssh -A -t $SSH_OPTS "$HOSTSPEC" "$REMOTE_CMD"
+
+# ---------- 5. Offer to register the target in this machine's ~/.ssh/config -
+#
+# The target's own install.sh already offered to register *itself* --
+# but that only writes to the target's own ~/.ssh/config, which is
+# only useful there. What actually needs to change to make the target
+# show up in the tmux NEW menu elsewhere is *this* machine's
+# ~/.ssh/config (and every other machine's, via a subsequent `dj
+# sync`) -- and this machine is the one that already knows how to
+# reach it (the same $HOSTSPEC used above), so ask here too rather
+# than leaving it to be typed in by hand later.
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd) || SCRIPT_DIR=$DOTFILES_DIR/scripts
+if [ -x "$SCRIPT_DIR/ssh-menu-register.sh" ]; then
+  sh "$SCRIPT_DIR/ssh-menu-register.sh" \
+    --type "$RESOLVED_TYPE" --hostname "$TARGET_HOST" ${TARGET_USER:+--user "$TARGET_USER"} \
+    || log "warn: ssh-menu-register.sh reported problems; see above"
+fi

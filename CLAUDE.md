@@ -184,6 +184,7 @@ $HOME
 │   │   └── common.txt  types/<type>.txt  hosts/<hostname>.txt
 │   ├── dj/postinstall/                  # PERSONAL post-install hook lists (tracked by .config.git)
 │   │   └── common.txt  types/<type>.txt  hosts/<hostname>.txt
+│   ├── dj/ssh-menu-sections.txt        # type -> ~/.ssh/config section title map (tracked by .config.git, §4.1 step 16b)
 │   └── sops/age/keys.txt               # NOT tracked; out-of-band transport target
 ├── .dotfiles/                          # PUBLIC git repo (.git/ inside)
 │   ├── CLAUDE.md                       # this file (Claude project memory)
@@ -198,13 +199,14 @@ $HOME
 │   │   ├── pre-commit-secrets.sh      # rejects plaintext secrets + gitleaks scan
 │   │   ├── shell-consolidate.sh       # migrate/create ~/.config/{shell,bash,zsh}/
 │   │   ├── git-setup.sh               # git identity, SSH key, GPG key (first-run)
+│   │   ├── ssh-menu-register.sh       # offer to add this/a target machine to ~/.ssh/config (§4.1 step 16b)
 │   │   ├── config-diff.sh  audit-config.sh  sops-init.sh
 │   │   ├── claude-creds-snapshot.sh   # Linux/WSL only
 │   │   └── install-claude.sh          # vendor curl-pipe, idempotent
 │   ├── packages/                       # shared install MECHANISM only
 │   │   ├── template/                   # seed lists for fresh installs (NOT live)
 │   │   │   ├── common.txt
-│   │   │   └── types/{desktop,server}.txt
+│   │   │   └── types/{desktop,server,vm}.txt
 │   │   ├── renames/{apt,pacman,brew}.txt   # `logical actual` per line; SKIP to omit
 │   │   ├── scripts/{sops,just,starship}.sh # fallback installers
 │   │   └── postinstall/<name>.sh           # post-install hooks (§2.8), e.g. docker.sh
@@ -291,6 +293,7 @@ curl -fsSL https://raw.githubusercontent.com/<you>/dotfiles/main/install.sh \
 14. Optional cleanup of local source clone.
 15. Offer shell consolidation (`shell-consolidate.sh`) — migrate or create `~/.config/{shell,bash,zsh}/`.
 16. Git identity, SSH key, GPG key (`git-setup.sh`) — adopt existing config, prompt if missing, generate keys if absent. The SSH key is per-machine and never registered as a secret; its public half is published via `authorized-keys.sh` (§5.3).
+16b. Offer to register this machine in `~/.ssh/config` (`ssh-menu-register.sh`, interactive only, skipped without a private repo to stage into) — so it shows up in the tmux "NEW" menu on your other machines. Grouped under a section header named by `--system-type` (§2.7), resolved via `~/.config/dj/ssh-menu-sections.txt` (private repo, one `type Title` line per type, e.g. `vm VMs`; an unmapped type falls back to `Ucfirst(type) + "s"`). `dj setup` runs this same script a second time afterward, on the *source* machine, to register the newly-bootstrapped *target* there too (passing `--type` explicitly, since the source's own persisted type would be wrong for the target). The generated tmux menu (`~/.config/tmux/scripts/gen-ssh-menu.sh`) always omits a `~/.ssh/config` entry matching the local machine's own short hostname, so a machine never lists itself.
 17. Print next steps.
 
 Multi-user: steps 1–3 may `sudo` for system packages (idempotent); steps 4+ touch only invoking user's `$HOME`.
@@ -438,7 +441,7 @@ Two orthogonal rules:
 
 ## 8. Implementation status
 
-**Complete:** install.sh (POSIX, idempotent, --system-type, --on-conflict, --age-key, three-bucket conflict classification, auto sops-init, shell consolidation, git setup); Justfile (sync, upgrade, add, secret-add, secret-edit, apply-secrets, install-packages, postinstall, system-type, sops-init, doctor, config-diff, audit-config, test, setup, authorized-keys); authorized-keys.sh (per-machine SSH identity + shared `authorized_keys.d` trust, §5.3); dj-setup.sh (`dj setup [user@]host` -- ssh-agent bootstrap, curl-ensure, direct age-key push, forwarded `ssh -A -t` install.sh launch with this machine's own --private-repo filled in); os-detect.sh; install-packages.sh (SKIP semantics, fallback scripts); run-postinstall.sh + packages/postinstall/<name>.sh (§2.8 hook mechanism, e.g. docker.sh); packages/scripts/{sops,just,starship}.sh; rebuild-secrets.sh (PRIVATE_DIR-based); secret-add.sh (encrypt + manifest update + stage); pre-commit-secrets.sh (guards .private/secrets/); sops-init.sh (auto-called from install.sh, writes to PRIVATE_DIR); shell-consolidate.sh (migrate or create ~/.config/{shell,bash,zsh}/, atomic conflict check); git-setup.sh (identity + SSH + GPG, idempotent); config-diff.sh; audit-config.sh; generic `--system-type` + personal package lists at `~/.config/dj/packages/{common,types/<type>,hosts/<host>}.txt` (private repo) seeded from `packages/template/{common,types/{desktop,server}}.txt`; renames/{apt,pacman,brew}.txt; shell/{init,env,aliases,functions,secrets}.sh; shell/os/{linux,darwin,wsl}.sh; bash/{init,functions,completion,prompt}.sh; zsh/{init,functions,completion,prompt}.sh; bats coverage for all scripts (245 tests, ~20 skipped pending sops/age/zsh); claude-creds-snapshot.sh; install-claude.sh; `dj claude`; project skills (install-package, query-config, dispatch-just, edit-config); **public/private repo split** (public `~/.dotfiles/.git`, private bare `~/.config.git`, secrets at `~/.private/`).
+**Complete:** install.sh (POSIX, idempotent, --system-type, --on-conflict, --age-key, three-bucket conflict classification, auto sops-init, shell consolidation, git setup); Justfile (sync, upgrade, add, secret-add, secret-edit, apply-secrets, install-packages, postinstall, system-type, sops-init, doctor, config-diff, audit-config, test, setup, authorized-keys); authorized-keys.sh (per-machine SSH identity + shared `authorized_keys.d` trust, §5.3); dj-setup.sh (`dj setup [user@]host` -- ssh-agent bootstrap, curl-ensure, direct age-key push, forwarded `ssh -A -t` install.sh launch with this machine's own --private-repo filled in); ssh-menu-register.sh (§4.1 step 16b -- offers to register a machine in `~/.ssh/config` under a `--system-type`-keyed section, called from both install.sh and dj-setup.sh; section titles keyed via `~/.config/dj/ssh-menu-sections.txt`); os-detect.sh; install-packages.sh (SKIP semantics, fallback scripts); run-postinstall.sh + packages/postinstall/<name>.sh (§2.8 hook mechanism, e.g. docker.sh); packages/scripts/{sops,just,starship}.sh; rebuild-secrets.sh (PRIVATE_DIR-based); secret-add.sh (encrypt + manifest update + stage); pre-commit-secrets.sh (guards .private/secrets/); sops-init.sh (auto-called from install.sh, writes to PRIVATE_DIR); shell-consolidate.sh (migrate or create ~/.config/{shell,bash,zsh}/, atomic conflict check); git-setup.sh (identity + SSH + GPG, idempotent); config-diff.sh; audit-config.sh; generic `--system-type` + personal package lists at `~/.config/dj/packages/{common,types/<type>,hosts/<host>}.txt` (private repo) seeded from `packages/template/{common,types/{desktop,server,vm}}.txt`; renames/{apt,pacman,brew}.txt; shell/{init,env,aliases,functions,secrets}.sh; shell/os/{linux,darwin,wsl}.sh; bash/{init,functions,completion,prompt}.sh; zsh/{init,functions,completion,prompt}.sh; bats coverage for all scripts (245 tests, ~20 skipped pending sops/age/zsh); claude-creds-snapshot.sh; install-claude.sh; `dj claude`; project skills (install-package, query-config, dispatch-just, edit-config); **public/private repo split** (public `~/.dotfiles/.git`, private bare `~/.config.git`, secrets at `~/.private/`).
 
 **Outstanding (user task only):**
 - [ ] Push public repo: `cd ~/.dotfiles && git remote add origin https://github.com/endotronic/dotfiles.git && git push -u origin master`

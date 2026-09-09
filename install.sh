@@ -935,6 +935,21 @@ if [ -x "$HOME/.dotfiles/scripts/git-setup.sh" ]; then
   sh "$HOME/.dotfiles/scripts/git-setup.sh"
 fi
 
+# ---------- 16b. Offer to register this machine in ~/.ssh/config -----------
+#
+# So it shows up in the tmux NEW menu on your other machines (see
+# ~/.config/tmux/scripts/gen-ssh-menu.sh). No --type passed: the
+# script falls back to the system-type just persisted in step 3, which
+# is correct here since this runs on the machine being registered.
+# Only offered when there's a private repo to stage the change into --
+# without one there'd be nowhere to push it for other machines to
+# `dj sync` and pick up.
+
+if [ -x "$HOME/.dotfiles/scripts/ssh-menu-register.sh" ] && [ -d "$DOT_DIR" ]; then
+  sh "$HOME/.dotfiles/scripts/ssh-menu-register.sh" \
+    || log "warn: ssh-menu-register.sh reported problems; see above"
+fi
+
 # ---------- 17. Done ----------
 
 cat <<EOF
