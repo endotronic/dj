@@ -58,6 +58,49 @@ if [ ! -r "$SSH_KEY" ]; then
   exit 1
 fi
 
+# ---------- 0. Prompt for --system-type if the caller didn't pass one ------
+#
+# install.sh silently defaults to a common-only install when
+# --system-type is omitted, which is easy to do by accident here and
+# not what you want for a real machine. If it's missing, ask -- listing
+# this machine's own known types (from ~/.config/dj/packages/types/)
+# as a hint -- rather than silently propagating the omission. A blank
+# answer (including non-interactive stdin, which reads as EOF/empty)
+# keeps the common-only default.
+
+_has_system_type=0
+for _arg in "$@"; do
+  case "$_arg" in
+    --system-type|--system-type=*) _has_system_type=1 ;;
+  esac
+done
+
+if [ "$_has_system_type" -eq 0 ]; then
+  TYPES_DIR=${XDG_CONFIG_HOME:-$HOME/.config}/dj/packages/types
+  _known_types=
+  if [ -d "$TYPES_DIR" ]; then
+    for _f in "$TYPES_DIR"/*.txt; do
+      [ -e "$_f" ] || continue
+      _b=$(basename "$_f" .txt)
+      _known_types="${_known_types:+$_known_types, }$_b"
+    done
+  fi
+  printf '[dj-setup] system type for %s%s [blank = common-only]: ' \
+    "$HOSTSPEC" "${_known_types:+ (known: $_known_types)}" >&2
+  read -r _system_type_answer || _system_type_answer=
+  case "$_system_type_answer" in
+    '') ;;
+    *[!A-Za-z0-9_-]*)
+      printf 'error: system type must contain only letters, digits, _ and - (got: %s)\n' \
+        "$_system_type_answer" >&2
+      exit 2
+      ;;
+    *)
+      set -- "$@" --system-type "$_system_type_answer"
+      ;;
+  esac
+fi
+
 # Single-quote a value for safe embedding in a reconstructed shell
 # command line: close the quote, emit an escaped literal quote, reopen.
 q() {

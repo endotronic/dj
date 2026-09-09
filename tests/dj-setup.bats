@@ -112,6 +112,77 @@ default_stubs() {
   stub_ssh_records_argv
 }
 
+# ---------- system-type prompt when omitted -----------------------------
+
+@test "prompts for system-type when omitted, and injects a valid answer" {
+  default_stubs ""
+  private_repo_with_remote
+  dotfiles_repo_with_origin git@github.com:someuser/somerepo.git
+
+  run sh "$SETUP" testhost <<< 'server'
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "system type for testhost" ]]
+  remote_cmd=$(cat "$SANDBOX/ssh_argv_6")
+  [[ "$remote_cmd" == *"'--system-type' 'server'"* ]]
+}
+
+@test "blank answer to the system-type prompt keeps the common-only default" {
+  default_stubs ""
+  private_repo_with_remote
+  dotfiles_repo_with_origin git@github.com:someuser/somerepo.git
+
+  run sh "$SETUP" testhost <<< ''
+  [ "$status" -eq 0 ]
+  remote_cmd=$(cat "$SANDBOX/ssh_argv_6")
+  [[ "$remote_cmd" != *"--system-type"* ]]
+}
+
+@test "no stdin at all (EOF) keeps the common-only default without hanging" {
+  default_stubs ""
+  private_repo_with_remote
+  dotfiles_repo_with_origin git@github.com:someuser/somerepo.git
+
+  run sh "$SETUP" testhost < /dev/null
+  [ "$status" -eq 0 ]
+  remote_cmd=$(cat "$SANDBOX/ssh_argv_6")
+  [[ "$remote_cmd" != *"--system-type"* ]]
+}
+
+@test "invalid system-type answer exits 2" {
+  default_stubs ""
+  private_repo_with_remote
+  dotfiles_repo_with_origin git@github.com:someuser/somerepo.git
+
+  run sh "$SETUP" testhost <<< 'not a valid type'
+  [ "$status" -eq 2 ]
+  [[ "$output" =~ "must contain only letters, digits" ]]
+}
+
+@test "already-supplied --system-type skips the prompt entirely" {
+  default_stubs ""
+  private_repo_with_remote
+  dotfiles_repo_with_origin git@github.com:someuser/somerepo.git
+
+  run sh "$SETUP" testhost --system-type desktop < /dev/null
+  [ "$status" -eq 0 ]
+  [[ ! "$output" =~ "system type for" ]]
+  remote_cmd=$(cat "$SANDBOX/ssh_argv_6")
+  [[ "$remote_cmd" == *"'--system-type' 'desktop'"* ]]
+}
+
+@test "prompt lists known system types from ~/.config/dj/packages/types/" {
+  default_stubs ""
+  private_repo_with_remote
+  dotfiles_repo_with_origin git@github.com:someuser/somerepo.git
+  mkdir -p "$XDG_CONFIG_HOME/dj/packages/types"
+  : > "$XDG_CONFIG_HOME/dj/packages/types/desktop.txt"
+  : > "$XDG_CONFIG_HOME/dj/packages/types/server.txt"
+
+  run sh "$SETUP" testhost <<< ''
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "known: desktop, server" ]]
+}
+
 # ---------- argument / precondition errors ----------------------------
 
 @test "no arguments prints usage and exits 2" {
