@@ -84,17 +84,23 @@ unstub_cmd() {
   rm -f "$STUB_BIN/$1"
 }
 
-# Stub `scp` as a plain local copy: `scp [-q] SRC DST` -> `cp SRC DST`.
-# install.sh always invokes it with exactly that shape (fetching the
-# age key), so this is enough to exercise the real fetch-and-install
-# path without a network or an actual remote host.
+# Stub `scp` as a plain local copy: `scp [-q] [HOST:]SRC DST` -> `cp SRC
+# DST` (any "host:" remote-spec prefix on SRC is stripped first, same
+# as real scp resolves it server-side). install.sh always invokes it
+# with exactly that shape (fetching the age key), so this is enough to
+# exercise the real fetch-and-install path without a network or an
+# actual remote host.
 stub_scp_copies() {
   cat > "$STUB_BIN/scp" <<'EOF'
 #!/bin/sh
 { printf 'scp'; for a in "$@"; do printf ' %s' "$a"; done; printf '\n'; } \
   >> "$SANDBOX/stub.log"
 shift $(( $# - 2 ))
-cp "$1" "$2"
+src=$1
+case "$src" in
+  *:*) src=${src#*:} ;;
+esac
+cp "$src" "$2"
 EOF
   chmod +x "$STUB_BIN/scp"
 }

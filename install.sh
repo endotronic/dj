@@ -120,10 +120,12 @@ Options:
         immediately during bootstrap. When omitted and the key is absent,
         an interactive install will prompt you to paste it; press Enter
         on a blank line to finish, or Enter immediately to skip.
-  --sops USER@HOST:PATH
+  --sops [USER@]HOST[:PATH]
         Fetch the age private key via scp from a remote path (e.g. an
         already-bootstrapped machine) instead of transporting it
-        out-of-band first. Relies on your existing SSH credentials/
+        out-of-band first. PATH is optional -- when omitted, assumes
+        this repo's own convention, ~/.config/sops/age/keys.txt, on
+        the remote host. Relies on your existing SSH credentials/
         agent for auth (scp will prompt interactively if needed);
         mutually exclusive with --age-key.
   --theme COLOR
@@ -172,6 +174,14 @@ if [ -n "$AGE_KEY_SRC" ] && [ -n "$SOPS_KEY_SRC" ]; then
   printf 'error: --age-key and --sops are mutually exclusive\n' >&2
   exit 2
 fi
+
+# --sops with no ':' is a bare [user@]host -- assume this repo's own
+# age-key convention on the remote side rather than requiring the
+# caller to spell out the path every time.
+case "$SOPS_KEY_SRC" in
+  ''|*:*) ;;
+  *) SOPS_KEY_SRC="$SOPS_KEY_SRC:~/.config/sops/age/keys.txt" ;;
+esac
 
 case "$THEME_COLOR" in
   '') ;;

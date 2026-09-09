@@ -679,14 +679,41 @@ _make_fake_repo_dir() {
   remote_key="$SANDBOX/remote-keys.txt"
   printf 'AGE-SECRET-KEY-1REMOTE\n' > "$remote_key"
 
-  run sh "$INSTALL" --on-conflict backup --sops "$remote_key"
+  run sh "$INSTALL" --on-conflict backup --sops "oldhost:$remote_key"
   [ "$status" -eq 0 ]
-  [[ "$output" =~ "fetched age key via scp from $remote_key" ]]
+  [[ "$output" =~ "fetched age key via scp from oldhost:$remote_key" ]]
   [ -f "$XDG_CONFIG_HOME/sops/age/keys.txt" ]
   grep -q "AGE-SECRET-KEY-1REMOTE" "$XDG_CONFIG_HOME/sops/age/keys.txt"
   perms=$(stat -c '%a' "$XDG_CONFIG_HOME/sops/age/keys.txt")
   [ "$perms" = "600" ]
   stub_called scp
+}
+
+@test "--sops with a bare host (no ':') assumes ~/.config/sops/age/keys.txt" {
+  stage_fake_dotfiles_checkout
+  stub_scp_fails
+
+  run sh "$INSTALL" --on-conflict backup --sops "oldhost"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "warn: scp from oldhost:~/.config/sops/age/keys.txt failed" ]]
+}
+
+@test "--sops with a bare user@host (no ':') assumes ~/.config/sops/age/keys.txt" {
+  stage_fake_dotfiles_checkout
+  stub_scp_fails
+
+  run sh "$INSTALL" --on-conflict backup --sops "kevin@oldhost"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "warn: scp from kevin@oldhost:~/.config/sops/age/keys.txt failed" ]]
+}
+
+@test "--sops with an explicit path is left untouched" {
+  stage_fake_dotfiles_checkout
+  stub_scp_fails
+
+  run sh "$INSTALL" --on-conflict backup --sops "oldhost:/custom/path/keys.txt"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "warn: scp from oldhost:/custom/path/keys.txt failed" ]]
 }
 
 @test "--sops with failing scp warns and install still succeeds" {

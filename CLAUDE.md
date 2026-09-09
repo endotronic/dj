@@ -248,9 +248,10 @@ curl -fsSL https://raw.githubusercontent.com/<you>/dotfiles/main/install.sh | sh
 # With type, inline age key, and tmux theme color:
 curl -fsSL https://raw.githubusercontent.com/<you>/dotfiles/main/install.sh \
   | sh -s -- --system-type desktop --age-key ~/keys.txt --theme '#2596be'
-# Or fetch the age key via scp from an already-bootstrapped machine instead:
+# Or fetch the age key via scp from an already-bootstrapped machine instead
+# (bare host/user@host with no ':' assumes ~/.config/sops/age/keys.txt there):
 curl -fsSL https://raw.githubusercontent.com/<you>/dotfiles/main/install.sh \
-  | sh -s -- --system-type server --sops kevin@oldhost:~/.config/sops/age/keys.txt
+  | sh -s -- --system-type server --sops kevin@oldhost
 ```
 
 `install.sh` steps:
@@ -264,7 +265,7 @@ curl -fsSL https://raw.githubusercontent.com/<you>/dotfiles/main/install.sh \
 8. Seed `~/.config/dj/packages/common.txt` from `~/.dotfiles/packages/template/common.txt` if it doesn't already exist (i.e. nothing was checked out for it — a genuinely fresh machine). Interactive: yes/no checkbox per tool (git/gpg/sops/age/just are excluded — they're always installed in step 5, not optional). Non-interactive: seed the full template. Returning machines skip this — checkout in step 7 already materialized the tracked list.
 9. Install pre-commit hook into `.config.git/hooks/`.
 10. Resolve the active package list (common + type + host, §2.7) and install via `install-packages.sh`.
-11. Install age key — from `--age-key <path>` if provided, via `scp` from `--sops user@host:path` (mutually exclusive with `--age-key`), or interactive paste, or skip.
+11. Install age key — from `--age-key <path>` if provided, via `scp` from `--sops [user@]host[:path]` (path defaults to this repo's own `~/.config/sops/age/keys.txt` convention when omitted; mutually exclusive with `--age-key`), or interactive paste, or skip.
 12. Initialize SOPS — run `sops-init.sh` (generate age key + write `~/.private/.sops.yaml`) if sops and age-keygen are present and not yet done.
 13. Apply secrets (`dj apply-secrets`) if age key is present — decrypts from `~/.private/secrets/` to target paths.
 14. Optional cleanup of local source clone.
