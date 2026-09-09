@@ -194,7 +194,7 @@ default_stubs() {
 
   run sh "$SETUP" testhost
   [ "$status" -eq 0 ]
-  remote_cmd=$(cat "$SANDBOX/ssh_argv_4")
+  remote_cmd=$(cat "$SANDBOX/ssh_argv_6")
   [[ "$remote_cmd" == *"https://raw.githubusercontent.com/someuser/somerepo/main/install.sh"* ]]
 }
 
@@ -205,7 +205,7 @@ default_stubs() {
 
   run sh "$SETUP" testhost
   [ "$status" -eq 0 ]
-  remote_cmd=$(cat "$SANDBOX/ssh_argv_4")
+  remote_cmd=$(cat "$SANDBOX/ssh_argv_6")
   [[ "$remote_cmd" == *"https://raw.githubusercontent.com/someuser/somerepo/develop/install.sh"* ]]
 }
 
@@ -216,23 +216,25 @@ default_stubs() {
 
   run sh "$SETUP" testhost
   [ "$status" -eq 0 ]
-  remote_cmd=$(cat "$SANDBOX/ssh_argv_4")
+  remote_cmd=$(cat "$SANDBOX/ssh_argv_6")
   [[ "$remote_cmd" == *"https://raw.githubusercontent.com/endotronic/dj/master/install.sh"* ]]
 }
 
 # ---------- private-repo / sops / ssh invocation shape ------------------
 
-@test "ssh is invoked with -A -t, the hostspec, and exactly one remote-command argument" {
+@test "ssh is invoked with -A -t, accept-new, the hostspec, and exactly one remote-command argument" {
   default_stubs ""
   private_repo_with_remote
   dotfiles_repo_with_origin git@github.com:someuser/somerepo.git
 
   run sh "$SETUP" kevin@testhost
   [ "$status" -eq 0 ]
-  [ "$(cat "$SANDBOX/ssh_argc")" = 4 ]
+  [ "$(cat "$SANDBOX/ssh_argc")" = 6 ]
   [ "$(cat "$SANDBOX/ssh_argv_1")" = "-A" ]
   [ "$(cat "$SANDBOX/ssh_argv_2")" = "-t" ]
-  [ "$(cat "$SANDBOX/ssh_argv_3")" = "kevin@testhost" ]
+  [ "$(cat "$SANDBOX/ssh_argv_3")" = "-o" ]
+  [ "$(cat "$SANDBOX/ssh_argv_4")" = "StrictHostKeyChecking=accept-new" ]
+  [ "$(cat "$SANDBOX/ssh_argv_5")" = "kevin@testhost" ]
 }
 
 @test "remote command includes this machine's own private-repo URL" {
@@ -242,7 +244,7 @@ default_stubs() {
 
   run sh "$SETUP" testhost
   [ "$status" -eq 0 ]
-  remote_cmd=$(cat "$SANDBOX/ssh_argv_4")
+  remote_cmd=$(cat "$SANDBOX/ssh_argv_6")
   [[ "$remote_cmd" == *"--private-repo 'git@git.example.com:kevin/dotfiles.git'"* ]]
 }
 
@@ -267,7 +269,18 @@ default_stubs() {
 
   run sh "$SETUP" testhost
   [ "$status" -eq 0 ]
-  grep -q "^scp -q .*sops/age/keys.txt testhost:/tmp/dj-setup-agekey-" "$SANDBOX/stub.log"
+  grep -q "^scp -q -o StrictHostKeyChecking=accept-new .*sops/age/keys.txt testhost:/tmp/dj-setup-agekey-" "$SANDBOX/stub.log"
+}
+
+@test "remote command exports DOTFILES_ACCEPT_NEW_HOSTS for install.sh's own private-repo clone" {
+  default_stubs ""
+  private_repo_with_remote
+  dotfiles_repo_with_origin git@github.com:someuser/somerepo.git
+
+  run sh "$SETUP" testhost
+  [ "$status" -eq 0 ]
+  remote_cmd=$(cat "$SANDBOX/ssh_argv_6")
+  [[ "$remote_cmd" == "export DOTFILES_ACCEPT_NEW_HOSTS=1;"* ]]
 }
 
 @test "remote command uses --age-key with the pushed temp path, not --sops" {
@@ -277,7 +290,7 @@ default_stubs() {
 
   run sh "$SETUP" testhost
   [ "$status" -eq 0 ]
-  remote_cmd=$(cat "$SANDBOX/ssh_argv_4")
+  remote_cmd=$(cat "$SANDBOX/ssh_argv_6")
   [[ "$remote_cmd" == *"--age-key '/tmp/dj-setup-agekey-"* ]]
   [[ "$remote_cmd" != *"--sops"* ]]
 }
@@ -289,7 +302,7 @@ default_stubs() {
 
   run sh "$SETUP" testhost
   [ "$status" -eq 0 ]
-  remote_cmd=$(cat "$SANDBOX/ssh_argv_4")
+  remote_cmd=$(cat "$SANDBOX/ssh_argv_6")
   [[ "$remote_cmd" == *"shred -u '/tmp/dj-setup-agekey-"* ]]
   [[ "$remote_cmd" == *"rm -f '/tmp/dj-setup-agekey-"* ]]
   [[ "$remote_cmd" == *'exit $rc'* ]]
@@ -318,7 +331,7 @@ EOF
 
   run sh "$SETUP" testhost
   [ "$status" -eq 0 ]
-  remote_cmd=$(cat "$SANDBOX/ssh_argv_4")
+  remote_cmd=$(cat "$SANDBOX/ssh_argv_6")
 
   cat > "$STUB_BIN/curl" <<'EOF'
 #!/bin/sh
@@ -349,7 +362,7 @@ EOF
 
   run sh "$SETUP" testhost
   [ "$status" -eq 0 ]
-  remote_cmd=$(cat "$SANDBOX/ssh_argv_4")
+  remote_cmd=$(cat "$SANDBOX/ssh_argv_6")
 
   # No curl on PATH yet. apt-get "installs" one as a side effect, same
   # as a real apt install would put a working binary on PATH.
@@ -405,7 +418,7 @@ EOF
 
   run sh "$SETUP" testhost --system-type server --theme '#2596be'
   [ "$status" -eq 0 ]
-  remote_cmd=$(cat "$SANDBOX/ssh_argv_4")
+  remote_cmd=$(cat "$SANDBOX/ssh_argv_6")
 
   cat > "$STUB_BIN/curl" <<'EOF'
 #!/bin/sh

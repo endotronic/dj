@@ -25,6 +25,13 @@
 #      pushed directly in step 2, so no --sops round trip is needed
 #      for that part).
 #
+# This whole run is one deliberate, explicitly-initiated bootstrap, so
+# every never-before-seen host it touches -- the target itself, and,
+# on the target, install.sh's own private-repo clone -- skips the
+# interactive host-key confirmation prompt via
+# StrictHostKeyChecking=accept-new (a *changed* host key is still
+# rejected, same as always; only *new* ones are auto-trusted).
+#
 # Any extra arguments (--system-type, --theme, --on-conflict, ...) are
 # passed through to the remote install.sh unchanged and safely
 # re-quoted -- naively string-joining them would let something like
@@ -56,6 +63,16 @@ fi
 q() {
   printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
 }
+
+# This whole run is one deliberate, explicitly-initiated bootstrap, so
+# skip the interactive "authenticity of host ... can't be established"
+# yes/no prompt for every never-before-seen host it touches: the
+# target itself (below) and, on the target, git.kevinfinity.com-style
+# private-repo hosts (via DOTFILES_ACCEPT_NEW_HOSTS, exported into the
+# remote command further down). StrictHostKeyChecking=accept-new, not
+# =no: a *changed* host key is still rejected, same as always -- only
+# *new* ones are auto-trusted.
+SSH_ACCEPT_NEW="-o StrictHostKeyChecking=accept-new"
 
 # ---------- 1. Ensure a reachable ssh-agent with the shared key loaded -----
 
@@ -97,7 +114,7 @@ if [ ! -r "$AGE_KEY_LOCAL" ]; then
   exit 1
 fi
 REMOTE_TMP_KEY="/tmp/dj-setup-agekey-$$"
-scp -q "$AGE_KEY_LOCAL" "$HOSTSPEC:$REMOTE_TMP_KEY"
+scp -q $SSH_ACCEPT_NEW "$AGE_KEY_LOCAL" "$HOSTSPEC:$REMOTE_TMP_KEY"
 
 # ---------- 3. Raw install.sh URL, derived from ~/.dotfiles' own origin ----
 
@@ -137,7 +154,10 @@ done
 # preserving install.sh's own exit status rather than masking it with
 # the cleanup command's.
 CLEANUP="rc=\$?; shred -u $(q "$REMOTE_TMP_KEY") 2>/dev/null || rm -f $(q "$REMOTE_TMP_KEY"); exit \$rc"
-REMOTE_CMD="{ $MAIN_CMD; }; $CLEANUP"
+# DOTFILES_ACCEPT_NEW_HOSTS: see the comment above SSH_ACCEPT_NEW --
+# this is what makes install.sh apply the same accept-new treatment to
+# its own private-repo clone, connecting out from the target.
+REMOTE_CMD="export DOTFILES_ACCEPT_NEW_HOSTS=1; { $MAIN_CMD; }; $CLEANUP"
 
 log "bootstrapping $HOSTSPEC (private-repo=$PRIVATE_REPO_URL)"
-ssh -A -t "$HOSTSPEC" "$REMOTE_CMD"
+ssh -A -t $SSH_ACCEPT_NEW "$HOSTSPEC" "$REMOTE_CMD"
