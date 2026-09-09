@@ -156,7 +156,11 @@ if [ -n "$missing" ]; then
       sudo apt-get update
       for _l in $missing; do
         _a=$(resolve_name "$_l"); _a=${_a:-$_l}
-        if sudo apt-get install -y "$_a"; then
+        # DEBIAN_FRONTEND/NEEDRESTART_MODE: see install.sh's install_one()
+        # comment -- avoids needrestart's interactive whiptail dialog,
+        # which renders as garbage over a non-tty/curl-piped install.
+        if sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
+            apt-get install -y "$_a"; then
           :
         else
           printf '[install-packages] WARNING: apt could not install %s (%s)\n' \

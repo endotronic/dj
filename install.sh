@@ -11,6 +11,14 @@
 #     --private-repo git@host:you/dotfiles.git \
 #     --sops user@oldhost --theme '#2596be'
 #
+# DOTFILES_ACCEPT_NEW_HOSTS=1 (env var, not a flag; unset by default)
+# skips the interactive host-key confirmation prompt for a
+# never-before-seen SSH host in both the --private-repo clone and the
+# --sops scp fetch, via StrictHostKeyChecking=accept-new (a *changed*
+# host key is still rejected -- this only auto-trusts *new* ones).
+# Opt-in only; `dj setup` sets it for the bootstrap it explicitly
+# initiated.
+#
 # Idempotent: re-running on an installed machine converges rather than
 # replaces. Package installs are skipped when the binary is already on
 # PATH. The `dot checkout` step backs up any colliding files in $HOME
@@ -302,12 +310,20 @@ log "OS=$OS PKG=$PKG TIER=${SYSTEM_TYPE:-none} THEME=${THEME_COLOR:-none} REPO=$
 # install-packages.sh handles the full set later; here we only need
 # enough to clone the repo.
 
+# DEBIAN_FRONTEND=noninteractive silences debconf prompts; NEEDRESTART_MODE=a
+# tells needrestart (present on stock Debian/Ubuntu) to restart affected
+# services automatically instead of popping up its whiptail "which
+# services to restart" dialog -- which otherwise renders as garbage
+# escape sequences over a curl-piped/non-tty install and can't be
+# dismissed with arrow keys or Ctrl-C alone.
 install_one() {
   pkg_bin=$1; pkg_actual=$2
   command -v "$pkg_bin" >/dev/null 2>&1 && return 0
   log "installing $pkg_actual"
   case "$PKG" in
-    apt)    sudo apt-get update; sudo apt-get install -y "$pkg_actual" ;;
+    apt)    sudo apt-get update
+            sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
+              apt-get install -y "$pkg_actual" ;;
     pacman) sudo pacman -S --needed --noconfirm "$pkg_actual" ;;
     brew)   brew install "$pkg_actual" ;;
   esac
@@ -409,6 +425,15 @@ fi
 # and the fallback-to-empty went unnoticed until several confusing
 # symptoms downstream were chased back to it). So an explicit
 # --private-repo that fails to clone is fatal, not a warning.
+#
+# DOTFILES_ACCEPT_NEW_HOSTS=1 (unset by default -- opt-in only, e.g.
+# set by `dj setup` for a bootstrap it explicitly initiated) skips the
+# interactive "authenticity of host ... can't be established" yes/no
+# prompt for a never-before-seen SSH host, both here (git@/ssh://
+# clone) and in the --sops scp fetch below. This uses
+# StrictHostKeyChecking=accept-new, not =no: a *new* host key is
+# recorded and trusted without asking, but a host key that later
+# *changes* (a real MITM indicator) is still rejected, same as normal.
 
 dot() { git --git-dir="$DOT_DIR" --work-tree="$HOME" "$@"; }
 
@@ -475,7 +500,14 @@ EOF
       fi
       ;;
     *)
-      if git clone --bare "$PRIVATE_REPO_URL" "$DOT_DIR"; then
+      _clone_rc=0
+      if [ -n "${DOTFILES_ACCEPT_NEW_HOSTS:-}" ]; then
+        GIT_SSH_COMMAND='ssh -o StrictHostKeyChecking=accept-new' \
+          git clone --bare "$PRIVATE_REPO_URL" "$DOT_DIR" || _clone_rc=$?
+      else
+        git clone --bare "$PRIVATE_REPO_URL" "$DOT_DIR" || _clone_rc=$?
+      fi
+      if [ "$_clone_rc" -eq 0 ]; then
         log "cloned private repo"
       else
         rm -rf "$DOT_DIR"
@@ -743,7 +775,9 @@ if [ ! -r "$AGE_KEY" ] && [ -n "$SOPS_KEY_SRC" ]; then
   else
     printf '\n[install] fetching age key via scp from %s -- you may be prompted to confirm the host key and/or enter a password now\n' "$SOPS_KEY_SRC"
     SCP_TMP=$(mktemp)
-    if scp -q "$SOPS_KEY_SRC" "$SCP_TMP" 2>/dev/null; then
+    _scp_opts=
+    [ -n "${DOTFILES_ACCEPT_NEW_HOSTS:-}" ] && _scp_opts="-o StrictHostKeyChecking=accept-new"
+    if scp -q $_scp_opts "$SOPS_KEY_SRC" "$SCP_TMP" 2>/dev/null; then
       AGE_KEY_SRC=$SCP_TMP
       log "fetched age key via scp from $SOPS_KEY_SRC"
     else

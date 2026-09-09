@@ -156,6 +156,25 @@ _make_fake_repo_dir() {
   [ ! -d "$HOME/.config.git" ]
 }
 
+@test "DOTFILES_ACCEPT_NEW_HOSTS threads accept-new into the private-repo clone's SSH transport" {
+  stage_fake_dotfiles_checkout
+  stub_cmd ssh
+
+  DOTFILES_ACCEPT_NEW_HOSTS=1 run sh "$INSTALL" --private-repo "git@fakehost:kevin/dotfiles.git" --on-conflict backup
+  [ "$status" -eq 1 ]
+  grep -q "StrictHostKeyChecking=accept-new" "$SANDBOX/stub.log"
+}
+
+@test "without DOTFILES_ACCEPT_NEW_HOSTS the private-repo clone's SSH transport is unmodified" {
+  stage_fake_dotfiles_checkout
+  stub_cmd ssh
+
+  run sh "$INSTALL" --private-repo "git@fakehost:kevin/dotfiles.git" --on-conflict backup
+  [ "$status" -eq 1 ]
+  stub_called ssh
+  ! grep -q "StrictHostKeyChecking=accept-new" "$SANDBOX/stub.log"
+}
+
 @test "--private-repo http(s) URL in non-interactive shell is fatal, not a silent empty-init" {
   stage_fake_dotfiles_checkout
 
@@ -769,6 +788,15 @@ _make_fake_repo_dir() {
   run sh "$INSTALL" --on-conflict backup --sops "oldhost:/custom/path/keys.txt"
   [ "$status" -eq 0 ]
   [[ "$output" =~ "warn: scp from oldhost:/custom/path/keys.txt failed" ]]
+}
+
+@test "DOTFILES_ACCEPT_NEW_HOSTS threads accept-new into the --sops scp fetch" {
+  stage_fake_dotfiles_checkout
+  stub_cmd scp
+
+  DOTFILES_ACCEPT_NEW_HOSTS=1 run sh "$INSTALL" --on-conflict backup --sops "oldhost:~/keys.txt"
+  [ "$status" -eq 0 ]
+  grep -q "StrictHostKeyChecking=accept-new" "$SANDBOX/stub.log"
 }
 
 @test "--sops with failing scp warns and install still succeeds" {
