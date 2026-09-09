@@ -54,7 +54,7 @@ CONFLICT_MODE=ask
 REMOVE_SOURCE=ask
 AGE_KEY_SRC=
 SOPS_KEY_SRC=
-DEPLOY_KEY_SRC=
+GIT_KEY_SRC=
 THEME_COLOR=
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -70,8 +70,8 @@ while [ $# -gt 0 ]; do
     --remove-source=*) REMOVE_SOURCE=${1#*=} ;;
     --age-key)        shift; AGE_KEY_SRC=${1:-} ;;
     --age-key=*)      AGE_KEY_SRC=${1#*=} ;;
-    --deploy-key)     shift; DEPLOY_KEY_SRC=${1:-} ;;
-    --deploy-key=*)   DEPLOY_KEY_SRC=${1#*=} ;;
+    --git-key)     shift; GIT_KEY_SRC=${1:-} ;;
+    --git-key=*)   GIT_KEY_SRC=${1#*=} ;;
     --sops)           shift; SOPS_KEY_SRC=${1:-} ;;
     --sops=*)         SOPS_KEY_SRC=${1#*=} ;;
     --theme)          shift; THEME_COLOR=${1:-} ;;
@@ -137,11 +137,11 @@ Options:
         immediately during bootstrap. When omitted and the key is absent,
         an interactive install will prompt you to paste it; press Enter
         on a blank line to finish, or Enter immediately to skip.
-  --deploy-key PATH
+  --git-key PATH
         Path to the SSH key that authenticates to the git host holding
         your --private-repo (a repo-scoped *deploy key*, not your
         personal account key -- see CLAUDE.md §5.3). Installed to
-        ~/.ssh/id_gitea (0600) and used for the private-repo clone
+        ~/.ssh/id_githost (0600) and used for the private-repo clone
         below. Needed only for the very first clone on a fresh
         machine: the tracked ~/.ssh/config points at that same path
         for subsequent pulls, and apply-secrets restores the key there
@@ -425,19 +425,19 @@ fi
 #
 # Must land before the clone below, which is the one operation that
 # can't wait for the tracked ~/.ssh/config (checked out in step 7) to
-# point ssh at this key. See --deploy-key in --help.
+# point ssh at this key. See --git-key in --help.
 
-DEPLOY_KEY=$HOME/.ssh/id_gitea
+GIT_KEY=$HOME/.ssh/id_githost
 
-if [ -n "$DEPLOY_KEY_SRC" ]; then
-  if [ ! -r "$DEPLOY_KEY_SRC" ]; then
-    log "warn: --deploy-key path not readable: $DEPLOY_KEY_SRC; skipping"
+if [ -n "$GIT_KEY_SRC" ]; then
+  if [ ! -r "$GIT_KEY_SRC" ]; then
+    log "warn: --git-key path not readable: $GIT_KEY_SRC; skipping"
   else
     mkdir -p "$HOME/.ssh"
     chmod 700 "$HOME/.ssh"
-    cp "$DEPLOY_KEY_SRC" "$DEPLOY_KEY"
-    chmod 600 "$DEPLOY_KEY"
-    log "installed git-host deploy key at $DEPLOY_KEY"
+    cp "$GIT_KEY_SRC" "$GIT_KEY"
+    chmod 600 "$GIT_KEY"
+    log "installed git-host deploy key at $GIT_KEY"
   fi
 fi
 
@@ -539,8 +539,8 @@ EOF
       _ssh_opts=
       [ -n "${DOTFILES_ACCEPT_NEW_HOSTS:-}" ] \
         && _ssh_opts="$_ssh_opts -o StrictHostKeyChecking=accept-new"
-      [ -r "$DEPLOY_KEY" ] \
-        && _ssh_opts="$_ssh_opts -i $DEPLOY_KEY -o IdentitiesOnly=yes"
+      [ -r "$GIT_KEY" ] \
+        && _ssh_opts="$_ssh_opts -i $GIT_KEY -o IdentitiesOnly=yes"
       _clone_rc=0
       if [ -n "$_ssh_opts" ]; then
         GIT_SSH_COMMAND="ssh$_ssh_opts" \

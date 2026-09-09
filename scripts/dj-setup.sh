@@ -215,13 +215,13 @@ scp -q $SSH_ACCEPT_NEW "$AGE_KEY_LOCAL" "$HOSTSPEC:$REMOTE_TMP_KEY"
 # like the age key does. Optional: without one, the clone falls back
 # to whatever the forwarded agent offers.
 
-DEPLOY_KEY_LOCAL=$HOME/.ssh/id_gitea
-REMOTE_TMP_DEPLOY=
-if [ -r "$DEPLOY_KEY_LOCAL" ]; then
-  REMOTE_TMP_DEPLOY="/tmp/dj-setup-deploykey-$$"
-  scp -q $SSH_ACCEPT_NEW "$DEPLOY_KEY_LOCAL" "$HOSTSPEC:$REMOTE_TMP_DEPLOY"
+GIT_KEY_LOCAL=$HOME/.ssh/id_githost
+REMOTE_TMP_GITKEY=
+if [ -r "$GIT_KEY_LOCAL" ]; then
+  REMOTE_TMP_GITKEY="/tmp/dj-setup-gitkey-$$"
+  scp -q $SSH_ACCEPT_NEW "$GIT_KEY_LOCAL" "$HOSTSPEC:$REMOTE_TMP_GITKEY"
 else
-  log "no deploy key at $DEPLOY_KEY_LOCAL; the target's clone will rely on the forwarded agent"
+  log "no deploy key at $GIT_KEY_LOCAL; the target's clone will rely on the forwarded agent"
 fi
 
 # ---------- 3. Raw install.sh URL, derived from ~/.dotfiles' own origin ----
@@ -254,8 +254,8 @@ ENSURE_CURL='command -v curl >/dev/null 2>&1 || \
 { printf "error: curl is missing and no known package manager was found\n" >&2; exit 1; }'
 
 MAIN_CMD="$ENSURE_CURL && curl -fsSL $(q "$RAW_INSTALL_URL") | sh -s -- --private-repo $(q "$PRIVATE_REPO_URL") --age-key $(q "$REMOTE_TMP_KEY")"
-[ -n "$REMOTE_TMP_DEPLOY" ] \
-  && MAIN_CMD="$MAIN_CMD --deploy-key $(q "$REMOTE_TMP_DEPLOY")"
+[ -n "$REMOTE_TMP_GITKEY" ] \
+  && MAIN_CMD="$MAIN_CMD --git-key $(q "$REMOTE_TMP_GITKEY")"
 for arg in "$@"; do
   MAIN_CMD="$MAIN_CMD $(q "$arg")"
 done
@@ -264,7 +264,7 @@ done
 # preserving install.sh's own exit status rather than masking it with
 # the cleanup command's.
 CLEANUP="rc=\$?"
-for _tmp in "$REMOTE_TMP_KEY" ${REMOTE_TMP_DEPLOY:+"$REMOTE_TMP_DEPLOY"}; do
+for _tmp in "$REMOTE_TMP_KEY" ${REMOTE_TMP_GITKEY:+"$REMOTE_TMP_GITKEY"}; do
   CLEANUP="$CLEANUP; shred -u $(q "$_tmp") 2>/dev/null || rm -f $(q "$_tmp")"
 done
 CLEANUP="$CLEANUP; exit \$rc"

@@ -244,7 +244,7 @@ doctor:
       printf '  miss  %s -- run: dj authorized-keys\n' "$keys_d"
       rc=1
     fi
-    for k in "$HOME/.ssh/id_ed25519" "$HOME/.ssh/id_rsa" "$HOME/.ssh/id_gitea"; do
+    for k in "$HOME/.ssh/id_ed25519" "$HOME/.ssh/id_rsa" "$HOME/.ssh/id_githost"; do
       if [ -e "$k" ]; then
         mode=$(stat -c '%a' "$k" 2>/dev/null || stat -f '%Lp' "$k" 2>/dev/null)
         if [ "$mode" = 600 ]; then

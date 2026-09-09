@@ -385,15 +385,17 @@ dot commit -m 'ssh: trust <host>' && dot push
 
 **Never track `~/.ssh/id_ed25519.pub`.** It's a per-machine path, so tracking it checks one machine's public key out over every other's, leaving each with a `.pub` that doesn't match its own private key.
 
-### 5.3.1 Git host access: deploy key, not a personal key
+### 5.3.1 Git host access: one shared key, separate from machine identity
 
-The private repo is cloned over SSH, which needs credentials *before* anything has been restored. That's a **repo-scoped deploy key** (`~/.ssh/id_gitea`), not a personal account key — blast radius is one repo rather than the whole account, which is what deploy keys exist for.
+The private repo is cloned over SSH, which needs credentials *before* anything has been restored. That's `~/.ssh/id_githost` — **one key shared across machines, used for both GitHub and Gitea**, and deliberately *not* the same key as any machine's own identity.
 
-- Distributed via the manifest (`secrets/.ssh/id_gitea.enc` → `~/.ssh/id_gitea`, 0600) so every machine restores it on `dj sync`.
-- Selected via a tracked `~/.ssh/config` stanza for the git host (`IdentityFile ~/.ssh/id_gitea`, `IdentitiesOnly yes`).
-- Bootstrap chicken-and-egg (the first clone predates both the manifest and the tracked config) is solved exactly like the age key: `dj setup` pushes it to the target over scp and passes `install.sh --deploy-key`.
+- Distributed via the manifest (`secrets/.ssh/id_githost.enc` → `~/.ssh/id_githost`, 0600) so every machine restores it on `dj sync`.
+- Selected via a tracked `~/.ssh/config` stanza (`IdentityFile ~/.ssh/id_githost`, `IdentitiesOnly yes`) covering both hosts.
+- Bootstrap chicken-and-egg (the first clone predates both the manifest and the tracked config) is solved exactly like the age key: `dj setup` pushes it to the target over scp and passes `install.sh --git-key`.
 
-GitHub (the public repo) needs no equivalent: `install.sh` clones it over https, and pushing happens only from machines where you actually develop, using that machine's own key registered normally.
+The point of the split isn't that this key is individually low-risk — it's an account key, so a compromise reaches the account. It's that **machine identity and service credentials are separate concerns with separate lifetimes**: rotating a machine doesn't touch git access, revoking git access doesn't strand every machine's SSH, and one compromised machine no longer hands over both at once. Registering it once per service (goal: not maintaining a key per machine per forge) is the convenience this buys.
+
+Tightening it later needs no code change, only a different key registered in a different place: a Gitea **repo-scoped deploy key** would cut the blast radius to one repo, and machines that only ever pull could hold a read-only one. The mechanism is identical; only which key is registered where differs.
 
 GPG is deliberately *not* treated this way — it identifies the person, not the machine, so one signing key across your own machines is normal practice and stays in the manifest (§5.1).
 

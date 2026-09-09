@@ -647,27 +647,27 @@ _make_fake_repo_dir() {
 
 # --- --age-key flag ----------------------------------------------------------
 
-# --- --deploy-key flag -------------------------------------------------------
+# --- --git-key flag -------------------------------------------------------
 
-@test "--deploy-key installs the git-host key to ~/.ssh/id_gitea with mode 0600" {
+@test "--git-key installs the git-host key to ~/.ssh/id_githost with mode 0600" {
   stage_fake_dotfiles_checkout
   key="$SANDBOX/deploy_key"
   printf 'FAKE-DEPLOY-KEY\n' > "$key"
 
-  run sh "$INSTALL" --on-conflict backup --deploy-key "$key"
+  run sh "$INSTALL" --on-conflict backup --git-key "$key"
   [ "$status" -eq 0 ]
-  grep -q FAKE-DEPLOY-KEY "$HOME/.ssh/id_gitea"
-  [ "$(stat -c '%a' "$HOME/.ssh/id_gitea")" = "600" ]
+  grep -q FAKE-DEPLOY-KEY "$HOME/.ssh/id_githost"
+  [ "$(stat -c '%a' "$HOME/.ssh/id_githost")" = "600" ]
   [ "$(stat -c '%a' "$HOME/.ssh")" = "700" ]
 }
 
-@test "--deploy-key with unreadable path warns and install still succeeds" {
+@test "--git-key with unreadable path warns and install still succeeds" {
   stage_fake_dotfiles_checkout
 
-  run sh "$INSTALL" --on-conflict backup --deploy-key "$SANDBOX/nope"
+  run sh "$INSTALL" --on-conflict backup --git-key "$SANDBOX/nope"
   [ "$status" -eq 0 ]
-  [[ "$output" =~ "--deploy-key path not readable" ]]
-  [ ! -f "$HOME/.ssh/id_gitea" ]
+  [[ "$output" =~ "--git-key path not readable" ]]
+  [ ! -f "$HOME/.ssh/id_githost" ]
 }
 
 @test "an installed deploy key is used as the private-repo clone's SSH identity" {
@@ -677,9 +677,9 @@ _make_fake_repo_dir() {
   printf 'FAKE-DEPLOY-KEY\n' > "$key"
 
   run sh "$INSTALL" --private-repo "git@fakehost:kevin/dotfiles.git" \
-    --deploy-key "$key" --on-conflict backup
+    --git-key "$key" --on-conflict backup
   [ "$status" -eq 1 ]
-  grep -q -- "-i $HOME/.ssh/id_gitea" "$SANDBOX/stub.log"
+  grep -q -- "-i $HOME/.ssh/id_githost" "$SANDBOX/stub.log"
   grep -q "IdentitiesOnly=yes" "$SANDBOX/stub.log"
 }
 
