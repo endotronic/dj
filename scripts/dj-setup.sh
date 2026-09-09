@@ -99,7 +99,17 @@ fi
 
 # ---------- 4. Build the remote command and run it over a forwarded agent --
 
-REMOTE_CMD="curl -fsSL $(q "$RAW_INSTALL_URL") | sh -s -- --private-repo $(q "$PRIVATE_REPO_URL") --sops $(q "$SOPS_SRC")"
+# install.sh is fetched via curl, but a genuinely fresh machine may not
+# have it yet -- install it first via whatever package manager is
+# present, same env vars as install.sh's own apt path (avoids
+# needrestart's interactive dialog on Debian/Ubuntu).
+ENSURE_CURL='command -v curl >/dev/null 2>&1 || \
+{ command -v apt-get >/dev/null 2>&1 && sudo apt-get update && sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y curl; } || \
+{ command -v pacman >/dev/null 2>&1 && sudo pacman -Sy --noconfirm curl; } || \
+{ command -v brew >/dev/null 2>&1 && brew install curl; } || \
+{ printf "error: curl is missing and no known package manager was found\n" >&2; exit 1; }'
+
+REMOTE_CMD="$ENSURE_CURL && curl -fsSL $(q "$RAW_INSTALL_URL") | sh -s -- --private-repo $(q "$PRIVATE_REPO_URL") --sops $(q "$SOPS_SRC")"
 for arg in "$@"; do
   REMOTE_CMD="$REMOTE_CMD $(q "$arg")"
 done

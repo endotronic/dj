@@ -246,6 +246,86 @@ default_stubs() {
   [[ "$remote_cmd" == *"--sops '$expected_user@$expected_host'"* ]]
 }
 
+# ---------- curl-ensure: install it on the target if missing ------------
+
+@test "ensure-curl skips the package manager entirely when curl is already present" {
+  default_stubs ""
+  private_repo_with_remote
+  dotfiles_repo_with_origin git@github.com:someuser/somerepo.git
+
+  run sh "$SETUP" testhost
+  [ "$status" -eq 0 ]
+  remote_cmd=$(cat "$SANDBOX/ssh_argv_4")
+
+  cat > "$STUB_BIN/curl" <<'EOF'
+#!/bin/sh
+printf 'curl-called\n' >> "$SANDBOX/stub.log"
+cat <<'SCRIPT'
+#!/bin/sh
+exit 0
+SCRIPT
+EOF
+  chmod +x "$STUB_BIN/curl"
+  cat > "$STUB_BIN/apt-get" <<'EOF'
+#!/bin/sh
+printf 'apt-get should NOT have been called\n' >> "$SANDBOX/stub.log"
+exit 1
+EOF
+  chmod +x "$STUB_BIN/apt-get"
+
+  run sh -c "$remote_cmd"
+  [ "$status" -eq 0 ]
+  ! grep -q "should NOT have been called" "$SANDBOX/stub.log"
+}
+
+@test "ensure-curl installs curl via apt-get when it's missing" {
+  default_stubs ""
+  private_repo_with_remote
+  dotfiles_repo_with_origin git@github.com:someuser/somerepo.git
+  stub_sudo_passthrough
+
+  run sh "$SETUP" testhost
+  [ "$status" -eq 0 ]
+  remote_cmd=$(cat "$SANDBOX/ssh_argv_4")
+
+  # No curl on PATH yet. apt-get "installs" one as a side effect, same
+  # as a real apt install would put a working binary on PATH.
+  cat > "$STUB_BIN/apt-get" <<EOF
+#!/bin/sh
+printf 'apt-get %s\n' "\$*" >> "$SANDBOX/stub.log"
+case "\$*" in
+  *"install -y curl"*)
+    cat > "$STUB_BIN/curl" <<'CURLEOF'
+#!/bin/sh
+cat <<'SCRIPT'
+#!/bin/sh
+exit 0
+SCRIPT
+CURLEOF
+    chmod +x "$STUB_BIN/curl"
+    ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_BIN/apt-get"
+  # The reconstructed command's `| sh -s --` stage needs `sh` on PATH
+  # too, and `sudo env VAR=val apt-get ...` needs a real `env` binary
+  # (not a shell builtin) -- both must survive PATH being restricted
+  # below.
+  ln -sf "$(command -v sh)" "$STUB_BIN/sh"
+  ln -sf "$(command -v env)" "$STUB_BIN/env"
+
+  # Restrict PATH to just $STUB_BIN for this re-execution -- otherwise
+  # the real system curl would still resolve and `command -v curl`
+  # would short-circuit before ever exercising the install path. The
+  # outer invocation still uses /bin/sh by absolute path (bats' own
+  # PATH, unrestricted) to launch it.
+  PATH="$STUB_BIN" run /bin/sh -c "$remote_cmd"
+  [ "$status" -eq 0 ]
+  grep -q "apt-get update" "$SANDBOX/stub.log"
+  grep -q "install -y curl" "$SANDBOX/stub.log"
+}
+
 # ---------- quoting safety: the actual bug class this guards against ----
 
 @test "extra args survive being re-parsed by a real shell, hex-color '#' included" {
