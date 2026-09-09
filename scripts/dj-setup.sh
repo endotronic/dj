@@ -36,6 +36,13 @@
 # passed through to the remote install.sh unchanged and safely
 # re-quoted -- naively string-joining them would let something like
 # --theme '#2596be' get truncated as a comment by the remote shell.
+#
+# The target is brand-new and trusts none of our keys yet, so every
+# connection to it -- the two scp key pushes and the final ssh -A -t --
+# would otherwise prompt for its login password on its own. They're
+# multiplexed over one OpenSSH ControlMaster connection instead (see
+# the comment above SSH_MUX below), so that password is only ever
+# typed once per run.
 
 set -eu
 
@@ -167,6 +174,40 @@ q() {
 # *new* ones are auto-trusted.
 SSH_ACCEPT_NEW="-o StrictHostKeyChecking=accept-new"
 
+# ---------- 0c. Multiplex all connections to the target over one auth ------
+#
+# Steps 2b, 2c, and 4 below each open a *separate* connection to the
+# same target -- and since the whole point of this script is bridging
+# the chicken-and-egg gap where the target doesn't trust any key of
+# ours yet, each one falls back to a password prompt on its own: three
+# prompts for what is, from the user's side, one bootstrap action.
+# OpenSSH's own connection multiplexing (ControlMaster) fixes this
+# without this script ever touching the password itself (unlike e.g.
+# piping it through sshpass, which would have to capture it) -- ssh
+# still owns the prompt end to end on the real tty; only the
+# already-authenticated *connection* gets reused by the later
+# scp/ssh calls, which see the transport as already open and skip
+# auth entirely. Whichever call runs first (2b's scp) is the one that
+# actually authenticates and becomes the backgrounded control master;
+# 2c and step 4 just ride it.
+#
+# The control socket lives under a fresh mktemp -d (mode 0700, owned
+# by this user) so no other local user on a shared machine can ride
+# the multiplexed session -- the same trust boundary the ssh-agent
+# below already relies on. Explicitly torn down on exit (trap, every
+# path) rather than left to ControlPersist's idle timeout, so nothing
+# lingers past this one invocation; ControlPersist is still set as a
+# safety net in case the trap itself never runs (e.g. kill -9).
+CTL_DIR=$(mktemp -d "${TMPDIR:-/tmp}/dj-setup-ctl.XXXXXX")
+CTL_PATH="$CTL_DIR/control"
+SSH_MUX="-o ControlMaster=auto -o ControlPath=$CTL_PATH -o ControlPersist=10m"
+SSH_OPTS="$SSH_ACCEPT_NEW $SSH_MUX"
+cleanup_mux() {
+  ssh -o ControlPath="$CTL_PATH" -O exit "$HOSTSPEC" >/dev/null 2>&1 || true
+  rm -rf "$CTL_DIR"
+}
+trap cleanup_mux EXIT
+
 # ---------- 1. Ensure a reachable ssh-agent with the shared key loaded -----
 
 rc=0
@@ -207,7 +248,7 @@ if [ ! -r "$AGE_KEY_LOCAL" ]; then
   exit 1
 fi
 REMOTE_TMP_KEY="/tmp/dj-setup-agekey-$$"
-scp -q $SSH_ACCEPT_NEW "$AGE_KEY_LOCAL" "$HOSTSPEC:$REMOTE_TMP_KEY"
+scp -q $SSH_OPTS "$AGE_KEY_LOCAL" "$HOSTSPEC:$REMOTE_TMP_KEY"
 
 # ---------- 2c. Push the git-host deploy key the same way ------------------
 #
@@ -221,7 +262,7 @@ GIT_KEY_LOCAL=$HOME/.ssh/id_githost
 REMOTE_TMP_GITKEY=
 if [ -r "$GIT_KEY_LOCAL" ]; then
   REMOTE_TMP_GITKEY="/tmp/dj-setup-gitkey-$$"
-  scp -q $SSH_ACCEPT_NEW "$GIT_KEY_LOCAL" "$HOSTSPEC:$REMOTE_TMP_GITKEY"
+  scp -q $SSH_OPTS "$GIT_KEY_LOCAL" "$HOSTSPEC:$REMOTE_TMP_GITKEY"
 else
   log "no deploy key at $GIT_KEY_LOCAL; the target's clone will rely on the forwarded agent"
 fi
@@ -276,4 +317,4 @@ CLEANUP="$CLEANUP; exit \$rc"
 REMOTE_CMD="export DOTFILES_ACCEPT_NEW_HOSTS=1; { $MAIN_CMD; }; $CLEANUP"
 
 log "bootstrapping $HOSTSPEC (private-repo=$PRIVATE_REPO_URL)"
-ssh -A -t $SSH_ACCEPT_NEW "$HOSTSPEC" "$REMOTE_CMD"
+ssh -A -t $SSH_OPTS "$HOSTSPEC" "$REMOTE_CMD"

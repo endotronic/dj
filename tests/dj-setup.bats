@@ -98,14 +98,23 @@ EOF
   chmod +x "$STUB_BIN/ssh-keygen"
 }
 
-# Records each argv element of the final `ssh` call on its own line in
-# $SANDBOX/ssh_argv_N (1-indexed) plus the total count in
+# Records each argv element of the main bootstrap `ssh` call on its
+# own line in $SANDBOX/ssh_argv_N (1-indexed) plus the total count in
 # $SANDBOX/ssh_argc -- unlike the generic space-joining stub_cmd, this
 # preserves argument boundaries, which is exactly what matters here
-# (the whole remote pipeline must arrive as ONE argument to ssh).
+# (the whole remote pipeline must arrive as ONE argument to ssh). The
+# script's own exit trap also invokes `ssh -O exit ...` afterward to
+# tear down the ControlMaster socket -- that's a distinct, much
+# shorter invocation that would otherwise overwrite what this just
+# recorded, so it's deliberately skipped here (still logged to
+# stub.log for tests that want to see it).
 stub_ssh_records_argv() {
   cat > "$STUB_BIN/ssh" <<'EOF'
 #!/bin/sh
+{ printf 'ssh'; for a in "$@"; do printf ' %s' "$a"; done; printf '\n'; } >> "$SANDBOX/stub.log"
+for a in "$@"; do
+  [ "$a" = "-O" ] && exit 0
+done
 i=0
 for a in "$@"; do
   i=$((i + 1))
@@ -115,6 +124,15 @@ printf '%s' "$#" > "$SANDBOX/ssh_argc"
 exit 0
 EOF
   chmod +x "$STUB_BIN/ssh"
+}
+
+# The main bootstrap ssh call's remote-command argument is always its
+# last argv element -- fetch it by argc rather than a hardcoded index,
+# since the exact position shifts whenever the option list does (e.g.
+# ControlMaster/-Path/-Persist alongside accept-new).
+remote_cmd_from_ssh_call() {
+  argc=$(cat "$SANDBOX/ssh_argc")
+  cat "$SANDBOX/ssh_argv_$argc"
 }
 
 default_stubs() {
@@ -139,7 +157,7 @@ EOF
   run sh "$SETUP" testhost --system-type server < /dev/null
   [ "$status" -eq 0 ]
   [[ "$output" =~ "generated tmux theme color for testhost via claude: #ff0000" ]]
-  remote_cmd=$(cat "$SANDBOX/ssh_argv_6")
+  remote_cmd=$(remote_cmd_from_ssh_call)
   [[ "$remote_cmd" == *"'--theme' '#ff0000'"* ]]
 }
 
@@ -156,7 +174,7 @@ EOF
   run sh "$SETUP" testhost --system-type server < /dev/null
   [ "$status" -eq 0 ]
   [[ "$output" =~ "no theme from claude; generated a random one for testhost:" ]]
-  remote_cmd=$(cat "$SANDBOX/ssh_argv_6")
+  remote_cmd=$(remote_cmd_from_ssh_call)
   [[ "$remote_cmd" =~ \'--theme\'\ \'#[0-9a-f]{6}\' ]]
 }
 
@@ -168,13 +186,13 @@ EOF
   # Same PATH-restriction technique as the timeout-unavailable test
   # below: unstub_cmd alone isn't enough since PATH still falls
   # through to the real system `claude` further down.
-  for u in git awk basename sed grep head od tr date; do
+  for u in git awk basename sed grep head od tr date mktemp rm; do
     ln -sf "$(command -v "$u")" "$STUB_BIN/$u"
   done
 
   PATH="$STUB_BIN" run /bin/sh "$SETUP" testhost --system-type server < /dev/null
   [ "$status" -eq 0 ]
-  remote_cmd=$(cat "$SANDBOX/ssh_argv_6")
+  remote_cmd=$(remote_cmd_from_ssh_call)
   [[ "$remote_cmd" =~ \'--theme\'\ \'#[0-9a-f]{6}\' ]]
 }
 
@@ -198,14 +216,14 @@ EOF
   # real system `timeout` further down. Restrict PATH to $STUB_BIN
   # (which never had a `timeout` stub) instead, symlinking in the
   # other real utilities dj-setup.sh still needs.
-  for u in git awk basename sed grep head od tr date; do
+  for u in git awk basename sed grep head od tr date mktemp rm; do
     ln -sf "$(command -v "$u")" "$STUB_BIN/$u"
   done
 
   PATH="$STUB_BIN" run /bin/sh "$SETUP" testhost --system-type server < /dev/null
   [ "$status" -eq 0 ]
   ! stub_called claude
-  remote_cmd=$(cat "$SANDBOX/ssh_argv_6")
+  remote_cmd=$(remote_cmd_from_ssh_call)
   [[ "$remote_cmd" =~ \'--theme\'\ \'#[0-9a-f]{6}\' ]]
 }
 
@@ -219,7 +237,7 @@ EOF
   run sh "$SETUP" testhost <<< 'server'
   [ "$status" -eq 0 ]
   [[ "$output" =~ "system type for testhost" ]]
-  remote_cmd=$(cat "$SANDBOX/ssh_argv_6")
+  remote_cmd=$(remote_cmd_from_ssh_call)
   [[ "$remote_cmd" == *"'--system-type' 'server'"* ]]
 }
 
@@ -230,7 +248,7 @@ EOF
 
   run sh "$SETUP" testhost <<< ''
   [ "$status" -eq 0 ]
-  remote_cmd=$(cat "$SANDBOX/ssh_argv_6")
+  remote_cmd=$(remote_cmd_from_ssh_call)
   [[ "$remote_cmd" != *"--system-type"* ]]
 }
 
@@ -241,7 +259,7 @@ EOF
 
   run sh "$SETUP" testhost < /dev/null
   [ "$status" -eq 0 ]
-  remote_cmd=$(cat "$SANDBOX/ssh_argv_6")
+  remote_cmd=$(remote_cmd_from_ssh_call)
   [[ "$remote_cmd" != *"--system-type"* ]]
 }
 
@@ -263,7 +281,7 @@ EOF
   run sh "$SETUP" testhost --system-type desktop < /dev/null
   [ "$status" -eq 0 ]
   [[ ! "$output" =~ "system type for" ]]
-  remote_cmd=$(cat "$SANDBOX/ssh_argv_6")
+  remote_cmd=$(remote_cmd_from_ssh_call)
   [[ "$remote_cmd" == *"'--system-type' 'desktop'"* ]]
 }
 
@@ -277,7 +295,9 @@ EOF
 
   run sh "$SETUP" testhost <<< ''
   [ "$status" -eq 0 ]
-  [[ "$output" =~ "known: desktop, server" ]]
+  [[ "$output" =~ "known system types:" ]]
+  [[ "$output" =~ "  - desktop" ]]
+  [[ "$output" =~ "  - server" ]]
 }
 
 # ---------- argument / precondition errors ----------------------------
@@ -362,7 +382,7 @@ EOF
 
   run sh "$SETUP" testhost
   [ "$status" -eq 0 ]
-  remote_cmd=$(cat "$SANDBOX/ssh_argv_6")
+  remote_cmd=$(remote_cmd_from_ssh_call)
   [[ "$remote_cmd" == *"https://raw.githubusercontent.com/someuser/somerepo/main/install.sh"* ]]
 }
 
@@ -373,7 +393,7 @@ EOF
 
   run sh "$SETUP" testhost
   [ "$status" -eq 0 ]
-  remote_cmd=$(cat "$SANDBOX/ssh_argv_6")
+  remote_cmd=$(remote_cmd_from_ssh_call)
   [[ "$remote_cmd" == *"https://raw.githubusercontent.com/someuser/somerepo/develop/install.sh"* ]]
 }
 
@@ -384,25 +404,41 @@ EOF
 
   run sh "$SETUP" testhost
   [ "$status" -eq 0 ]
-  remote_cmd=$(cat "$SANDBOX/ssh_argv_6")
+  remote_cmd=$(remote_cmd_from_ssh_call)
   [[ "$remote_cmd" == *"https://raw.githubusercontent.com/endotronic/dj/master/install.sh"* ]]
 }
 
 # ---------- private-repo / sops / ssh invocation shape ------------------
 
-@test "ssh is invoked with -A -t, accept-new, the hostspec, and exactly one remote-command argument" {
+@test "ssh is invoked with -A -t, accept-new, control multiplexing, the hostspec, and exactly one remote-command argument" {
   default_stubs ""
   private_repo_with_remote
   dotfiles_repo_with_origin git@github.com:someuser/somerepo.git
 
   run sh "$SETUP" kevin@testhost
   [ "$status" -eq 0 ]
-  [ "$(cat "$SANDBOX/ssh_argc")" = 6 ]
+  [ "$(cat "$SANDBOX/ssh_argc")" = 12 ]
   [ "$(cat "$SANDBOX/ssh_argv_1")" = "-A" ]
   [ "$(cat "$SANDBOX/ssh_argv_2")" = "-t" ]
   [ "$(cat "$SANDBOX/ssh_argv_3")" = "-o" ]
   [ "$(cat "$SANDBOX/ssh_argv_4")" = "StrictHostKeyChecking=accept-new" ]
-  [ "$(cat "$SANDBOX/ssh_argv_5")" = "kevin@testhost" ]
+  [ "$(cat "$SANDBOX/ssh_argv_5")" = "-o" ]
+  [ "$(cat "$SANDBOX/ssh_argv_6")" = "ControlMaster=auto" ]
+  [ "$(cat "$SANDBOX/ssh_argv_7")" = "-o" ]
+  [[ "$(cat "$SANDBOX/ssh_argv_8")" == ControlPath=* ]]
+  [ "$(cat "$SANDBOX/ssh_argv_9")" = "-o" ]
+  [ "$(cat "$SANDBOX/ssh_argv_10")" = "ControlPersist=10m" ]
+  [ "$(cat "$SANDBOX/ssh_argv_11")" = "kevin@testhost" ]
+}
+
+@test "the ControlMaster socket is torn down (ssh -O exit) after the run, success or failure" {
+  default_stubs ""
+  private_repo_with_remote
+  dotfiles_repo_with_origin git@github.com:someuser/somerepo.git
+
+  run sh "$SETUP" testhost
+  [ "$status" -eq 0 ]
+  grep -q -- "-O exit testhost$" "$SANDBOX/stub.log"
 }
 
 @test "remote command includes this machine's own private-repo URL" {
@@ -412,7 +448,7 @@ EOF
 
   run sh "$SETUP" testhost
   [ "$status" -eq 0 ]
-  remote_cmd=$(cat "$SANDBOX/ssh_argv_6")
+  remote_cmd=$(remote_cmd_from_ssh_call)
   [[ "$remote_cmd" == *"--private-repo 'git@git.example.com:kevin/dotfiles.git'"* ]]
 }
 
@@ -447,7 +483,7 @@ EOF
 
   run sh "$SETUP" testhost
   [ "$status" -eq 0 ]
-  remote_cmd=$(cat "$SANDBOX/ssh_argv_6")
+  remote_cmd=$(remote_cmd_from_ssh_call)
   [[ "$remote_cmd" == "export DOTFILES_ACCEPT_NEW_HOSTS=1;"* ]]
 }
 
@@ -460,7 +496,7 @@ EOF
   run sh "$SETUP" testhost --system-type server < /dev/null
   [ "$status" -eq 0 ]
   grep -q "^scp -q -o StrictHostKeyChecking=accept-new .*id_githost testhost:/tmp/dj-setup-gitkey-" "$SANDBOX/stub.log"
-  remote_cmd=$(cat "$SANDBOX/ssh_argv_6")
+  remote_cmd=$(remote_cmd_from_ssh_call)
   [[ "$remote_cmd" == *"--git-key '/tmp/dj-setup-gitkey-"* ]]
   [[ "$remote_cmd" == *"shred -u '/tmp/dj-setup-gitkey-"* ]]
 }
@@ -474,7 +510,7 @@ EOF
   run sh "$SETUP" testhost --system-type server < /dev/null
   [ "$status" -eq 0 ]
   [[ "$output" =~ "rely on the forwarded agent" ]]
-  remote_cmd=$(cat "$SANDBOX/ssh_argv_6")
+  remote_cmd=$(remote_cmd_from_ssh_call)
   [[ "$remote_cmd" != *"--git-key"* ]]
   [[ "$remote_cmd" != *"deploykey"* ]]
 }
@@ -486,7 +522,7 @@ EOF
 
   run sh "$SETUP" testhost
   [ "$status" -eq 0 ]
-  remote_cmd=$(cat "$SANDBOX/ssh_argv_6")
+  remote_cmd=$(remote_cmd_from_ssh_call)
   [[ "$remote_cmd" == *"--age-key '/tmp/dj-setup-agekey-"* ]]
   [[ "$remote_cmd" != *"--sops"* ]]
 }
@@ -498,7 +534,7 @@ EOF
 
   run sh "$SETUP" testhost
   [ "$status" -eq 0 ]
-  remote_cmd=$(cat "$SANDBOX/ssh_argv_6")
+  remote_cmd=$(remote_cmd_from_ssh_call)
   [[ "$remote_cmd" == *"shred -u '/tmp/dj-setup-agekey-"* ]]
   [[ "$remote_cmd" == *"rm -f '/tmp/dj-setup-agekey-"* ]]
   [[ "$remote_cmd" == *'exit $rc'* ]]
@@ -527,7 +563,7 @@ EOF
 
   run sh "$SETUP" testhost
   [ "$status" -eq 0 ]
-  remote_cmd=$(cat "$SANDBOX/ssh_argv_6")
+  remote_cmd=$(remote_cmd_from_ssh_call)
 
   cat > "$STUB_BIN/curl" <<'EOF'
 #!/bin/sh
@@ -558,7 +594,7 @@ EOF
 
   run sh "$SETUP" testhost
   [ "$status" -eq 0 ]
-  remote_cmd=$(cat "$SANDBOX/ssh_argv_6")
+  remote_cmd=$(remote_cmd_from_ssh_call)
 
   # No curl on PATH yet. apt-get "installs" one as a side effect, same
   # as a real apt install would put a working binary on PATH.
@@ -614,7 +650,7 @@ EOF
 
   run sh "$SETUP" testhost --system-type server --theme '#2596be'
   [ "$status" -eq 0 ]
-  remote_cmd=$(cat "$SANDBOX/ssh_argv_6")
+  remote_cmd=$(remote_cmd_from_ssh_call)
 
   cat > "$STUB_BIN/curl" <<'EOF'
 #!/bin/sh
