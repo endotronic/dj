@@ -242,16 +242,28 @@ Always use `dj` not `just` — the Justfile is at `~/.dotfiles/Justfile`, not `$
 ### 4.1 Fresh machine
 
 ```sh
+# --private-repo is what actually brings your personal config and
+# secrets manifest onto the new machine -- omit it and install.sh
+# silently initializes an EMPTY private repo instead (by design, so a
+# missing/unreachable private repo never blocks bootstrap), which
+# looks like "everything is default" and "why did it generate new
+# SSH/GPG keys" once secrets have nothing to restore. Always pass it
+# for a real machine.
+#
 # Transport ~/.config/sops/age/keys.txt first (or pass --age-key <path>,
-# or --sops user@host:path to have install.sh scp it in automatically).
-curl -fsSL https://raw.githubusercontent.com/<you>/dotfiles/main/install.sh | sh
+# or --sops [user@]host[:path] to have install.sh scp it in automatically).
+curl -fsSL https://raw.githubusercontent.com/<you>/dotfiles/main/install.sh \
+  | sh -s -- --private-repo git@<your-git-host>:<you>/dotfiles.git
 # With type, inline age key, and tmux theme color:
 curl -fsSL https://raw.githubusercontent.com/<you>/dotfiles/main/install.sh \
-  | sh -s -- --system-type desktop --age-key ~/keys.txt --theme '#2596be'
+  | sh -s -- --private-repo git@<your-git-host>:<you>/dotfiles.git \
+    --system-type desktop --age-key ~/keys.txt --theme '#2596be'
 # Or fetch the age key via scp from an already-bootstrapped machine instead
-# (bare host/user@host with no ':' assumes ~/.config/sops/age/keys.txt there):
+# (bare host/user@host with no ':' assumes ~/.config/sops/age/keys.txt there;
+# bare host with no user@ defaults to $SUDO_USER, not root, under sudo):
 curl -fsSL https://raw.githubusercontent.com/<you>/dotfiles/main/install.sh \
-  | sh -s -- --system-type server --sops kevin@oldhost
+  | sh -s -- --private-repo git@<your-git-host>:<you>/dotfiles.git \
+    --system-type server --sops kevin@oldhost
 ```
 
 `install.sh` steps:
@@ -260,7 +272,7 @@ curl -fsSL https://raw.githubusercontent.com/<you>/dotfiles/main/install.sh \
 3. Persist `--system-type` (any identifier — just a lookup key for `~/.config/dj/packages/types/<type>.txt`, see §2.7) and, separately, `--theme` (a 6-digit hex color) to `~/.config/dotfiles/tmux-theme-color` — both host-local state, never tracked.
 4. Clone the public tooling repo to `~/.dotfiles/` (or use in place).
 5. Install required dependencies — `git gpg sops age just` are core to the workflow itself (cloning, signing, secrets, `dj`), not a personal preference, so they're always installed here (via the same renames + fallback-script mechanism as personal packages, through a throwaway list) rather than offered in the seeding checkbox in step 8.
-6. `git clone --bare … $HOME/.config.git` (private bare repo).
+6. `git clone --bare … $HOME/.config.git` (private bare repo). Omitting `--private-repo` entirely initializes an empty bare repo instead (wire up a remote later). But if `--private-repo` **is** given and the clone fails, that's fatal — install.sh aborts rather than silently falling back to empty, since continuing would leave personal config, the secrets manifest, and SSH/GPG keys all unrestored with only an easy-to-miss warning to explain why.
 7. Conflict-aware checkout — classify existing files as **identical** (silently remove, git re-creates), **symlink** (always back up), or **conflict**. Conflicts dispatch on `--on-conflict {ask|backup|keep|abort}` (default `ask`; non-interactive shells must pass explicit mode).
 8. Seed `~/.config/dj/packages/common.txt` from `~/.dotfiles/packages/template/common.txt` if it doesn't already exist (i.e. nothing was checked out for it — a genuinely fresh machine). Interactive: yes/no checkbox per tool (git/gpg/sops/age/just are excluded — they're always installed in step 5, not optional). Non-interactive: seed the full template. Returning machines skip this — checkout in step 7 already materialized the tracked list.
 9. Install pre-commit hook into `.config.git/hooks/`.

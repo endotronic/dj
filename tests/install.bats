@@ -143,24 +143,26 @@ _make_fake_repo_dir() {
   grep -q "private tracked" "$HOME/.bashrc"
 }
 
-@test "--private-repo with unreachable source falls back to empty init" {
+@test "--private-repo with unreachable source is fatal, not a silent empty-init" {
+  # Regression: this used to warn and fall back to an empty private
+  # repo, which in real use left secrets/tmux/SSH/GPG all unrestored
+  # with the warning easy to miss in the scroll of install output.
+  # An explicit --private-repo that fails to clone must abort instead.
   stage_fake_dotfiles_checkout
 
   run sh "$INSTALL" --private-repo "$SANDBOX/does-not-exist.git" --on-conflict backup
-  [ "$status" -eq 0 ]
-  [[ "$output" =~ "warn: clone of private repo failed" ]]
-  [[ "$output" =~ "initializing empty private repo" ]]
-  [ -d "$HOME/.config.git" ]
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "error: --private-repo was given but the clone failed" ]]
+  [ ! -d "$HOME/.config.git" ]
 }
 
-@test "--private-repo http(s) URL in non-interactive shell skips clone, inits empty" {
+@test "--private-repo http(s) URL in non-interactive shell is fatal, not a silent empty-init" {
   stage_fake_dotfiles_checkout
 
   run sh "$INSTALL" --private-repo "https://example.invalid/u/private.git" --on-conflict backup
-  [ "$status" -eq 0 ]
-  [[ "$output" =~ "cannot prompt for git credentials" ]]
-  [[ "$output" =~ "initializing empty private repo" ]]
-  [ -d "$HOME/.config.git" ]
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "credentials can't be collected" ]]
+  [ ! -d "$HOME/.config.git" ]
 }
 
 @test "existing private repo is used in place (no re-clone)" {
@@ -692,6 +694,7 @@ _make_fake_repo_dir() {
 
   run sh "$INSTALL" --on-conflict backup --sops "oldhost:$remote_key"
   [ "$status" -eq 0 ]
+  [[ "$output" =~ "fetching age key via scp from oldhost:$remote_key -- you may be prompted" ]]
   [[ "$output" =~ "fetched age key via scp from oldhost:$remote_key" ]]
   [ -f "$XDG_CONFIG_HOME/sops/age/keys.txt" ]
   grep -q "AGE-SECRET-KEY-1REMOTE" "$XDG_CONFIG_HOME/sops/age/keys.txt"

@@ -8,7 +8,8 @@
 #   curl -fsSL <raw-install.sh> | sh
 #   curl -fsSL <raw-install.sh> | sh -s -- --system-type desktop
 #   curl -fsSL <raw-install.sh> | sh -s -- --system-type server \
-#     --sops user@oldhost:~/.config/sops/age/keys.txt --theme '#2596be'
+#     --private-repo git@host:you/dotfiles.git \
+#     --sops user@oldhost --theme '#2596be'
 #
 # Idempotent: re-running on an installed machine converges rather than
 # replaces. Package installs are skipped when the binary is already on
@@ -25,8 +26,9 @@
 #                   in place if install.sh is already running from one)
 #   ~/.config.git/  private bare repo, work-tree $HOME -- personal
 #                   config + secrets. Cloned bare from --private-repo
-#                   if given and reachable, else initialized empty
-#                   (wire up a remote later once you have git access).
+#                   when given (fatal if that clone fails -- see the
+#                   flag's --help text), else initialized empty (wire
+#                   up a remote later once you have git access).
 
 set -eu
 
@@ -89,14 +91,18 @@ Options:
   --private-repo URL
         Source for your private bare repo (~/.config.git -- personal
         config + encrypted secrets, work-tree \$HOME). Optional: if
-        omitted, or if the clone fails, an empty bare repo is
-        initialized instead (wire up a remote later with
-        'dot remote add origin <url>' once you have git access, then
-        'dj sync'). For http(s):// URLs you'll be prompted
-        interactively for a username and password -- never accepted
-        as flags or env vars, so they stay out of argv and shell
-        history. ssh:// / git@ URLs rely on key-based auth (agent or
-        a pre-staged key).
+        omitted entirely, an empty bare repo is initialized instead
+        (wire up a remote later with 'dot remote add origin <url>'
+        once you have git access, then 'dj sync'). But if this flag
+        IS given and the clone fails (bad credentials, unreachable
+        host, no SSH access yet), that's fatal, not a silent fallback
+        to empty -- your personal config, secrets manifest, and
+        SSH/GPG keys would otherwise go unrestored with nothing but a
+        warning easy to miss in the rest of the install output. For
+        http(s):// URLs you'll be prompted interactively for a
+        username and password -- never accepted as flags or env vars,
+        so they stay out of argv and shell history. ssh:// / git@ URLs
+        rely on key-based auth (agent or a pre-staged key).
   --on-conflict {ask|backup|keep|abort}
         How to handle files in \$HOME that differ in content from the
         tracked version. Default: 'ask' interactively; refuses to act
@@ -391,10 +397,18 @@ fi
 #
 # Tracks personal config (~/.bashrc, ~/.config/**) and ~/.private/
 # secrets, work-tree $HOME. It's private, so there's no public clone
-# URL -- if --private-repo is given we try it (prompting for HTTP(S)
-# credentials interactively, never via flags/env), and fall back to
-# an empty bare repo on failure or absence. The empty repo can be
-# wired up to a remote later: `dot remote add origin <url> && dj sync`.
+# URL -- when --private-repo is *omitted entirely*, an empty bare repo
+# is initialized instead (wire it up later: `dot remote add origin
+# <url> && dj sync`). But when --private-repo *is* given, that's a
+# clear statement of intent -- silently falling back to empty on
+# failure (SSH auth, unreachable host, bad credentials) would leave
+# personal config, the secrets manifest, and SSH/GPG keys all
+# unrestored with nothing but a warning buried in the scroll of
+# install output to explain why (this bit real usage: a bare
+# `--private-repo git@...` failed on "Permission denied (publickey)"
+# and the fallback-to-empty went unnoticed until several confusing
+# symptoms downstream were chased back to it). So an explicit
+# --private-repo that fails to clone is fatal, not a warning.
 
 dot() { git --git-dir="$DOT_DIR" --work-tree="$HOME" "$@"; }
 
@@ -429,16 +443,35 @@ EOF
         export DOTFILES_GIT_USER DOTFILES_GIT_PASS
         if GIT_ASKPASS="$_askpass" git clone --bare "$PRIVATE_REPO_URL" "$DOT_DIR"; then
           log "cloned private repo"
+          unset DOTFILES_GIT_USER DOTFILES_GIT_PASS
+          rm -f "$_askpass"
+          unset _askpass
         else
           rm -rf "$DOT_DIR"
-          log "warn: clone of private repo failed; initializing empty instead"
+          unset DOTFILES_GIT_USER DOTFILES_GIT_PASS
+          rm -f "$_askpass"
+          unset _askpass
+          cat >&2 <<EOF
+[install] error: --private-repo was given but the clone failed:
+[install]   $PRIVATE_REPO_URL
+[install] Refusing to silently continue with an empty private repo --
+[install] your personal config, secrets manifest, and SSH/GPG keys
+[install] would all go unrestored with no clear signal why. Fix the
+[install] credentials for this repo, then re-run. To bootstrap without
+[install] it on purpose, omit --private-repo entirely.
+EOF
+          exit 1
         fi
-        unset DOTFILES_GIT_USER DOTFILES_GIT_PASS
-        rm -f "$_askpass"
-        unset _askpass
       else
-        log "warn: non-interactive shell; cannot prompt for git credentials"
-        log "warn: skipping private-repo clone; initializing empty instead"
+        cat >&2 <<EOF
+[install] error: --private-repo was given (an http(s) URL, which needs
+[install] a prompted username/password) but this is a non-interactive
+[install] shell, so credentials can't be collected. Refusing to
+[install] silently continue with an empty private repo. Re-run
+[install] interactively, or use an ssh:// / git@ URL with key-based
+[install] auth (agent or a pre-staged key) instead.
+EOF
+        exit 1
       fi
       ;;
     *)
@@ -446,7 +479,17 @@ EOF
         log "cloned private repo"
       else
         rm -rf "$DOT_DIR"
-        log "warn: clone of private repo failed; initializing empty instead"
+        cat >&2 <<EOF
+[install] error: --private-repo was given but the clone failed:
+[install]   $PRIVATE_REPO_URL
+[install] Refusing to silently continue with an empty private repo --
+[install] your personal config, secrets manifest, and SSH/GPG keys
+[install] would all go unrestored with no clear signal why. Fix SSH
+[install] access to this host (agent forwarding, or a pre-staged key
+[install] with access to this repo), then re-run. To bootstrap without
+[install] it on purpose, omit --private-repo entirely.
+EOF
+        exit 1
       fi
       ;;
   esac
@@ -698,6 +741,7 @@ if [ ! -r "$AGE_KEY" ] && [ -n "$SOPS_KEY_SRC" ]; then
   if ! command -v scp >/dev/null 2>&1; then
     log "warn: --sops given but scp not found on PATH; skipping"
   else
+    printf '\n[install] fetching age key via scp from %s -- you may be prompted to confirm the host key and/or enter a password now\n' "$SOPS_KEY_SRC"
     SCP_TMP=$(mktemp)
     if scp -q "$SOPS_KEY_SRC" "$SCP_TMP" 2>/dev/null; then
       AGE_KEY_SRC=$SCP_TMP
