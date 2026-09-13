@@ -373,7 +373,13 @@ fi
 # This is a normal (non-bare) clone, not the bare repo -- its files
 # live at its own root (CLAUDE.md, scripts/, Justfile, ...), not
 # prefixed under .dotfiles/. If install.sh is already running from a
-# checkout that looks like ours, use it in place instead of cloning.
+# checkout that looks like ours, it's left exactly as-is (no fetch/
+# reset) rather than clobbering local dev iteration in progress. Any
+# OTHER pre-existing checkout -- the common case: re-running install.sh
+# (dj setup, dj setup-root, or a fresh curl-pipe) against a machine
+# that already has one from an earlier bootstrap -- is instead updated
+# to match its own origin's latest, so later steps run the current
+# code rather than whatever happened to be there at first-clone time.
 
 PUBLIC_LOCAL_SOURCE=
 if [ -d "$REPO_URL" ]; then
@@ -382,13 +388,26 @@ fi
 
 PUBLIC_CLONED=0
 if [ -d "$DOTFILES_DIR" ]; then
-  log "using existing checkout at $DOTFILES_DIR"
-  if ! looks_like_our_repo "$DOTFILES_DIR"; then
-    log "warn: $DOTFILES_DIR doesn't look like the dotfiles repo (no install.sh / scripts/os-detect.sh)"
-    log "warn: continuing anyway -- later steps that depend on it may be skipped"
+  if [ -n "$PUBLIC_LOCAL_SOURCE" ] && [ "$PUBLIC_LOCAL_SOURCE" = "$DOTFILES_DIR" ]; then
+    log "using existing checkout at $DOTFILES_DIR (running from within it)"
+    # The resolved source IS this checkout, so there's nothing to clean up.
+    PUBLIC_LOCAL_SOURCE=
+  elif [ -d "$DOTFILES_DIR/.git" ] && looks_like_our_repo "$DOTFILES_DIR"; then
+    log "updating existing checkout at $DOTFILES_DIR"
+    if git -C "$DOTFILES_DIR" fetch --quiet origin \
+        && _remote_head=$(git -C "$DOTFILES_DIR" symbolic-ref -q --short refs/remotes/origin/HEAD); then
+      git -C "$DOTFILES_DIR" reset --hard "$_remote_head"
+    else
+      log "warn: could not update $DOTFILES_DIR (fetch or remote-HEAD lookup failed) -- leaving as-is"
+    fi
+    unset _remote_head
+  else
+    log "using existing checkout at $DOTFILES_DIR"
+    if ! looks_like_our_repo "$DOTFILES_DIR"; then
+      log "warn: $DOTFILES_DIR doesn't look like the dotfiles repo (no install.sh / scripts/os-detect.sh)"
+      log "warn: continuing anyway -- later steps that depend on it may be skipped"
+    fi
   fi
-  # If the resolved source IS this checkout, there's nothing to clean up.
-  [ "$PUBLIC_LOCAL_SOURCE" = "$DOTFILES_DIR" ] && PUBLIC_LOCAL_SOURCE=
 else
   log "cloning $REPO_URL into $DOTFILES_DIR"
   git clone "$REPO_URL" "$DOTFILES_DIR"

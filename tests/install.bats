@@ -117,6 +117,50 @@ _make_fake_repo_dir() {
   grep -q "marker content" "$HOME/.dotfiles/MARKER"
 }
 
+@test "existing git checkout (not self) is updated to match its origin's latest" {
+  origin=$SANDBOX/origin-repo
+  _make_fake_repo_dir "$origin" "v1"
+  git clone -q "$origin" "$HOME/.dotfiles"
+
+  # Origin moves on after the clone -- as if a fix landed upstream
+  # between this machine's first bootstrap and today's re-run.
+  printf 'v2\n' > "$origin/MARKER"
+  git -C "$origin" commit -q -am v2
+
+  run sh "$INSTALL" --on-conflict backup --remove-source no
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "updating existing checkout at $HOME/.dotfiles" ]]
+  grep -q "^v2$" "$HOME/.dotfiles/MARKER"
+}
+
+@test "existing git checkout with local edits: those edits are overwritten, not kept" {
+  origin=$SANDBOX/origin-repo
+  _make_fake_repo_dir "$origin" "v1"
+  git clone -q "$origin" "$HOME/.dotfiles"
+
+  # Local drift in the checkout (e.g. a stray edit from a previous,
+  # interrupted run) must not survive -- the checkout should converge
+  # to what's tracked, not preserve whatever happens to be sitting there.
+  printf 'locally modified, uncommitted\n' > "$HOME/.dotfiles/MARKER"
+
+  run sh "$INSTALL" --on-conflict backup --remove-source no
+  [ "$status" -eq 0 ]
+  grep -q "^v1$" "$HOME/.dotfiles/MARKER"
+}
+
+@test "install.sh running from within its own checkout is left as-is (no fetch)" {
+  _make_fake_repo_dir "$HOME/.dotfiles" "self marker"
+
+  run sh "$HOME/.dotfiles/install.sh" --on-conflict backup --remove-source no
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "using existing checkout at $HOME/.dotfiles (running from within it)" ]]
+  if [[ "$output" =~ "updating existing checkout" ]]; then
+    printf 'unexpected fetch/update of the self-referential checkout\n%s\n' "$output" >&2
+    false
+  fi
+  grep -q "self marker" "$HOME/.dotfiles/MARKER"
+}
+
 # --- private repo: empty-init fallback and cloning -------------------------
 
 @test "no --private-repo: initializes an empty bare private repo" {
