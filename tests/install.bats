@@ -334,6 +334,43 @@ _make_fake_repo_dir() {
   [ ! -d "$HOME/.dotfiles-backup" ]
 }
 
+# --- legacy ~/.tmux.conf* cleanup -------------------------------------------
+
+@test "pre-existing ~/.tmux.conf* is backed up when tmux.conf is tracked" {
+  stage_fake_dotfiles_checkout
+  make_src_repo
+  add_to_repo .config/tmux/tmux.conf "# tracked tmux config"
+  publish_repo
+  printf '%s\n' "# legacy hand-written config" > "$HOME/.tmux.conf"
+  printf '%s\n' "# legacy template" > "$HOME/.tmux.conf.template"
+
+  run sh "$INSTALL" --private-repo "$SRC_REPO" --on-conflict backup
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "moving legacy .tmux.conf" ]]
+  [ ! -e "$HOME/.tmux.conf" ]
+  [ ! -e "$HOME/.tmux.conf.template" ]
+  [ -f "$HOME/.config/tmux/tmux.conf" ]
+  grep -q "tracked tmux config" "$HOME/.config/tmux/tmux.conf"
+  found=$(find "$HOME/.dotfiles-backup" -name ".tmux.conf" -type f | head -1)
+  [ -n "$found" ]
+  grep -q "legacy hand-written config" "$found"
+  found_template=$(find "$HOME/.dotfiles-backup" -name ".tmux.conf.template" -type f | head -1)
+  [ -n "$found_template" ]
+  grep -q "legacy template" "$found_template"
+}
+
+@test "no legacy ~/.tmux.conf*: nothing to back up, no-op" {
+  stage_fake_dotfiles_checkout
+  make_src_repo
+  add_to_repo .config/tmux/tmux.conf "# tracked tmux config"
+  publish_repo
+
+  run sh "$INSTALL" --private-repo "$SRC_REPO" --on-conflict backup
+  [ "$status" -eq 0 ]
+  [[ ! "$output" =~ "moving legacy" ]]
+  [ -f "$HOME/.config/tmux/tmux.conf" ]
+}
+
 # --- non-interactive guard -------------------------------------------------
 
 @test "--on-conflict ask refuses to act when non-interactive and conflicts exist" {

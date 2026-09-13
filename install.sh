@@ -27,7 +27,10 @@
 # ~/.ssh/id_ed25519) that already exists with different content --
 # untracked files like that aren't visible to `dot checkout`'s conflict
 # check, so this is the backstop that keeps decrypting secrets from
-# silently clobbering a key you already had in place.
+# silently clobbering a key you already had in place. Same story for a
+# pre-existing ~/.tmux.conf*: tmux loads it in addition to (and before)
+# the tracked ~/.config/tmux/tmux.conf, so it would otherwise silently
+# coexist forever instead of being backed up like everything else.
 #
 # Two repos get bootstrapped here:
 #   ~/.dotfiles/    public tooling repo -- plain `git clone` (or used
@@ -707,6 +710,26 @@ fi
 else
   log "private repo has no commits yet; nothing to check out"
 fi
+
+# ---------- 7b. Clear legacy ~/.tmux.conf* shadowing the tracked config ----------
+#
+# tmux loads ~/.tmux.conf in addition to (and before) the tracked
+# ~/.config/tmux/tmux.conf -- it's a different path, so the
+# conflict-aware checkout above (which only walks tracked paths) never
+# sees it, and a tmux.conf from before this machine used dotfiles would
+# otherwise coexist forever, its settings quietly layered underneath
+# whatever the tracked config sets. Backed up rather than deleted, same
+# as every other displaced file in this script.
+
+tmux_backed_up=0
+for f in "$HOME"/.tmux.conf*; do
+  [ -e "$f" ] || [ -L "$f" ] || continue
+  mkdir -p "$BACKUP_DIR"
+  log "moving legacy $(basename "$f") to $BACKUP_DIR (superseded by ~/.config/tmux/tmux.conf)"
+  mv "$f" "$BACKUP_DIR/"
+  tmux_backed_up=1
+done
+[ "$tmux_backed_up" -eq 1 ] && log "tmux: re-run 'tmux kill-server' (or restart your terminal) to drop the old config from memory"
 
 # ---------- 8. Seed personal package list (if absent) ----------
 #
