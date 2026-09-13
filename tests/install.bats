@@ -632,6 +632,47 @@ _make_fake_repo_dir() {
   [ "$output" = "https://github.com/u/r.git" ]
 }
 
+@test "https origin is left alone without a git-host key" {
+  fake=$SANDBOX/src-public-repo
+  _make_fake_repo_dir "$fake" "marker"
+  ( cd "$fake" && git remote add origin https://github.com/u/r.git )
+  run sh "$INSTALL" --repo "$fake" --on-conflict backup --remove-source no
+  [ "$status" -eq 0 ]
+  run git -C "$HOME/.dotfiles" remote get-url origin
+  [ "$status" -eq 0 ]
+  [ "$output" = "https://github.com/u/r.git" ]
+}
+
+@test "https origin is rewired to ssh once a git-host key is present" {
+  fake=$SANDBOX/src-public-repo
+  _make_fake_repo_dir "$fake" "marker"
+  ( cd "$fake" && git remote add origin https://github.com/u/r.git )
+  key="$SANDBOX/deploy_key"
+  printf 'FAKE-DEPLOY-KEY\n' > "$key"
+
+  run sh "$INSTALL" --repo "$fake" --on-conflict backup --remove-source no --git-key "$key"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "public repo origin: https -> ssh" ]]
+  run git -C "$HOME/.dotfiles" remote get-url origin
+  [ "$status" -eq 0 ]
+  [ "$output" = "git@github.com:u/r.git" ]
+}
+
+@test "already-ssh origin is untouched even with a git-host key present" {
+  fake=$SANDBOX/src-public-repo
+  _make_fake_repo_dir "$fake" "marker"
+  ( cd "$fake" && git remote add origin git@github.com:u/r.git )
+  key="$SANDBOX/deploy_key"
+  printf 'FAKE-DEPLOY-KEY\n' > "$key"
+
+  run sh "$INSTALL" --repo "$fake" --on-conflict backup --remove-source no --git-key "$key"
+  [ "$status" -eq 0 ]
+  [[ ! "$output" =~ "https -> ssh" ]]
+  run git -C "$HOME/.dotfiles" remote get-url origin
+  [ "$status" -eq 0 ]
+  [ "$output" = "git@github.com:u/r.git" ]
+}
+
 @test "remote --repo URL with existing checkout: --remove-source is a no-op" {
   stage_fake_dotfiles_checkout
   run sh "$INSTALL" --repo "https://example.invalid/u/r.git" \

@@ -908,6 +908,35 @@ elif [ ! -r "$AGE_KEY" ]; then
   log "transport the age key, then run: dj apply-secrets"
 fi
 
+# ---------- 13b. Public repo origin: https -> ssh once the git-host key exists ----
+
+# ~/.dotfiles' default origin is plain https:// so a clone works
+# read-only with no credentials at all -- exactly what's needed a few
+# steps ago, before the git-host key or its ~/.ssh/config routing
+# (§5.3.1) exist yet. But an https origin can never push (no stored
+# credentials, no browser to authenticate one), so once the key has
+# actually landed -- via --git-key earlier, or just now via the
+# secrets manifest above -- rewrite origin to the matching SSH form so
+# `git push` from ~/.dotfiles works with no extra steps. Generic
+# across hosts (git.kevinfinity.com, github.com, ...), not hardcoded
+# to GitHub. Idempotent: a no-op once origin is already ssh/git@ form,
+# or if there's no git-host key to make ssh actually work.
+
+if [ -d "$DOTFILES_DIR/.git" ] && [ -r "$GIT_KEY" ]; then
+  _origin=$(git -C "$DOTFILES_DIR" remote get-url origin 2>/dev/null || true)
+  case "$_origin" in
+    https://*|http://*)
+      _rest=${_origin#*://}
+      _host=${_rest%%/*}
+      _path=${_rest#*/}
+      _ssh_origin="git@$_host:$_path"
+      git -C "$DOTFILES_DIR" remote set-url origin "$_ssh_origin"
+      log "public repo origin: https -> ssh ($_ssh_origin)"
+      ;;
+  esac
+  unset _origin _rest _host _path _ssh_origin
+fi
+
 # ---------- 14. Optional cleanup of local public-repo source clone ----------
 
 # If --repo was a local directory other than ~/.dotfiles itself, that
