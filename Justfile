@@ -109,9 +109,9 @@ setup HOSTSPEC *ARGS:
 # place (normal install.sh conflict resolution) if it did. Extra args
 # (--system-type, --theme, ...) pass through to install.sh.
 #
-# Usage: dj root-setup hostname [--system-type TYPE] [--theme '#rrggbb']
-root-setup HOSTSPEC *ARGS:
-    sh "{{SCRIPTS}}/dj-root-setup.sh" "{{HOSTSPEC}}" {{ARGS}}
+# Usage: dj setup-root hostname [--system-type TYPE] [--theme '#rrggbb']
+setup-root HOSTSPEC *ARGS:
+    sh "{{SCRIPTS}}/dj-setup-root.sh" "{{HOSTSPEC}}" {{ARGS}}
 
 # First-time SOPS setup: generate age key and write .sops.yaml.
 sops-init:

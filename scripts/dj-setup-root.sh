@@ -4,9 +4,9 @@
 # or, if the account already exists, into whatever home directory it
 # already has, with install.sh's normal conflict-aware checkout.
 #
-# Usage: dj-root-setup.sh hostname [extra install.sh args...]
-#   dj root-setup lobos
-#   dj root-setup lobos --system-type server --theme '#2596be'
+# Usage: dj-setup-root.sh hostname [extra install.sh args...]
+#   dj setup-root lobos
+#   dj setup-root lobos --system-type server --theme '#2596be'
 #
 # The new account's username is always this machine's own invoking
 # user (`id -un`) -- the same name `dj setup` would use if it were run
@@ -16,19 +16,24 @@
 #
 # What it does, all over one root SSH connection (multiplexed so any
 # password is only typed once):
-#   1. Checks whether the user already exists on the target.
-#      - If not: detects the target's package manager (apt vs pacman
-#        differ here -- Debian/Ubuntu's admin group is "sudo", Arch's
-#        is "wheel") and creates the account with useradd, explicitly
-#        skipping /etc/skel (--skel /dev/null) since this project's
-#        own install.sh populates the home directory instead. Grants
-#        a narrow, temporary NOPASSWD sudo rule (the fresh account has
-#        no password to answer sudo's prompt with) via a single
-#        /etc/sudoers.d drop-in scoped to just this username --
-#        removed again at the very end, success or failure.
-#      - If it does: nothing is created or touched; the existing
-#        account's own home directory and sudo access are used as-is,
-#        same as pointing `dj setup` at that account directly.
+#   1. Checks whether the user already exists on the target (its
+#      package manager is detected either way -- apt vs pacman differ
+#      in admin-group name, "sudo" vs "wheel").
+#      - If not: creates the account with useradd, explicitly skipping
+#        /etc/skel (--skel /dev/null) since this project's own
+#        install.sh populates the home directory instead.
+#      - If it does: its home directory and identity are used as-is.
+#      Either way, an account with no usable password (a brand-new one,
+#      or one left over from an earlier interrupted/pre-fix run of this
+#      very script) has no way to answer sudo's own password prompt, so
+#      it's given what a fresh account needs: sudo itself installed if
+#      the host doesn't have it at all (root-only appliance images like
+#      Proxmox typically don't, since root never needed it), admin-group
+#      membership, and a narrow, temporary NOPASSWD rule via a single
+#      /etc/sudoers.d drop-in scoped to just this username -- removed
+#      again at the very end, success or failure. An account that
+#      already has a real password is left alone, same as pointing
+#      `dj setup` at it directly.
 #   2. Pushes this machine's own age key (required) and git-host
 #      deploy key (optional -- a warning is printed if it's missing,
 #      same as dj-setup.sh) directly into the target user's home
@@ -55,10 +60,10 @@
 
 set -eu
 
-log() { printf '[dj-root-setup] %s\n' "$*"; }
+log() { printf '[dj-setup-root] %s\n' "$*"; }
 
 if [ $# -lt 1 ]; then
-  printf 'usage: dj-root-setup.sh hostname [extra install.sh args...]\n' >&2
+  printf 'usage: dj-setup-root.sh hostname [extra install.sh args...]\n' >&2
   exit 2
 fi
 
@@ -68,7 +73,7 @@ shift
 case "$HOSTSPEC" in
   root@*) TARGET_HOST=${HOSTSPEC#root@} ;;
   *@*)
-    printf 'error: dj-root-setup.sh always connects as root -- got %s. Use dj setup for an existing non-root account.\n' "$HOSTSPEC" >&2
+    printf 'error: dj-setup-root.sh always connects as root -- got %s. Use dj setup for an existing non-root account.\n' "$HOSTSPEC" >&2
     exit 2
     ;;
   *) TARGET_HOST=$HOSTSPEC ;;
@@ -96,13 +101,13 @@ if [ "$_has_system_type" -eq 0 ]; then
     for _f in "$TYPES_DIR"/*.txt; do
       [ -e "$_f" ] || continue
       if [ "$_have_known_types" -eq 0 ]; then
-        printf '[dj-root-setup] known system types:\n' >&2
+        printf '[dj-setup-root] known system types:\n' >&2
         _have_known_types=1
       fi
       printf '  - %s\n' "$(basename "$_f" .txt)" >&2
     done
   fi
-  printf '[dj-root-setup] system type for %s [blank = common-only]: ' "$HOSTSPEC" >&2
+  printf '[dj-setup-root] system type for %s [blank = common-only]: ' "$HOSTSPEC" >&2
   read -r _system_type_answer || _system_type_answer=
   case "$_system_type_answer" in
     '') ;;
@@ -160,7 +165,7 @@ q() {
 # would otherwise each prompt for root's password on their own.
 
 SSH_ACCEPT_NEW="-o StrictHostKeyChecking=accept-new"
-CTL_DIR=$(mktemp -d "${TMPDIR:-/tmp}/dj-root-setup-ctl.XXXXXX")
+CTL_DIR=$(mktemp -d "${TMPDIR:-/tmp}/dj-setup-root-ctl.XXXXXX")
 CTL_PATH="$CTL_DIR/control"
 SSH_MUX="-o ControlMaster=auto -o ControlPath=$CTL_PATH -o ControlPersist=10m"
 SSH_OPTS="$SSH_ACCEPT_NEW $SSH_MUX"
@@ -220,50 +225,76 @@ fi
 USER_CHECK_BODY=$(cat <<'BODY'
 set -eu
 USERNAME=$1
-if id -u "$USERNAME" >/dev/null 2>&1; then
-  home_dir=$(getent passwd "$USERNAME" | cut -d: -f6)
-  printf 'CREATED=0\nHOME_DIR=%s\n' "$home_dir"
-  exit 0
-fi
 
-if   command -v apt    >/dev/null 2>&1; then ADMIN_GROUP=sudo
-elif command -v pacman >/dev/null 2>&1; then ADMIN_GROUP=wheel
+if   command -v apt    >/dev/null 2>&1; then PKG_MGR=apt;    ADMIN_GROUP=sudo
+elif command -v pacman >/dev/null 2>&1; then PKG_MGR=pacman; ADMIN_GROUP=wheel
 else
   printf 'error: no supported package manager found on target (expected apt or pacman)\n' >&2
   exit 1
 fi
 
-SHELL_BIN=/bin/bash
-command -v bash >/dev/null 2>&1 || SHELL_BIN=/bin/sh
+CREATED=0
+if id -u "$USERNAME" >/dev/null 2>&1; then
+  HOME_DIR=$(getent passwd "$USERNAME" | cut -d: -f6)
+else
+  CREATED=1
+  SHELL_BIN=/bin/bash
+  command -v bash >/dev/null 2>&1 || SHELL_BIN=/bin/sh
+  HOME_DIR="/home/$USERNAME"
+  useradd --create-home --home-dir "$HOME_DIR" --skel /dev/null --shell "$SHELL_BIN" "$USERNAME"
+fi
 
-HOME_DIR="/home/$USERNAME"
-useradd --create-home --home-dir "$HOME_DIR" --skel /dev/null --shell "$SHELL_BIN" "$USERNAME"
+# A locked/passwordless account has no way to answer sudo's own
+# password prompt, so it needs the same temporary NOPASSWD grant a
+# fresh account gets -- whether it's actually fresh (CREATED=1), or a
+# leftover from an earlier, interrupted or pre-fix run of this very
+# script (CREATED=0 but never finished being provisioned). A
+# pre-existing account with a real password already has its own
+# working sudo access and is left untouched, same as `dj setup` would.
+NEEDS_SUDO_SETUP=$CREATED
+if [ "$NEEDS_SUDO_SETUP" = 0 ]; then
+  case "$(passwd -S "$USERNAME" 2>/dev/null | awk '{print $2}')" in
+    L|NP|'') NEEDS_SUDO_SETUP=1 ;;
+  esac
+fi
 
-if getent group "$ADMIN_GROUP" >/dev/null 2>&1; then
-  usermod -aG "$ADMIN_GROUP" "$USERNAME"
-  if [ "$ADMIN_GROUP" = wheel ] && ! grep -qE '^[^#]*%wheel[[:space:]]' /etc/sudoers 2>/dev/null; then
-    printf 'warn: %%wheel is not enabled in /etc/sudoers -- uncomment it for %s to use sudo normally afterward\n' "$USERNAME" >&2
+if [ "$NEEDS_SUDO_SETUP" = 1 ]; then
+  # Appliance-style root-only images (Proxmox included) often ship
+  # with no sudo binary at all, since root itself never needed one
+  # there -- but this account does, to run install.sh's own
+  # privileged steps (package installs, etc.). Install it now, while
+  # still root, rather than deferring straight to the no-sudo warning
+  # further down.
+  if ! command -v sudo >/dev/null 2>&1; then
+    case "$PKG_MGR" in
+      apt)    apt-get update -qq && apt-get install -y sudo ;;
+      pacman) pacman -Sy --noconfirm sudo ;;
+    esac || printf 'warn: failed to install sudo on this host -- will fall back to a NOPASSWD-less warning\n' >&2
   fi
-else
-  printf 'warn: no %s group on this host -- %s was not added to any admin group\n' "$ADMIN_GROUP" "$USERNAME" >&2
+
+  if getent group "$ADMIN_GROUP" >/dev/null 2>&1; then
+    usermod -aG "$ADMIN_GROUP" "$USERNAME"
+    if [ "$ADMIN_GROUP" = wheel ] && ! grep -qE '^[^#]*%wheel[[:space:]]' /etc/sudoers 2>/dev/null; then
+      printf 'warn: %%wheel is not enabled in /etc/sudoers -- uncomment it for %s to use sudo normally afterward\n' "$USERNAME" >&2
+    fi
+  else
+    printf 'warn: no %s group on this host -- %s was not added to any admin group\n' "$ADMIN_GROUP" "$USERNAME" >&2
+  fi
+
+  # Scoped to just this username via its own sudoers.d drop-in --
+  # removed again by dj-setup-root.sh's final cleanup, success or
+  # failure, once the bootstrap under this user finishes.
+  if command -v sudo >/dev/null 2>&1; then
+    SUDOERS_DROPIN="/etc/sudoers.d/dj-setup-root-$USERNAME"
+    printf '%s ALL=(ALL) NOPASSWD:ALL\n' "$USERNAME" > "$SUDOERS_DROPIN"
+    chmod 0440 "$SUDOERS_DROPIN"
+    visudo -cf "$SUDOERS_DROPIN" || { rm -f "$SUDOERS_DROPIN"; printf 'error: generated sudoers drop-in failed validation\n' >&2; exit 1; }
+  else
+    printf 'warn: no sudo on this host -- install.sh steps that need it will fail for %s\n' "$USERNAME" >&2
+  fi
 fi
 
-# The fresh account has no password to answer sudo's own prompt with,
-# so install.sh's sudo calls (package installs, etc.) need a narrow,
-# temporary exemption. Scoped to just this username via its own
-# sudoers.d drop-in -- removed again by dj-root-setup.sh's final
-# cleanup, success or failure, once the bootstrap under this user
-# finishes.
-if command -v sudo >/dev/null 2>&1; then
-  SUDOERS_DROPIN="/etc/sudoers.d/dj-root-setup-$USERNAME"
-  printf '%s ALL=(ALL) NOPASSWD:ALL\n' "$USERNAME" > "$SUDOERS_DROPIN"
-  chmod 0440 "$SUDOERS_DROPIN"
-  visudo -cf "$SUDOERS_DROPIN" || { rm -f "$SUDOERS_DROPIN"; printf 'error: generated sudoers drop-in failed validation\n' >&2; exit 1; }
-else
-  printf 'warn: no sudo on this host -- install.sh steps that need it will fail for %s\n' "$USERNAME" >&2
-fi
-
-printf 'CREATED=1\nHOME_DIR=%s\n' "$HOME_DIR"
+printf 'CREATED=%s\nHOME_DIR=%s\n' "$CREATED" "$HOME_DIR"
 BODY
 )
 USER_CHECK_CMD="sh -c $(q "$USER_CHECK_BODY") -- $(q "$TARGET_USER")"
@@ -281,7 +312,7 @@ if [ "$CREATED" = 1 ]; then
 else
   log "$TARGET_USER already exists on $TARGET_HOST (home: $REMOTE_HOME) -- bootstrapping in place"
 fi
-SUDOERS_DROPIN="/etc/sudoers.d/dj-root-setup-$TARGET_USER"
+SUDOERS_DROPIN="/etc/sudoers.d/dj-setup-root-$TARGET_USER"
 
 # ---------- 4. Push the age key (and git-host key, if present) --------------
 #
@@ -289,12 +320,12 @@ SUDOERS_DROPIN="/etc/sudoers.d/dj-root-setup-$TARGET_USER"
 # since there is no agent-forwarding path into the `su -` session
 # below to rely on instead (see the header comment).
 
-REMOTE_AGEKEY="$REMOTE_HOME/.dj-root-setup-agekey"
+REMOTE_AGEKEY="$REMOTE_HOME/.dj-setup-root-agekey"
 scp -q $SSH_OPTS "$AGE_KEY_LOCAL" "$ROOT_HOSTSPEC:$REMOTE_AGEKEY"
 
 REMOTE_GITKEY=
 if [ -r "$GIT_KEY_LOCAL" ]; then
-  REMOTE_GITKEY="$REMOTE_HOME/.dj-root-setup-gitkey"
+  REMOTE_GITKEY="$REMOTE_HOME/.dj-setup-root-gitkey"
   scp -q $SSH_OPTS "$GIT_KEY_LOCAL" "$ROOT_HOSTSPEC:$REMOTE_GITKEY"
 else
   log "no deploy key at $GIT_KEY_LOCAL; the target's private-repo clone may have no credentials"

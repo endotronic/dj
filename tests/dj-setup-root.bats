@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 #
-# Tests for scripts/dj-root-setup.sh (`dj root-setup hostname ...`). It
+# Tests for scripts/dj-setup-root.sh (`dj setup-root hostname ...`). It
 # connects as root@hostname over one multiplexed SSH connection,
 # checks/creates a user named after this machine's own invoking user
 # (`id -un`), pushes the age key (and git-host key, if present)
@@ -16,7 +16,7 @@ load test_helper
 setup() {
   sandbox_setup
   stub_dir_setup
-  export SETUP="$DOTFILES_REPO_ROOT/scripts/dj-root-setup.sh"
+  export SETUP="$DOTFILES_REPO_ROOT/scripts/dj-setup-root.sh"
   export DOT_DIR="$HOME/.config.git"
   export DOTFILES_DIR="$HOME/.dotfiles"
   mkdir -p "$HOME/.ssh" "$XDG_CONFIG_HOME/sops/age"
@@ -261,7 +261,7 @@ default_stubs() {
   [[ "$output" =~ "already exists on testhost" ]]
   [[ "$output" =~ "/srv/homes/testuser" ]]
   remote_cmd=$(final_remote_cmd)
-  [[ "$remote_cmd" == *"/srv/homes/testuser/.dj-root-setup-agekey"* ]]
+  [[ "$remote_cmd" == *"/srv/homes/testuser/.dj-setup-root-agekey"* ]]
 }
 
 @test "a freshly created user is reported as such" {
@@ -302,10 +302,10 @@ EOF
 
   run sh "$SETUP" testhost --system-type server --theme '#2596be' < /dev/null
   [ "$status" -eq 0 ]
-  grep -q "^scp -q -o StrictHostKeyChecking=accept-new .*sops/age/keys.txt root@testhost:/home/testuser/.dj-root-setup-agekey" "$SANDBOX/stub.log"
+  grep -q "^scp -q -o StrictHostKeyChecking=accept-new .*sops/age/keys.txt root@testhost:/home/testuser/.dj-setup-root-agekey" "$SANDBOX/stub.log"
   chown_cmd=$(remote_cmd_of 1)
   [[ "$chown_cmd" == *"chown"* ]]
-  [[ "$chown_cmd" == *"/home/testuser/.dj-root-setup-agekey"* ]]
+  [[ "$chown_cmd" == *"/home/testuser/.dj-setup-root-agekey"* ]]
 }
 
 @test "pushes the git-host deploy key too when present locally" {
@@ -316,10 +316,10 @@ EOF
 
   run sh "$SETUP" testhost --system-type server --theme '#2596be' < /dev/null
   [ "$status" -eq 0 ]
-  grep -q "^scp -q -o StrictHostKeyChecking=accept-new .*id_githost root@testhost:/home/testuser/.dj-root-setup-gitkey" "$SANDBOX/stub.log"
+  grep -q "^scp -q -o StrictHostKeyChecking=accept-new .*id_githost root@testhost:/home/testuser/.dj-setup-root-gitkey" "$SANDBOX/stub.log"
   remote_cmd=$(final_remote_cmd)
   [[ "$remote_cmd" == *"--git-key"* ]]
-  [[ "$remote_cmd" == *"/home/testuser/.dj-root-setup-gitkey"* ]]
+  [[ "$remote_cmd" == *"/home/testuser/.dj-setup-root-gitkey"* ]]
 }
 
 @test "no local deploy key: nothing pushed, no --git-key, install still proceeds" {
@@ -350,7 +350,7 @@ EOF
   [[ "$remote_cmd" == *"su - '$local_user' -c"* ]]
   [[ "$remote_cmd" == *"--private-repo"* ]]
   [[ "$remote_cmd" == *"--age-key"* ]]
-  [[ "$remote_cmd" == *"/home/testuser/.dj-root-setup-agekey"* ]]
+  [[ "$remote_cmd" == *"/home/testuser/.dj-setup-root-agekey"* ]]
 }
 
 @test "the final command always attempts to remove this user's sudoers drop-in" {
@@ -362,7 +362,7 @@ EOF
   run sh "$SETUP" testhost --system-type server --theme '#2596be' < /dev/null
   [ "$status" -eq 0 ]
   remote_cmd=$(final_remote_cmd)
-  [[ "$remote_cmd" == *"rm -f '/etc/sudoers.d/dj-root-setup-$local_user'"* ]]
+  [[ "$remote_cmd" == *"rm -f '/etc/sudoers.d/dj-setup-root-$local_user'"* ]]
 }
 
 @test "install.sh's exit status survives the su wrapper and cleanup" {
