@@ -102,6 +102,17 @@ system-type TYPE:
 setup HOSTSPEC *ARGS:
     sh "{{SCRIPTS}}/dj-setup.sh" "{{HOSTSPEC}}" {{ARGS}}
 
+# Add this machine's own user (id -un) to an existing machine over SSH
+# as root, then bootstrap this project into that account's home
+# directory -- a brand-new one if the account didn't exist yet
+# (distro-appropriate useradd, no /etc/skel), or the existing one in
+# place (normal install.sh conflict resolution) if it did. Extra args
+# (--system-type, --theme, ...) pass through to install.sh.
+#
+# Usage: dj root-setup hostname [--system-type TYPE] [--theme '#rrggbb']
+root-setup HOSTSPEC *ARGS:
+    sh "{{SCRIPTS}}/dj-root-setup.sh" "{{HOSTSPEC}}" {{ARGS}}
+
 # First-time SOPS setup: generate age key and write .sops.yaml.
 sops-init:
     sh "{{SCRIPTS}}/sops-init.sh"
