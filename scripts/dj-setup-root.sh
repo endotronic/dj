@@ -14,8 +14,8 @@
 # is specifically "give me my own account on that box," not a general
 # user-creation tool.
 #
-# What it does, all over one root SSH connection (multiplexed so any
-# password is only typed once):
+# What it does, all over one root SSH connection (multiplexed so
+# root's own login password is only typed once):
 #   1. Checks whether the user already exists on the target (its
 #      package manager is detected either way -- apt vs pacman differ
 #      in admin-group name, "sudo" vs "wheel").
@@ -34,22 +34,29 @@
 #      again at the very end, success or failure. An account that
 #      already has a real password is left alone, same as pointing
 #      `dj setup` at it directly.
-#   2. Pushes this machine's own age key (required) and git-host
+#   2. If the account had no usable password (same condition as
+#      above), prompts locally for one and sets it on the target via
+#      `chpasswd` over stdin -- otherwise it would stay permanently
+#      locked out once the temporary NOPASSWD grant from step 1 is
+#      removed at the end. Blank input skips this with a warning
+#      rather than forcing a password on someone who'd rather set one
+#      manually (or rely on SSH-key auth alone).
+#   3. Pushes this machine's own age key (required) and git-host
 #      deploy key (optional -- a warning is printed if it's missing,
 #      same as dj-setup.sh) directly into the target user's home
 #      directory and chowns them to that user, since there is no
 #      agent-forwarding path into a `su -` session to rely on instead.
-#   3. Runs install.sh as that user via `su - USER -c '...'` -- not a
-#      second `ssh` hop, since the fresh account has no password or
-#      authorized key of its own yet to authenticate one with. `su -`
-#      resets $HOME (and everything else) to the target account's own,
-#      so install.sh's normal $HOME-relative logic just works.
+#   4. Runs install.sh as that user via `su - USER -c '...'` -- not a
+#      second `ssh` hop, since the fresh account has no authorized key
+#      of its own yet to authenticate one with. `su -` resets $HOME
+#      (and everything else) to the target account's own, so
+#      install.sh's normal $HOME-relative logic just works.
 #
 # Unlike dj-setup.sh, this script does not forward this machine's own
 # SSH agent (-A): su -l resets the environment, and even if
 # SSH_AUTH_SOCK survived, the socket's permissions wouldn't let the
 # new, different local user read it. The git-host key is pushed
-# directly instead (step 2), same as dj-setup.sh's own non-agent
+# directly instead (step 3), same as dj-setup.sh's own non-agent
 # fallback path.
 #
 # Nor does it register the target in ~/.ssh/config the way dj-setup.sh
@@ -299,7 +306,7 @@ if [ "$NEEDS_SUDO_SETUP" = 1 ]; then
   fi
 fi
 
-printf 'CREATED=%s\nHOME_DIR=%s\n' "$CREATED" "$HOME_DIR"
+printf 'CREATED=%s\nHOME_DIR=%s\nNEEDS_PASSWORD=%s\n' "$CREATED" "$HOME_DIR" "$NEEDS_SUDO_SETUP"
 BODY
 )
 USER_CHECK_CMD="sh -c $(q "$USER_CHECK_BODY") -- $(q "$TARGET_USER")"
@@ -308,6 +315,7 @@ log "checking/creating $TARGET_USER@$TARGET_HOST"
 USER_CHECK_OUT=$(ssh $SSH_OPTS "$ROOT_HOSTSPEC" "$USER_CHECK_CMD")
 CREATED=$(printf '%s\n' "$USER_CHECK_OUT" | sed -n 's/^CREATED=//p')
 REMOTE_HOME=$(printf '%s\n' "$USER_CHECK_OUT" | sed -n 's/^HOME_DIR=//p')
+NEEDS_PASSWORD=$(printf '%s\n' "$USER_CHECK_OUT" | sed -n 's/^NEEDS_PASSWORD=//p')
 if [ -z "$REMOTE_HOME" ]; then
   printf 'error: could not determine home directory for %s@%s\n' "$TARGET_USER" "$TARGET_HOST" >&2
   exit 1
@@ -318,6 +326,43 @@ else
   log "$TARGET_USER already exists on $TARGET_HOST (home: $REMOTE_HOME) -- bootstrapping in place"
 fi
 SUDOERS_DROPIN="/etc/sudoers.d/dj-setup-root-$TARGET_USER"
+
+# ---------- 3b. Set a password for the account, if it doesn't have one ------
+#
+# useradd never sets one, so a brand-new account -- or one left over
+# passwordless from an earlier, interrupted/pre-fix run (NEEDS_PASSWORD
+# mirrors the remote NEEDS_SUDO_SETUP check above) -- would otherwise
+# stay permanently locked out once the temporary NOPASSWD sudoers grant
+# is removed at the end of this script. Prompted for locally and sent
+# to the target over stdin (chpasswd), never as a command-line
+# argument, so it never shows up in either side's process list.
+if [ "$NEEDS_PASSWORD" = 1 ]; then
+  _pw1=; _pw2=
+  printf '[dj-setup-root] set a password for %s@%s [blank = leave unset]: ' "$TARGET_USER" "$TARGET_HOST" >&2
+  stty -echo 2>/dev/null || true
+  read -r _pw1 || _pw1=
+  stty echo 2>/dev/null || true
+  printf '\n' >&2
+  if [ -n "$_pw1" ]; then
+    printf '[dj-setup-root] confirm password: ' >&2
+    stty -echo 2>/dev/null || true
+    read -r _pw2 || _pw2=
+    stty echo 2>/dev/null || true
+    printf '\n' >&2
+    if [ "$_pw1" = "$_pw2" ]; then
+      if printf '%s:%s' "$TARGET_USER" "$_pw1" | ssh $SSH_OPTS "$ROOT_HOSTSPEC" chpasswd; then
+        log "set a password for $TARGET_USER@$TARGET_HOST"
+      else
+        log "warn: failed to set a password for $TARGET_USER@$TARGET_HOST -- set one manually"
+      fi
+    else
+      log "warn: passwords didn't match -- $TARGET_USER@$TARGET_HOST left without one"
+    fi
+  else
+    log "warn: no password set for $TARGET_USER@$TARGET_HOST -- set one manually once sudo's temporary NOPASSWD grant is removed"
+  fi
+  unset _pw1 _pw2
+fi
 
 # ---------- 4. Push the age key (and git-host key, if present) --------------
 #

@@ -275,6 +275,95 @@ default_stubs() {
   [[ "$output" =~ "/home/newbie" ]]
 }
 
+# Same shape as stub_ssh_default, but the user-check call reports
+# NEEDS_PASSWORD=1 (a brand-new or still-passwordless account) and a
+# "chpasswd" call captures whatever was piped into its stdin, for
+# password-prompt tests to inspect.
+stub_ssh_needs_password() {
+  home_dir=${1:-/home/testuser}
+  printf '0' > "$SANDBOX/ssh_call_next"
+  cat > "$STUB_BIN/ssh" <<EOF
+#!/bin/sh
+{ printf 'ssh'; for a in "\$@"; do printf ' %s' "\$a"; done; printf '\n'; } >> "$SANDBOX/stub.log"
+for a in "\$@"; do
+  [ "\$a" = "-O" ] && exit 0
+done
+n=\$(cat "$SANDBOX/ssh_call_next" 2>/dev/null || echo 0)
+i=0
+for a in "\$@"; do
+  i=\$((i + 1))
+  printf '%s' "\$a" > "$SANDBOX/ssh_call_\${n}_argv_\$i"
+done
+printf '%s' "\$i" > "$SANDBOX/ssh_call_\${n}_argc"
+printf '%s' "\$((n + 1))" > "$SANDBOX/ssh_call_next"
+last=""
+for a in "\$@"; do last=\$a; done
+case "\$last" in
+  *"sh -c"*)
+    printf 'CREATED=1\nHOME_DIR=%s\nNEEDS_PASSWORD=1\n' "$home_dir"
+    ;;
+  chpasswd)
+    cat > "$SANDBOX/chpasswd_stdin"
+    ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_BIN/ssh"
+}
+
+@test "prompts for and sets a password when the account needs one" {
+  local_user=$(id -un)
+  stub_ssh_needs_password
+  stub_cmd scp
+  private_repo_with_remote
+  dotfiles_repo_with_origin git@github.com:someuser/somerepo.git
+
+  run sh -c "printf 'hunter2\nhunter2\n' | sh '$SETUP' testhost --system-type server --theme '#2596be'"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "set a password for $local_user@testhost" ]]
+  [ -f "$SANDBOX/chpasswd_stdin" ]
+  grep -qF "$local_user:hunter2" "$SANDBOX/chpasswd_stdin"
+}
+
+@test "mismatched password confirmation leaves the account without one" {
+  stub_ssh_needs_password
+  stub_cmd scp
+  private_repo_with_remote
+  dotfiles_repo_with_origin git@github.com:someuser/somerepo.git
+
+  run sh -c "printf 'hunter2\nwrongpass\n' | sh '$SETUP' testhost --system-type server --theme '#2596be'"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "passwords didn't match" ]]
+  [ ! -f "$SANDBOX/chpasswd_stdin" ]
+}
+
+@test "blank password input skips chpasswd with a warning" {
+  stub_ssh_needs_password
+  stub_cmd scp
+  private_repo_with_remote
+  dotfiles_repo_with_origin git@github.com:someuser/somerepo.git
+
+  run sh -c "printf '\n' | sh '$SETUP' testhost --system-type server --theme '#2596be'"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "no password set" ]]
+  [ ! -f "$SANDBOX/chpasswd_stdin" ]
+}
+
+@test "an already-provisioned account (NEEDS_PASSWORD unset) is never prompted" {
+  default_stubs 0 /home/testuser
+  stub_cmd scp
+  private_repo_with_remote
+  dotfiles_repo_with_origin git@github.com:someuser/somerepo.git
+
+  run sh "$SETUP" testhost --system-type server --theme '#2596be' < /dev/null
+  [ "$status" -eq 0 ]
+  if [[ "$output" =~ "set a password" ]] || [[ "$output" =~ "no password set" ]]; then
+    printf 'unexpected password prompt for an already-provisioned account\n%s\n' "$output" >&2
+    false
+  fi
+  [ ! -f "$SANDBOX/chpasswd_stdin" ]
+}
+
 @test "no HOME_DIR in the user-check output exits 1" {
   cat > "$STUB_BIN/ssh" <<'EOF'
 #!/bin/sh
