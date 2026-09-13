@@ -398,10 +398,12 @@ A directory rather than one shared `authorized_keys` because machines only ever 
 
 ```sh
 dj authorized-keys      # register this machine + rebuild authorized_keys
-dot commit -m 'ssh: trust <host>' && dot push
+dot push                # commit already happened -- see below
 ```
 
-`dj sync` runs the rebuild (with `--no-register`, so it never stages anything of its own) so keys from other machines land automatically. `git-setup.sh` registers during bootstrap. Safety properties in `authorized-keys.sh`: an empty `.d` never truncates an existing `authorized_keys` (that would lock everyone out), and a key present only in `authorized_keys` is backed up before being dropped.
+Registering this machine's own key also commits it (`Add SSH public key for <hostname>`) — but deliberately does not push; that stays a separate, explicit step so a newly bootstrapped machine never pushes to the private repo on its own. If the commit itself fails (e.g. no git identity configured yet), the key is left staged with a warning instead, same as if this auto-commit didn't exist.
+
+`dj sync` runs the rebuild (with `--no-register`, so it never stages or commits anything of its own) so keys from other machines land automatically. `git-setup.sh` registers during bootstrap. Safety properties in `authorized-keys.sh`: an empty `.d` never truncates an existing `authorized_keys` (that would lock everyone out), and a key present only in `authorized_keys` is backed up before being dropped.
 
 **Never track `~/.ssh/id_ed25519.pub`.** It's a per-machine path, so tracking it checks one machine's public key out over every other's, leaving each with a `.pub` that doesn't match its own private key.
 

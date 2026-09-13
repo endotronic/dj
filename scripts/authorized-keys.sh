@@ -8,6 +8,11 @@
 #                   Used by `dj sync`, where the only new material is
 #                   other machines' keys arriving from the repo.
 #
+# Registering this machine's own key also commits it (message: "Add
+# SSH public key for <hostname>") -- but deliberately does NOT push;
+# that stays a separate, explicit step so a newly bootstrapped machine
+# never pushes to the private repo on its own.
+#
 # Why a directory of <hostname>.pub files instead of one tracked
 # authorized_keys: each machine only ever writes its own file and
 # never touches anyone else's, so two machines bootstrapping in
@@ -64,9 +69,15 @@ if [ "$REGISTER" -eq 1 ]; then
       chmod 644 "$_mine"
       log "registered this machine's public key as authorized_keys.d/$_host.pub"
       if [ -d "$DOT_DIR" ]; then
-        dot add "$_mine" 2>/dev/null \
-          && log "staged it -- commit and push so other machines trust this one" \
-          || log "warn: could not stage $_mine (is the private repo set up?)"
+        if dot add "$_mine" 2>/dev/null; then
+          if dot commit -m "Add SSH public key for $_host" >/dev/null; then
+            log "committed -- push (dot push) so other machines trust this one"
+          else
+            log "warn: staged $_mine but the commit failed -- commit it yourself"
+          fi
+        else
+          log "warn: could not stage $_mine (is the private repo set up?)"
+        fi
       fi
     fi
   fi

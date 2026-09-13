@@ -96,8 +96,17 @@ EOF
 gitcfg() { git -C "$HOME" config --global "$@" 2>/dev/null || true; }
 
 staged_files() {
+  # Union of what's still staged and what the most recent commit
+  # contains: authorized-keys.sh now commits its own registration
+  # (see authorized-keys.bats) rather than leaving it staged, while
+  # everything else this script stages (.gitconfig, a GPG key via
+  # secret-add.sh) is still left for the human to commit -- callers of
+  # this helper only care that a given path ended up tracked one way
+  # or the other, not which.
   git --git-dir="$HOME/.config.git" --work-tree="$HOME" \
     diff --cached --name-only
+  git --git-dir="$HOME/.config.git" --work-tree="$HOME" \
+    log -1 --name-only --pretty=format: 2>/dev/null
 }
 
 # --- Argument parsing --------------------------------------------------------

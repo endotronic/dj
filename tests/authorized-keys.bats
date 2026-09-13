@@ -132,15 +132,37 @@ make_pubkey() {
 
 # --- staging into the private repo -------------------------------------
 
-@test "a newly registered key is staged in the private repo" {
+@test "a newly registered key is staged and committed in the private repo, but not pushed" {
   make_pubkey MINE kevin@here > "$HOME/.ssh/id_ed25519.pub"
   git init --bare -q "$DOT_DIR"
   git --git-dir="$DOT_DIR" --work-tree="$HOME" config user.email t@t
   git --git-dir="$DOT_DIR" --work-tree="$HOME" config user.name t
+  git --git-dir="$DOT_DIR" --work-tree="$HOME" config commit.gpgsign false
 
   run sh "$SCRIPT"
   [ "$status" -eq 0 ]
-  [[ "$output" =~ "staged it" ]]
+  [[ "$output" =~ "committed" ]]
+  # Nothing left staged -- it was committed, not just added.
+  run git --git-dir="$DOT_DIR" --work-tree="$HOME" diff --cached --name-only
+  [ -z "$output" ]
+  run git --git-dir="$DOT_DIR" --work-tree="$HOME" log -1 --name-only --pretty=format:%s
+  [[ "$output" =~ "Add SSH public key for $HOSTNAME_SHORT" ]]
+  [[ "$output" =~ "authorized_keys.d/$HOSTNAME_SHORT.pub" ]]
+  # No remote configured, so pushing was never even possible -- but
+  # the point is this script doesn't try: confirm no `git push`
+  # equivalent left the commit anywhere but the local bare repo's
+  # branch tip (i.e. HEAD really did move, nothing more).
+  [ "$(git --git-dir="$DOT_DIR" rev-list --count HEAD)" = 1 ]
+}
+
+@test "a failed commit (e.g. no git identity configured) still leaves the key staged, with a warning" {
+  make_pubkey MINE kevin@here > "$HOME/.ssh/id_ed25519.pub"
+  git init --bare -q "$DOT_DIR"
+  # Deliberately no user.email/user.name -- git refuses to commit.
+
+  run sh "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "commit it yourself" ]]
   run git --git-dir="$DOT_DIR" --work-tree="$HOME" diff --cached --name-only
   [[ "$output" =~ "authorized_keys.d/$HOSTNAME_SHORT.pub" ]]
 }
