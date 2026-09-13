@@ -153,7 +153,12 @@ printf '[install-packages] to install:%s\n'      "${_to_install_display:- (none)
 if [ -n "$missing" ]; then
   case "$DOTFILES_PKG" in
     apt)
-      sudo apt-get update
+      # A non-zero exit here (e.g. Proxmox's enterprise/ceph repos
+      # 401ing without a paid subscription) means some index files
+      # failed to refresh, not that every repo did -- under `set -e`
+      # this would otherwise abort the whole run before a single
+      # package below gets a chance to install.
+      sudo apt-get update || true
       for _l in $missing; do
         _a=$(resolve_name "$_l"); _a=${_a:-$_l}
         # DEBIAN_FRONTEND/NEEDRESTART_MODE: see install.sh's install_one()

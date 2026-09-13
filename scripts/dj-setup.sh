@@ -318,7 +318,7 @@ fi
 # present, same env vars as install.sh's own apt path (avoids
 # needrestart's interactive dialog on Debian/Ubuntu).
 ENSURE_CURL='command -v curl >/dev/null 2>&1 || \
-{ command -v apt-get >/dev/null 2>&1 && sudo apt-get update && sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y curl; } || \
+{ command -v apt-get >/dev/null 2>&1 && { sudo apt-get update || true; } && sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y curl; } || \
 { command -v pacman >/dev/null 2>&1 && sudo pacman -Sy --noconfirm curl; } || \
 { command -v brew >/dev/null 2>&1 && brew install curl; } || \
 { printf "error: curl is missing and no known package manager was found\n" >&2; exit 1; }'

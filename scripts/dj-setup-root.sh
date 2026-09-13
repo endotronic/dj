@@ -266,8 +266,13 @@ if [ "$NEEDS_SUDO_SETUP" = 1 ]; then
   # still root, rather than deferring straight to the no-sudo warning
   # further down.
   if ! command -v sudo >/dev/null 2>&1; then
+    # `apt-get update` alone commonly exits non-zero here (e.g.
+    # Proxmox's enterprise/ceph repos 401ing without a paid
+    # subscription) even though the repo that actually has `sudo`
+    # refreshed fine -- so its failure must not block the install
+    # that follows.
     case "$PKG_MGR" in
-      apt)    apt-get update -qq && apt-get install -y sudo ;;
+      apt)    { apt-get update -qq || true; } && apt-get install -y sudo ;;
       pacman) pacman -Sy --noconfirm sudo ;;
     esac || printf 'warn: failed to install sudo on this host -- will fall back to a NOPASSWD-less warning\n' >&2
   fi
@@ -343,7 +348,7 @@ ssh $SSH_OPTS "$ROOT_HOSTSPEC" "$CHOWN_CMD"
 # everything else reset to the target account's own).
 
 ENSURE_CURL='command -v curl >/dev/null 2>&1 || \
-{ command -v apt-get >/dev/null 2>&1 && sudo apt-get update && sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y curl; } || \
+{ command -v apt-get >/dev/null 2>&1 && { sudo apt-get update || true; } && sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y curl; } || \
 { command -v pacman >/dev/null 2>&1 && sudo pacman -Sy --noconfirm curl; } || \
 { printf "error: curl is missing and no known package manager was found\n" >&2; exit 1; }'
 

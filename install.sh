@@ -336,7 +336,12 @@ install_one() {
   command -v "$pkg_bin" >/dev/null 2>&1 && return 0
   log "installing $pkg_actual"
   case "$PKG" in
-    apt)    sudo apt-get update
+    # apt-get update's exit status reflects ANY index it failed to
+    # refresh (e.g. Proxmox's enterprise/ceph repos 401ing without a
+    # paid subscription), not that every repo failed -- tolerated here
+    # so a repo we don't even need doesn't abort the whole bootstrap
+    # under `set -e` before the actual install line runs.
+    apt)    sudo apt-get update || true
             sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
               apt-get install -y "$pkg_actual" ;;
     pacman) sudo pacman -S --needed --noconfirm "$pkg_actual" ;;
