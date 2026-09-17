@@ -259,3 +259,149 @@ EOF
   [ "$status" -eq 0 ]
   [[ "$output" =~ "no docker-compose plugin found" ]]
 }
+
+# --- packages/postinstall/tmux-backports.sh ---------------------------------
+
+# Stubs `dpkg` (handles `-s tmux` via $TMUX_DPKG_INSTALLED, and passes
+# `--compare-versions` through to the real binary -- that subcommand is
+# a pure version-string comparator with no dpkg-database side effects,
+# same reasoning as docker-compose.sh's real-`ln` passthrough stub),
+# `dpkg-query` (prints $TMUX_NEW_VERSION once the apt-get stub below
+# has "installed" it, else $TMUX_OLD_VERSION) and `apt-get` (logs its
+# args; touches a marker on the actual `install -t ... tmux` call so
+# dpkg-query's stub can flip versions).
+stub_tmux_backports_apt() {
+  : "${TMUX_DPKG_INSTALLED:=1}"
+  : "${TMUX_OLD_VERSION:=3.3a-3}"
+  : "${TMUX_NEW_VERSION:=3.5a-2~bpo12+1}"
+  marker="$SANDBOX/tmux-upgraded"
+
+  cat > "$STUB_BIN/dpkg" <<EOF
+#!/bin/sh
+case "\$1" in
+  --compare-versions) shift; exec /usr/bin/dpkg --compare-versions "\$@" ;;
+  -s) [ "$TMUX_DPKG_INSTALLED" = 1 ] && exit 0 || exit 1 ;;
+  *) exit 1 ;;
+esac
+EOF
+  chmod +x "$STUB_BIN/dpkg"
+
+  cat > "$STUB_BIN/dpkg-query" <<EOF
+#!/bin/sh
+if [ -f "$marker" ]; then printf '%s\n' "$TMUX_NEW_VERSION"; else printf '%s\n' "$TMUX_OLD_VERSION"; fi
+EOF
+  chmod +x "$STUB_BIN/dpkg-query"
+
+  cat > "$STUB_BIN/apt-get" <<EOF
+#!/bin/sh
+{ printf 'apt-get'; for a in "\$@"; do printf ' %s' "\$a"; done; printf '\n'; } >> "$SANDBOX/stub.log"
+case " \$* " in
+  *" install "*" -t "*) touch "$marker" ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_BIN/apt-get"
+}
+
+write_os_release() {
+  os_release="$SANDBOX/os-release"
+  printf 'ID=%s\n' "$1" > "$os_release"
+  [ -n "${2:-}" ] && printf 'VERSION_CODENAME=%s\n' "$2" >> "$os_release"
+  export DOTFILES_OS_RELEASE_FILE="$os_release"
+}
+
+@test "tmux-backports.sh: skips when dpkg is not present" {
+  PATH="$STUB_BIN" run /bin/sh "$DOTFILES_REPO_ROOT/packages/postinstall/tmux-backports.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "not a dpkg system" ]]
+}
+
+@test "tmux-backports.sh: skips when apt-get is not present" {
+  stub_cmd dpkg
+  PATH="$STUB_BIN" run /bin/sh "$DOTFILES_REPO_ROOT/packages/postinstall/tmux-backports.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "apt-get not found" ]]
+}
+
+@test "tmux-backports.sh: skips on non-Debian distro" {
+  stub_cmd dpkg
+  stub_cmd apt-get
+  write_os_release arch
+  PATH="$STUB_BIN" run /bin/sh "$DOTFILES_REPO_ROOT/packages/postinstall/tmux-backports.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "not Debian" ]]
+}
+
+@test "tmux-backports.sh: skips when tmux is not installed" {
+  TMUX_DPKG_INSTALLED=0 stub_tmux_backports_apt
+  write_os_release debian bookworm
+  PATH="$STUB_BIN" run /bin/sh "$DOTFILES_REPO_ROOT/packages/postinstall/tmux-backports.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "tmux not installed" ]]
+}
+
+@test "tmux-backports.sh: skips when the installed tmux already meets the minimum" {
+  TMUX_OLD_VERSION="3.5a-1" stub_tmux_backports_apt
+  write_os_release debian bookworm
+  PATH="$STUB_BIN:/usr/bin:/bin" run /bin/sh "$DOTFILES_REPO_ROOT/packages/postinstall/tmux-backports.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "already >= 3.4" ]]
+  ! stub_called apt-get
+}
+
+@test "tmux-backports.sh: below the minimum with no VERSION_CODENAME warns and exits nonzero" {
+  stub_tmux_backports_apt
+  write_os_release debian
+  PATH="$STUB_BIN:/usr/bin:/bin" run --separate-stderr /bin/sh "$DOTFILES_REPO_ROOT/packages/postinstall/tmux-backports.sh"
+  [ "$status" -ne 0 ]
+  [[ "$stderr" =~ "could not determine VERSION_CODENAME" ]]
+}
+
+@test "tmux-backports.sh: below the minimum installs from <codename>-backports" {
+  stub_tmux_backports_apt
+  stub_sudo_passthrough
+  write_os_release debian bookworm
+  sources_dir="$SANDBOX/sources.list.d"
+  mkdir -p "$sources_dir"
+
+  DOTFILES_APT_SOURCES_DIR="$sources_dir" \
+    PATH="$STUB_BIN:/usr/bin:/bin" run /bin/sh "$DOTFILES_REPO_ROOT/packages/postinstall/tmux-backports.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "upgraded tmux 3.3a-3 -> 3.5a-2~bpo12+1" ]]
+  [ -f "$sources_dir/bookworm-backports.list" ]
+  grep -qxF 'deb http://deb.debian.org/debian bookworm-backports main' "$sources_dir/bookworm-backports.list"
+  [[ "$(stub_log)" =~ "apt-get install -y -t bookworm-backports tmux" ]]
+}
+
+@test "tmux-backports.sh: does not duplicate an existing sources.list.d entry" {
+  stub_tmux_backports_apt
+  stub_sudo_passthrough
+  write_os_release debian bookworm
+  sources_dir="$SANDBOX/sources.list.d"
+  mkdir -p "$sources_dir"
+  printf 'deb http://deb.debian.org/debian bookworm-backports main\n' \
+    > "$sources_dir/bookworm-backports.list"
+  # Stubbed as a plain logger (not a real pipe-to-file tee) so its
+  # absence from the call log proves the skip branch was taken, rather
+  # than being masked by tee idempotently rewriting the same line.
+  stub_cmd tee
+
+  DOTFILES_APT_SOURCES_DIR="$sources_dir" \
+    PATH="$STUB_BIN:/usr/bin:/bin" run /bin/sh "$DOTFILES_REPO_ROOT/packages/postinstall/tmux-backports.sh"
+  [ "$status" -eq 0 ]
+  [ "$(wc -l < "$sources_dir/bookworm-backports.list")" -eq 1 ]
+  ! stub_called tee
+}
+
+@test "tmux-backports.sh: warns and exits nonzero if the version is still too old afterward" {
+  TMUX_NEW_VERSION="3.3a-3" stub_tmux_backports_apt
+  stub_sudo_passthrough
+  write_os_release debian bookworm
+  sources_dir="$SANDBOX/sources.list.d"
+  mkdir -p "$sources_dir"
+
+  DOTFILES_APT_SOURCES_DIR="$sources_dir" \
+    PATH="$STUB_BIN:/usr/bin:/bin" run --separate-stderr /bin/sh "$DOTFILES_REPO_ROOT/packages/postinstall/tmux-backports.sh"
+  [ "$status" -ne 0 ]
+  [[ "$stderr" =~ "WARNING: tmux still 3.3a-3" ]]
+}
