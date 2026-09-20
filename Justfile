@@ -226,7 +226,7 @@ doctor:
     echo "DOTFILES_SYSTEM_TYPE=${DOTFILES_SYSTEM_TYPE:-<none>}"
     echo
     rc=0
-    for tool in git sops age just nvim tmux starship rg fd fzf jq gh curl openssl claude; do
+    for tool in git sops age just nvim tmux starship rg fd fzf jq curl openssl claude; do
       if command -v "$tool" >/dev/null 2>&1; then
         printf '  ok    %s\n' "$tool"
       else

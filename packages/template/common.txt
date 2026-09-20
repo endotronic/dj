@@ -22,7 +22,6 @@ rg
 fd
 fzf
 jq
-gh
 npm
 curl
 openssl
