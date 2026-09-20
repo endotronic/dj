@@ -187,6 +187,47 @@ _make_fake_repo_dir() {
   grep -q "private tracked" "$HOME/.bashrc"
 }
 
+@test "--private-repo: sets an origin/* fetch refspec on the bare clone" {
+  # `git clone --bare` writes no remote.origin.fetch, so origin/master
+  # never exists and `dot status` can never answer "what's unpushed?".
+  # dj sync keeps working either way, which is why the gap went
+  # unnoticed for so long -- install.sh must close it up front.
+  stage_fake_dotfiles_checkout
+  make_src_repo
+  add_to_repo .bashrc "# private tracked"
+  publish_repo
+
+  run sh "$INSTALL" --private-repo "$SRC_REPO" --on-conflict backup
+  [ "$status" -eq 0 ]
+  [ "$(dot config --get remote.origin.fetch)" = '+refs/heads/*:refs/remotes/origin/*' ]
+  run dot rev-parse --verify refs/remotes/origin/master
+  [ "$status" -eq 0 ]
+}
+
+@test "--private-repo: sets upstream tracking so dot status reports ahead/behind" {
+  stage_fake_dotfiles_checkout
+  make_src_repo
+  add_to_repo .bashrc "# private tracked"
+  publish_repo
+
+  run sh "$INSTALL" --private-repo "$SRC_REPO" --on-conflict backup
+  [ "$status" -eq 0 ]
+  [ "$(dot config --get branch.master.remote)" = origin ]
+  [ "$(dot config --get branch.master.merge)" = refs/heads/master ]
+  run dot rev-parse --abbrev-ref 'master@{upstream}'
+  [ "$status" -eq 0 ]
+  [ "$output" = origin/master ]
+}
+
+@test "no --private-repo: empty init gets no refspec (there is no origin)" {
+  stage_fake_dotfiles_checkout
+
+  run sh "$INSTALL" --on-conflict backup
+  [ "$status" -eq 0 ]
+  run dot config --get remote.origin.fetch
+  [ "$status" -ne 0 ]
+}
+
 @test "--private-repo with unreachable source is fatal, not a silent empty-init" {
   # Regression: this used to warn and fall back to an empty private
   # repo, which in real use left secrets/tmux/SSH/GPG all unrestored
