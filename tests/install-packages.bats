@@ -288,3 +288,121 @@ STUBEOF
   [ "$status" -eq 1 ]
   [[ "$output" =~ "fdfind not found" ]]
 }
+
+# --- packages/scripts/bats.sh: upstream bats-core ---------------------------
+#
+# Unlike the other fallback installers, this one must look at the
+# VERSION rather than mere presence: Debian/Ubuntu do ship `bats`, just
+# at 1.2.1, which silently aborts any test file calling
+# `bats_require_minimum_version`.
+
+BATS_SH() { printf '%s' "$DOTFILES_REPO_ROOT/packages/scripts/bats.sh"; }
+
+# A `bats` on the stub PATH reporting $1.
+write_fake_bats() {
+  printf '#!/bin/sh\n[ "$1" = --version ] && echo "Bats %s"\nexit 0\n' "$2" > "$1"
+  chmod +x "$1"
+}
+
+# Stub curl so `-o <path> <url>` yields a real tarball laid out the way
+# GitHub's source archive is, whose install.sh drops a fake bats
+# reporting $NEW_VERSION into <prefix>/bin.
+stub_bats_curl() {
+  : "${NEW_VERSION:=1.11.1}"
+  cat > "$STUB_BIN/curl" <<EOF
+#!/bin/sh
+{ printf 'curl'; for a in "\$@"; do printf ' %s' "\$a"; done; printf '\n'; } >> "$SANDBOX/stub.log"
+out=
+while [ \$# -gt 0 ]; do
+  case "\$1" in -o) out=\$2; shift 2 ;; *) shift ;; esac
+done
+[ -n "\$out" ] || exit 0
+d="\$(mktemp -d)"
+mkdir -p "\$d/bats-core-$NEW_VERSION"
+cat > "\$d/bats-core-$NEW_VERSION/install.sh" <<'INNER'
+#!/bin/sh
+mkdir -p "\$1/bin"
+printf '#!/bin/sh\n[ "\$1" = --version ] && echo "Bats $NEW_VERSION"\nexit 0\n' > "\$1/bin/bats"
+chmod +x "\$1/bin/bats"
+INNER
+chmod +x "\$d/bats-core-$NEW_VERSION/install.sh"
+tar -czf "\$out" -C "\$d" "bats-core-$NEW_VERSION"
+rm -rf "\$d"
+EOF
+  chmod +x "$STUB_BIN/curl"
+}
+
+@test "bats.sh: exits 0 without downloading when bats is already new enough" {
+  write_fake_bats "$STUB_BIN/bats" 1.11.1
+  stub_bats_curl
+  PATH="$STUB_BIN:/usr/bin:/bin" run /bin/sh "$(BATS_SH)"
+  [ "$status" -eq 0 ]
+  ! stub_called curl
+}
+
+@test "bats.sh: installs upstream when the distro version is too old" {
+  write_fake_bats "$STUB_BIN/bats" 1.2.1
+  stub_bats_curl
+  stub_sudo_passthrough
+  prefix="$SANDBOX/prefix"
+
+  BATS_INSTALL_PREFIX="$prefix" PATH="$prefix/bin:$STUB_BIN:/usr/bin:/bin" \
+    run /bin/sh "$(BATS_SH)"
+  [ "$status" -eq 0 ]
+  [ -x "$prefix/bin/bats" ]
+  [[ "$output" =~ "Bats 1.11.1" ]]
+}
+
+@test "bats.sh: a presence check would not have been enough (1.2.1 is present)" {
+  # Guards the one thing that makes this installer different from its
+  # siblings: `command -v bats` succeeds here and must not short-circuit.
+  write_fake_bats "$STUB_BIN/bats" 1.2.1
+  stub_bats_curl
+  stub_sudo_passthrough
+  prefix="$SANDBOX/prefix"
+
+  BATS_INSTALL_PREFIX="$prefix" PATH="$prefix/bin:$STUB_BIN:/usr/bin:/bin" \
+    run /bin/sh "$(BATS_SH)"
+  [ "$status" -eq 0 ]
+  stub_called curl
+}
+
+@test "bats.sh: is idempotent -- the second run downloads nothing" {
+  write_fake_bats "$STUB_BIN/bats" 1.2.1
+  stub_bats_curl
+  stub_sudo_passthrough
+  prefix="$SANDBOX/prefix"
+
+  BATS_INSTALL_PREFIX="$prefix" PATH="$prefix/bin:$STUB_BIN:/usr/bin:/bin" \
+    run /bin/sh "$(BATS_SH)"
+  [ "$status" -eq 0 ]
+  rm -f "$SANDBOX/stub.log"
+
+  BATS_INSTALL_PREFIX="$prefix" PATH="$prefix/bin:$STUB_BIN:/usr/bin:/bin" \
+    run /bin/sh "$(BATS_SH)"
+  [ "$status" -eq 0 ]
+  ! stub_called curl
+}
+
+@test "bats.sh: fails cleanly when curl is unavailable" {
+  write_fake_bats "$STUB_BIN/bats" 1.2.1
+  PATH="$STUB_BIN" run /bin/sh "$(BATS_SH)"
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "curl is required" ]]
+}
+
+@test "bats.sh: reports when the upstream build stays shadowed on PATH" {
+  # Installed correctly, but <prefix>/bin sits BEHIND the distro copy,
+  # so the version check still sees 1.2.1 -- the failure mode worth
+  # naming, since it looks like a successful install.
+  write_fake_bats "$STUB_BIN/bats" 1.2.1
+  stub_bats_curl
+  stub_sudo_passthrough
+  prefix="$SANDBOX/prefix"
+
+  BATS_INSTALL_PREFIX="$prefix" PATH="$STUB_BIN:$prefix/bin:/usr/bin:/bin" \
+    run /bin/sh "$(BATS_SH)"
+  [ "$status" -eq 1 ]
+  [ -x "$prefix/bin/bats" ]
+  [[ "$output" =~ "ahead of /usr/bin on PATH" ]]
+}

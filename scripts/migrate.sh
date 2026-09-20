@@ -73,11 +73,12 @@ backup_dir() {
 
 # Every known migration, in the order they should run.
 MIGRATIONS='git-refspec dotfiles-origin-ssh ssh-pubkey ssh-machine-identity
-            legacy-tmux-conf tmux-version pending-packages postinstall-hooks
+            legacy-home-git legacy-tmux-conf tmux-version bats-version
+            pending-packages postinstall-hooks
             agy-installed'
 
 # Migrations that are detected but never auto-applied.
-MANUAL_MIGRATIONS='ssh-machine-identity postinstall-hooks'
+MANUAL_MIGRATIONS='ssh-machine-identity postinstall-hooks legacy-home-git'
 
 migration_desc() {
   case "$1" in
@@ -85,8 +86,10 @@ migration_desc() {
     dotfiles-origin-ssh)  echo "~/.dotfiles origin is a pushable ssh remote" ;;
     ssh-pubkey)           echo "this machine's SSH public key exists beside its private key" ;;
     ssh-machine-identity) echo "machine SSH identity is distinct from the shared git-host key" ;;
+    legacy-home-git)      echo "no legacy git repo with $HOME as its work tree" ;;
     legacy-tmux-conf)     echo "no legacy ~/.tmux.conf shadowing the tracked config" ;;
     tmux-version)         echo "tmux is new enough for clickable status buttons (>= 3.4)" ;;
+    bats-version)         echo "bats is new enough to run the whole test suite (>= 1.5)" ;;
     pending-packages)     echo "every package in the active lists is installed" ;;
     postinstall-hooks)    echo "every listed post-install hook has a script" ;;
     agy-installed)        echo "agy (antigravity) is installed, as the package list asks" ;;
@@ -258,6 +261,64 @@ fix_ssh_machine_identity() {
   log "  dj authorized-keys && dot push"
 }
 
+# ---------- legacy-home-git (MANUAL) ----------
+#
+# Before this project existed, $HOME itself was a plain (non-bare) git
+# repo -- work-tree $HOME, .git at ~/.git. That pattern is deprecated,
+# but a machine that used it keeps the repo forever, and it collides
+# with the current design in two ways that never announce themselves:
+#
+#   1. Any plain `git` command run from $HOME (or any subdirectory
+#      without its own .git) resolves to it, not to the private bare
+#      repo. A stray `git checkout` or `git stash` there silently
+#      reverts files the private repo owns -- ~/.bashrc is tracked by
+#      both.
+#   2. Its ~/.gitignore is read work-tree-relative, so it governs the
+#      private bare repo too. Entries meant for the old repo (.ssh,
+#      .local, .profile, .tmux.conf) make `dot add` on those paths
+#      quietly do nothing.
+#
+# MANUAL because the old repo can hold commits and working-tree edits
+# that exist nowhere else -- deciding what to salvage is a judgement
+# call, not a repair.
+
+legacy_home_git_paths() {
+  for _p in "$HOME/.git" "$HOME/.gitignore"; do
+    [ -e "$_p" ] && printf '%s\n' "$_p"
+  done
+  return 0
+}
+
+check_legacy_home_git() {
+  # The private repo is bare at ~/.config.git; $HOME is never a git
+  # work tree in this design, so anything here is the legacy repo.
+  [ -e "$HOME/.git" ] || [ -e "$HOME/.gitignore" ] || return 0
+  return 1
+}
+
+fix_legacy_home_git() {
+  log "\$HOME is still a git work tree from the pre-dotfiles pattern:"
+  legacy_home_git_paths | while IFS= read -r _p; do log "  $_p"; done
+
+  if [ -d "$HOME/.git" ] && command -v git >/dev/null 2>&1; then
+    _dirty=$(git --git-dir="$HOME/.git" --work-tree="$HOME" \
+               status --porcelain --untracked-files=no 2>/dev/null | wc -l)
+    [ "$_dirty" -gt 0 ] && log "it has $_dirty tracked file(s) with uncommitted changes"
+    _br=$(git --git-dir="$HOME/.git" --work-tree="$HOME" \
+            symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+    if [ -n "$_br" ]; then
+      _ahead=$(git --git-dir="$HOME/.git" --work-tree="$HOME" \
+                 rev-list --count "@{upstream}..$_br" 2>/dev/null || echo unknown)
+      log "branch '$_br' has $_ahead commit(s) not on its upstream"
+    fi
+  fi
+
+  log "salvage anything you still want, then move it aside (reversible):"
+  log "  mkdir -p ~/.dotfiles-backup/\$(date -u +%Y%m%dT%H%M%SZ)"
+  log "  mv ~/.git ~/.gitignore ~/.dotfiles-backup/<that-dir>/"
+  return 1
+}
+
 # ---------- legacy-tmux-conf ----------
 #
 # install.sh step 7b backs these up, but only during install. tmux
@@ -335,6 +396,62 @@ fix_tmux_version() {
   log "tmux is $(tmux_version_str); no apt/pacman/brew upgrade path on this"
   log "distro. tmux.conf's clickable status buttons (NEW / <-- / -->) stay"
   log "inert below ${TMUX_MIN_MAJOR}.${TMUX_MIN_MINOR}; everything else in it works normally."
+  return 1
+}
+
+# ---------- bats-version ----------
+#
+# Two test files call `bats_require_minimum_version 1.5.0`, which bats
+# 1.2.1 -- all Debian/Ubuntu ships -- does not define. The result is
+# not a failing test but an aborted setup_file: those files' tests are
+# never run at all, and the suite's summary line still reads "ok" for
+# everything it did manage to execute. That is precisely the silent
+# capability loss this script exists to catch, so it gets a real
+# version predicate rather than the `command -v bats` presence check
+# `dj doctor`'s package audit does.
+#
+# Fresh machines don't need this: bats is marked SKIP in
+# renames/apt.txt, so install-packages.sh runs the fallback installer
+# for it instead. This repairs the machines bootstrapped before that.
+
+BATS_MIN_MAJOR=1
+BATS_MIN_MINOR=5
+
+bats_version_str() { bats --version 2>/dev/null | awk '{print $2}'; }
+
+bats_version_ge_min() {
+  _v=$(bats_version_str)
+  [ -n "$_v" ] || return 1
+  _maj=${_v%%.*}
+  _min=${_v#*.}
+  _min=${_min%%.*}
+  [ "$_min" = "$_v" ] && _min=0
+  case "$_maj$_min" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$(( _maj * 100 + _min ))" -ge "$(( BATS_MIN_MAJOR * 100 + BATS_MIN_MINOR ))" ]
+}
+
+check_bats_version() {
+  # No bats at all is pending-packages' problem, not this one.
+  command -v bats >/dev/null 2>&1 || return 2
+  bats_version_ge_min || return 1
+  return 0
+}
+
+fix_bats_version() {
+  _inst="$REPO_ROOT/packages/scripts/bats.sh"
+  [ -f "$_inst" ] || {
+    log "warn: $_inst not found; cannot upgrade bats automatically"
+    return 1
+  }
+  sh "$_inst" || true
+  hash -r 2>/dev/null || true
+  if bats_version_ge_min; then
+    log "bats upgraded to $(bats_version_str)"
+    return 0
+  fi
+  log "bats is still $(bats_version_str); the distro package shadows the"
+  log "upstream build, or the install failed. Check that /usr/local/bin"
+  log "precedes /usr/bin on PATH, then re-run: sh $_inst"
   return 1
 }
 
@@ -424,8 +541,10 @@ run_check() {
     dotfiles-origin-ssh)  check_dotfiles_origin_ssh ;;
     ssh-pubkey)           check_ssh_pubkey ;;
     ssh-machine-identity) check_ssh_machine_identity ;;
+    legacy-home-git)      check_legacy_home_git ;;
     legacy-tmux-conf)     check_legacy_tmux_conf ;;
     tmux-version)         check_tmux_version ;;
+    bats-version)         check_bats_version ;;
     pending-packages)     check_pending_packages ;;
     postinstall-hooks)    check_postinstall_hooks ;;
     agy-installed)        check_agy_installed ;;
@@ -439,8 +558,10 @@ run_fix() {
     dotfiles-origin-ssh)  fix_dotfiles_origin_ssh ;;
     ssh-pubkey)           fix_ssh_pubkey ;;
     ssh-machine-identity) fix_ssh_machine_identity ;;
+    legacy-home-git)      fix_legacy_home_git ;;
     legacy-tmux-conf)     fix_legacy_tmux_conf ;;
     tmux-version)         fix_tmux_version ;;
+    bats-version)         fix_bats_version ;;
     pending-packages)     fix_pending_packages ;;
     postinstall-hooks)    fix_postinstall_hooks ;;
     agy-installed)        fix_agy_installed ;;
