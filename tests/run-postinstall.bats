@@ -573,3 +573,149 @@ EOF
   [[ "$(stub_log)" =~ "systemctl daemon-reload" ]]
   [[ "$(stub_log)" =~ "systemctl enable --now zfs-vdev-textfile-collector.timer" ]]
 }
+
+# --- packages/postinstall/node-exporter-upstream.sh -------------------------
+
+NE_HOOK() { printf '%s' "$DOTFILES_REPO_ROOT/packages/postinstall/node-exporter-upstream.sh"; }
+
+# Upstream's asset naming is arch-specific; mirror the hook's own mapping
+# so these tests run on whatever machine they're invoked from.
+ne_arch() {
+  case "$(uname -m)" in
+    x86_64) printf 'amd64' ;;
+    aarch64|arm64) printf 'arm64' ;;
+    armv7l) printf 'armv7' ;;
+    *) printf 'amd64' ;;
+  esac
+}
+
+# Write a fake node_exporter at $1 reporting version $2, shaped like the
+# real `--version` banner the hook parses.
+write_fake_ne() {
+  cat > "$1" <<EOF
+#!/bin/sh
+printf 'node_exporter, version %s (branch: HEAD, revision: abc)\n' "$2"
+EOF
+  chmod +x "$1"
+}
+
+# Stub curl so that `-o <path> <url>` produces a real .tar.gz laid out
+# exactly as upstream ships it, with a fake binary inside reporting
+# $NE_DL_VERSION. Lets the extract/install path run for real.
+stub_ne_curl() {
+  : "${NE_DL_VERSION:=1.9.1}"
+  cat > "$STUB_BIN/curl" <<EOF
+#!/bin/sh
+{ printf 'curl'; for a in "\$@"; do printf ' %s' "\$a"; done; printf '\n'; } >> "$SANDBOX/stub.log"
+out=
+while [ \$# -gt 0 ]; do
+  case "\$1" in -o) out=\$2; shift 2 ;; *) shift ;; esac
+done
+[ -n "\$out" ] || exit 0
+d="\$(mktemp -d)"
+dir="node_exporter-${NE_DL_VERSION}.linux-$(ne_arch)"
+mkdir -p "\$d/\$dir"
+cat > "\$d/\$dir/node_exporter" <<INNER
+#!/bin/sh
+printf 'node_exporter, version %s (branch: HEAD)\n' "${NE_DL_VERSION}"
+INNER
+chmod +x "\$d/\$dir/node_exporter"
+tar -czf "\$out" -C "\$d" "\$dir"
+rm -rf "\$d"
+EOF
+  chmod +x "$STUB_BIN/curl"
+}
+
+# Common sandbox wiring: old packaged binary, sandboxed bin/drop-in dirs.
+ne_setup_env() {
+  NE_BIN_DIR="$SANDBOX/ne-bin"
+  NE_DROPIN_DIR="$SANDBOX/ne-dropin"
+  NE_PACKAGED="$SANDBOX/packaged-node-exporter"
+  mkdir -p "$NE_BIN_DIR" "$NE_DROPIN_DIR"
+  write_fake_ne "$NE_PACKAGED" "${NE_PACKAGED_VERSION:-1.3.1}"
+  export DOTFILES_NE_BIN_DIR="$NE_BIN_DIR"
+  export DOTFILES_NE_DROPIN_DIR="$NE_DROPIN_DIR"
+  export DOTFILES_NE_PACKAGED_BIN="$NE_PACKAGED"
+  export DOTFILES_NE_TEXTFILE_DIR="$SANDBOX/textfile"
+  export DOTFILES_NE_UNIT="fake-node-exporter.service"
+  export DOTFILES_NE_VERSION="${NE_DL_VERSION:-1.9.1}"
+}
+
+@test "node-exporter-upstream.sh: skips when systemd is absent" {
+  ne_setup_env
+  PATH="$STUB_BIN" run /bin/sh "$(NE_HOOK)"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "no systemd" ]]
+}
+
+@test "node-exporter-upstream.sh: skips when the distro package is not installed" {
+  ne_setup_env
+  rm -f "$NE_PACKAGED"
+  stub_cmd systemctl
+  PATH="$STUB_BIN" run /bin/sh "$(NE_HOOK)"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "skipping" ]]
+}
+
+@test "node-exporter-upstream.sh: leaves a new-enough packaged binary alone" {
+  NE_PACKAGED_VERSION=1.9.1 ne_setup_env
+  stub_cmd systemctl
+  stub_sudo_passthrough
+  PATH="$STUB_BIN:/usr/bin:/bin" run /bin/sh "$(NE_HOOK)"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "already >= " ]]
+  [ ! -e "$NE_DROPIN_DIR/10-upstream-binary.conf" ]
+}
+
+@test "node-exporter-upstream.sh: installs upstream binary and writes the drop-in when packaged is too old" {
+  ne_setup_env
+  stub_cmd systemctl
+  stub_sudo_passthrough
+  stub_ne_curl
+  PATH="$STUB_BIN:/usr/bin:/bin" run /bin/sh "$(NE_HOOK)"
+  [ "$status" -eq 0 ]
+  [ -x "$NE_BIN_DIR/node_exporter" ]
+  dropin="$NE_DROPIN_DIR/10-upstream-binary.conf"
+  [ -f "$dropin" ]
+  # ExecStart must be cleared before being re-set, or systemd rejects it.
+  grep -qx 'ExecStart=' "$dropin"
+  grep -q "ExecStart=$NE_BIN_DIR/node_exporter --collector.textfile.directory=$SANDBOX/textfile \$ARGS" "$dropin"
+}
+
+@test "node-exporter-upstream.sh: passes the textfile directory explicitly (upstream has no Debian default)" {
+  ne_setup_env
+  stub_cmd systemctl
+  stub_sudo_passthrough
+  stub_ne_curl
+  PATH="$STUB_BIN:/usr/bin:/bin" run /bin/sh "$(NE_HOOK)"
+  [ "$status" -eq 0 ]
+  grep -q -- '--collector.textfile.directory=' "$NE_DROPIN_DIR/10-upstream-binary.conf"
+}
+
+@test "node-exporter-upstream.sh: reloads and restarts the unit" {
+  ne_setup_env
+  stub_cmd systemctl
+  stub_sudo_passthrough
+  stub_ne_curl
+  PATH="$STUB_BIN:/usr/bin:/bin" run /bin/sh "$(NE_HOOK)"
+  [ "$status" -eq 0 ]
+  [[ "$(stub_log)" =~ "systemctl daemon-reload" ]]
+  [[ "$(stub_log)" =~ "systemctl restart fake-node-exporter.service" ]]
+}
+
+@test "node-exporter-upstream.sh: is idempotent -- second run re-downloads nothing and rewrites nothing" {
+  ne_setup_env
+  stub_cmd systemctl
+  stub_sudo_passthrough
+  stub_ne_curl
+  PATH="$STUB_BIN:/usr/bin:/bin" run /bin/sh "$(NE_HOOK)"
+  [ "$status" -eq 0 ]
+  rm -f "$SANDBOX/stub.log"
+
+  PATH="$STUB_BIN:/usr/bin:/bin" run /bin/sh "$(NE_HOOK)"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "skipping download" ]]
+  [[ "$output" =~ "drop-in already current" ]]
+  ! stub_called curl
+  [[ ! "$(stub_log)" =~ "daemon-reload" ]]
+}
