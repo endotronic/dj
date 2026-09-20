@@ -216,8 +216,9 @@ config-diff PATH:
       echo "[just] config-diff.sh not present yet"; \
     fi
 
-# Sanity checks: env, tool presence, key/permission checks.
-doctor:
+# Sanity checks: env, tool presence, key/permission checks, and
+# stale machine state. Pass --fix to apply the auto-fixable repairs.
+doctor *ARGS:
     #!/bin/sh
     set -u
     . "{{SCRIPTS}}/os-detect.sh"
@@ -265,4 +266,18 @@ doctor:
         fi
       fi
     done
+    echo
+    echo "-- machine state (migrations) --"
+    if [ -f "{{SCRIPTS}}/migrate.sh" ]; then
+      sh "{{SCRIPTS}}/migrate.sh" {{ARGS}} || rc=1
+    else
+      echo "  miss  migrate.sh not present"
+      rc=1
+    fi
     exit $rc
+
+# Report -- and with --fix, repair -- machine state that newer versions
+# of this project expect but that an older bootstrap never set up.
+# `--list` shows every known migration; `--only ID` narrows to one.
+migrate *ARGS:
+    @sh "{{SCRIPTS}}/migrate.sh" {{ARGS}}

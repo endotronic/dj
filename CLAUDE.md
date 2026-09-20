@@ -158,6 +158,54 @@ package at all) are both just entries in the same list.
   fallback installers (see `tests/run-postinstall.bats` for the
   `docker.sh` example).
 
+### 2.9 Migrations: machine state that new code can't fix by itself
+
+`install.sh` is idempotent and converges — but only on the machines it's
+actually re-run on, which in practice is none of them after day one.
+When a commit teaches install.sh to set up something new (a git config,
+a derived file, a renamed key), every already-bootstrapped machine keeps
+running without it. `dj sync` brings the *code*; it cannot retroactively
+apply the *side effects* of a bootstrap step that already ran.
+
+These gaps are almost always silent — the missing private-repo fetch
+refspec (§4.1 step 6) costs you `origin/master` and every
+"what's unpushed?" question, but `dj sync` still works, so nothing ever
+complains. That's the whole problem: the failure mode is a capability
+you don't know you lost.
+
+`scripts/migrate.sh` is where those one-time catch-up repairs live. Each
+migration is a **(check, fix) pair**; `check` exits `0` satisfied, `1`
+pending, `2` not-applicable-here (and stays silent, so a server never
+reports on desktop-only state). `dj doctor` runs it in check mode and
+folds the result into its own exit status; `dj migrate --fix` applies.
+
+- **Auto vs MANUAL.** A migration is auto-fixable only when the repair
+  is local, reversible, and needs no judgement. Anything that rotates a
+  credential, removes software, or picks between two defensible answers
+  is tagged MANUAL: it's detected and explained, with the exact commands
+  printed, but never applied on its own. `--fix` does not override this
+  — that's the point of the tag.
+- **Idempotence, same as everywhere else.** `--fix` twice is a no-op the
+  second time, and on a machine that never had the problem it does
+  nothing.
+- **Honest failure.** A repair with no path on this host (tmux < 3.4 on
+  Ubuntu, whose `-backports` pocket carries no newer tmux) says so and
+  names the consequence, rather than reporting success or silently
+  skipping.
+- **Not a schema-version counter.** There's no monotonic "migration
+  level" stamped on the machine, deliberately: each check interrogates
+  the live state it cares about, so it's correct on a machine that was
+  half-repaired by hand, restored from a backup, or bootstrapped at any
+  point in history. The cost is that every migration must be written as
+  a real predicate; the benefit is that nothing can get out of sync with
+  a stored number.
+- Migrations accumulate and are cheap to keep — a satisfied one costs a
+  couple of `git config` reads. Retire one only when no machine you run
+  could still predate it.
+- Covered by `tests/migrate.bats`, same rule as every other
+  `scripts/` script (§9).
+
+
 ---
 
 ## 3. Repository layout
@@ -195,6 +243,7 @@ $HOME
 │   │   ├── os-detect.sh               # DOTFILES_OS, _PKG, _DISTRO, _SYSTEM_TYPE
 │   │   ├── install-packages.sh        # idempotent, SKIP semantics, fallback scripts
 │   │   ├── run-postinstall.sh         # idempotent hook runner (§2.8)
+│   │   ├── migrate.sh                 # stale machine-state check/repair (§2.9)
 │   │   ├── rebuild-secrets.sh         # manifest → target paths
 │   │   ├── pre-commit-secrets.sh      # rejects plaintext secrets + gitleaks scan
 │   │   ├── shell-consolidate.sh       # migrate/create ~/.config/{shell,bash,zsh}/
@@ -354,10 +403,22 @@ dj system-type desktop   # update persisted type (does NOT install packages)
 ### 4.6 Sanity check
 
 ```sh
-dj doctor
+dj doctor          # report; includes the §2.9 migration check
+dj doctor --fix    # same, and apply the auto-fixable migrations
 ```
 
-Reports `DOTFILES_OS/PKG/DISTRO/SYSTEM_TYPE`. Checks: sops/age present; age key readable; `.sops.yaml` decrypts canary; SSH key perms 0600; every tool in the active personal package lists (common + type + host, §2.7) installed or SKIP-marked. Tools only listed for other types aren't flagged as missing.
+Reports `DOTFILES_OS/PKG/DISTRO/SYSTEM_TYPE`. Checks: sops/age present; age key readable; `.sops.yaml` decrypts canary; SSH key perms 0600; every tool in the active personal package lists (common + type + host, §2.7) installed or SKIP-marked. Tools only listed for other types aren't flagged as missing. Finally it runs `migrate.sh` (§2.9) and folds its exit status into its own, so stale machine state shows up in the same place as a missing tool.
+
+### 4.7 Migrations: catching a machine up to newer code
+
+```sh
+dj migrate                        # what's stale here (exit 1 if anything is)
+dj migrate --fix                  # apply the auto-fixable repairs
+dj migrate --list                 # every known migration + auto/manual tag
+dj migrate --fix --only git-refspec   # one at a time
+```
+
+See §2.9 for why this exists and what belongs in it.
 
 ---
 
@@ -462,7 +523,7 @@ Two orthogonal rules:
 
 ## 8. Implementation status
 
-**Complete:** install.sh (POSIX, idempotent, --system-type, --on-conflict, --age-key, three-bucket conflict classification, auto sops-init, shell consolidation, git setup); Justfile (sync, upgrade, add, secret-add, secret-edit, apply-secrets, install-packages, postinstall, system-type, sops-init, doctor, config-diff, audit-config, test, setup, authorized-keys); authorized-keys.sh (per-machine SSH identity + shared `authorized_keys.d` trust, §5.3); dj-setup.sh (`dj setup [user@]host` -- ssh-agent bootstrap, curl-ensure, direct age-key push, forwarded `ssh -A -t` install.sh launch with this machine's own --private-repo filled in); dj-setup-root.sh (`dj setup-root host` -- §4.1a, connects as root, distro-aware useradd with `--skel /dev/null` + temporary per-user NOPASSWD sudoers drop-in for a new account (or reuses an existing one via `getent passwd`), direct key push, install.sh run as that user via `su - USER -c`); ssh-menu-register.sh (§4.1 step 16b -- offers to register a machine in `~/.ssh/config` under a `--system-type`-keyed section, called from both install.sh and dj-setup.sh; section titles keyed via `~/.config/dj/ssh-menu-sections.txt`); os-detect.sh; install-packages.sh (SKIP semantics, fallback scripts); run-postinstall.sh + packages/postinstall/<name>.sh (§2.8 hook mechanism, e.g. docker.sh); packages/scripts/{sops,just,starship}.sh; rebuild-secrets.sh (PRIVATE_DIR-based); secret-add.sh (encrypt + manifest update + stage); pre-commit-secrets.sh (guards .private/secrets/); sops-init.sh (auto-called from install.sh, writes to PRIVATE_DIR); shell-consolidate.sh (migrate or create ~/.config/{shell,bash,zsh}/, atomic conflict check); git-setup.sh (identity + SSH + GPG, idempotent); config-diff.sh; audit-config.sh; generic `--system-type` + personal package lists at `~/.config/dj/packages/{common,types/<type>,hosts/<host>}.txt` (private repo) seeded from `packages/template/{common,types/{desktop,server,vm}}.txt`; renames/{apt,pacman,brew}.txt; shell/{init,env,aliases,functions,secrets}.sh; shell/os/{linux,darwin,wsl}.sh; bash/{init,functions,completion,prompt}.sh; zsh/{init,functions,completion,prompt}.sh; bats coverage for all scripts (245 tests, ~20 skipped pending sops/age/zsh); claude-creds-snapshot.sh; install-claude.sh; `dj claude`; project skills (install-package, query-config, dispatch-just, edit-config); **public/private repo split** (public `~/.dotfiles/.git`, private bare `~/.config.git`, secrets at `~/.private/`).
+**Complete:** install.sh (POSIX, idempotent, --system-type, --on-conflict, --age-key, three-bucket conflict classification, auto sops-init, shell consolidation, git setup); Justfile (sync, upgrade, add, secret-add, secret-edit, apply-secrets, install-packages, postinstall, system-type, sops-init, doctor, config-diff, audit-config, test, setup, authorized-keys); authorized-keys.sh (per-machine SSH identity + shared `authorized_keys.d` trust, §5.3); dj-setup.sh (`dj setup [user@]host` -- ssh-agent bootstrap, curl-ensure, direct age-key push, forwarded `ssh -A -t` install.sh launch with this machine's own --private-repo filled in); dj-setup-root.sh (`dj setup-root host` -- §4.1a, connects as root, distro-aware useradd with `--skel /dev/null` + temporary per-user NOPASSWD sudoers drop-in for a new account (or reuses an existing one via `getent passwd`), direct key push, install.sh run as that user via `su - USER -c`); ssh-menu-register.sh (§4.1 step 16b -- offers to register a machine in `~/.ssh/config` under a `--system-type`-keyed section, called from both install.sh and dj-setup.sh; section titles keyed via `~/.config/dj/ssh-menu-sections.txt`); os-detect.sh; install-packages.sh (SKIP semantics, fallback scripts); run-postinstall.sh + packages/postinstall/<name>.sh (§2.8 hook mechanism, e.g. docker.sh); migrate.sh (§2.9 stale machine-state check/repair: git-refspec, dotfiles-origin-ssh, ssh-pubkey, ssh-machine-identity, legacy-tmux-conf, tmux-version, pending-packages, postinstall-hooks, agy-installed; wired into `dj doctor` and `dj migrate`); packages/scripts/{sops,just,starship}.sh; rebuild-secrets.sh (PRIVATE_DIR-based); secret-add.sh (encrypt + manifest update + stage); pre-commit-secrets.sh (guards .private/secrets/); sops-init.sh (auto-called from install.sh, writes to PRIVATE_DIR); shell-consolidate.sh (migrate or create ~/.config/{shell,bash,zsh}/, atomic conflict check); git-setup.sh (identity + SSH + GPG, idempotent); config-diff.sh; audit-config.sh; generic `--system-type` + personal package lists at `~/.config/dj/packages/{common,types/<type>,hosts/<host>}.txt` (private repo) seeded from `packages/template/{common,types/{desktop,server,vm}}.txt`; renames/{apt,pacman,brew}.txt; shell/{init,env,aliases,functions,secrets}.sh; shell/os/{linux,darwin,wsl}.sh; bash/{init,functions,completion,prompt}.sh; zsh/{init,functions,completion,prompt}.sh; bats coverage for all scripts (245 tests, ~20 skipped pending sops/age/zsh); claude-creds-snapshot.sh; install-claude.sh; `dj claude`; project skills (install-package, query-config, dispatch-just, edit-config); **public/private repo split** (public `~/.dotfiles/.git`, private bare `~/.config.git`, secrets at `~/.private/`).
 
 **Outstanding (user task only):**
 - [ ] Push public repo: `cd ~/.dotfiles && git remote add origin https://github.com/endotronic/dotfiles.git && git push -u origin master`
@@ -484,6 +545,11 @@ Two orthogonal rules:
 - **Use override hooks** — before replacing upstream files, run `dj config-diff`; only stage actual divergence.
 - **Invoke the `omarchy` Skill** for any change under `~/.config/{hypr,waybar,walker,alacritty,kitty,ghostty,mako,omarchy}` on Omarchy hosts (detect: `/etc/os-release` + presence of `~/.local/share/omarchy/`).
 - **`status.showUntrackedFiles=no`** on the bare repo — don't "fix" it; it's load-bearing.
+- **A new install.sh step needs a matching migration** (§2.9) when it sets up persistent
+  state, not just when it installs something. Ask: "if this had landed last year, what
+  would a machine bootstrapped before it be missing today, and would anything complain?"
+  If the answer is "nothing complains", it belongs in `migrate.sh`. Repairs that rotate a
+  credential, remove software, or require a judgement call go in `MANUAL_MIGRATIONS`.
 - **Every `scripts/` script gets bats coverage** in `.dotfiles/tests/<name>.bats` in the same commit. Use sandbox helpers in `test_helper.bash`.
 - **Use `dj` not `just`** — Justfile is at `~/.dotfiles/Justfile`, not `$HOME`.
 - **Configs deploy everywhere; software is typed** — guard type-specific binaries with `command -v <tool> >/dev/null 2>&1 &&`.

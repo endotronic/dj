@@ -603,6 +603,27 @@ fi
 
 dot config status.showUntrackedFiles no
 
+# `git clone --bare` deliberately writes no remote.origin.fetch: a bare
+# repo is normally a server-side mirror, where a copy-of-a-copy
+# origin/* namespace would be pointless. But this one is a working
+# checkout of $HOME, so we do want it -- without the refspec, fetch has
+# nowhere to record what it saw except FETCH_HEAD (overwritten every
+# fetch), so origin/master never exists and there is no way to ask what
+# is unpushed. `dj sync` still works either way, which is exactly why
+# the omission stays invisible. Set the tracking config too, so
+# `dot status` reports ahead/behind.
+if dot remote get-url origin >/dev/null 2>&1 &&
+   [ -z "$(dot config --get-all remote.origin.fetch 2>/dev/null || true)" ]; then
+  dot config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
+  dot fetch origin >/dev/null 2>&1 || log "warn: could not fetch origin (refspec is set; populates on next sync)"
+  _dot_branch=$(dot symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+  if [ -n "$_dot_branch" ]; then
+    dot config "branch.$_dot_branch.remote" origin
+    dot config "branch.$_dot_branch.merge" "refs/heads/$_dot_branch"
+  fi
+  log "configured origin/* remote-tracking refs on $DOT_DIR"
+fi
+
 # ---------- 7. Conflict-aware checkout (only if the private repo has commits) ----------
 #
 # Walk every tracked path. For each path that currently exists in
