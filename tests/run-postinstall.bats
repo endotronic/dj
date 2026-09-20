@@ -405,3 +405,171 @@ write_os_release() {
   [ "$status" -ne 0 ]
   [[ "$stderr" =~ "WARNING: tmux still 3.3a-3" ]]
 }
+
+# --- packages/postinstall/zfs-vdev-textfile-collector.sh --------------------
+
+# Stubs `zpool` to serve canned output for `list -H -o name`,
+# `status -P <pool>` and `status <pool>`, keyed by files this writes
+# under $SANDBOX. `write_zpool_stub POOL CONFIG_TEXT SCAN_LINE`
+# (re)registers one pool; call it more than once to model a
+# multi-pool host.
+write_zpool_stub() {
+  local pool="$1" config="$2" scan="$3"
+  printf '%s\n' "$pool" >> "$SANDBOX/zpool-pools.txt"
+  cat <<EOF > "$SANDBOX/zpool-status-P-$pool.txt"
+config:
+$config
+errors: No known data errors
+EOF
+  cat <<EOF > "$SANDBOX/zpool-status-$pool.txt"
+  pool: $pool
+ state: ONLINE
+  scan: $scan
+config:
+$config
+errors: No known data errors
+EOF
+
+  cat > "$STUB_BIN/zpool" <<EOF
+#!/bin/sh
+if [ "\$1" = "list" ]; then
+  cat "$SANDBOX/zpool-pools.txt"
+  exit 0
+fi
+if [ "\$1" = "status" ] && [ "\$2" = "-P" ]; then
+  cat "$SANDBOX/zpool-status-P-\$3.txt" 2>/dev/null
+  exit 0
+fi
+if [ "\$1" = "status" ]; then
+  cat "$SANDBOX/zpool-status-\$2.txt" 2>/dev/null
+  exit 0
+fi
+exit 1
+EOF
+  chmod +x "$STUB_BIN/zpool"
+}
+
+zfs_config_ok() {
+  cat <<'EOF'
+
+	NAME                                    STATE     READ WRITE CKSUM
+	tank                                    ONLINE       0     0     0
+	  raidz2-0                              ONLINE       0     0     0
+	    /dev/disk/by-id/ata-DISK1-part1     ONLINE       0     0     0
+	    /dev/disk/by-id/ata-DISK2-part1     ONLINE       0     0     2
+EOF
+}
+
+@test "zfs-vdev-textfile-collector.sh: skips when zpool is not on PATH" {
+  PATH="$STUB_BIN" run /bin/sh "$DOTFILES_REPO_ROOT/packages/postinstall/zfs-vdev-textfile-collector.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "zpool not found" ]]
+}
+
+@test "zfs-vdev-textfile-collector.sh: emits per-vdev errors, scrub state, and last-completed scrub" {
+  write_zpool_stub tank "$(zfs_config_ok)" \
+    'scrub repaired 0B in 00:19:25 with 0 errors on Sun Sep 13 00:43:33 2026'
+  textfile_dir="$SANDBOX/textfile"
+  state_dir="$SANDBOX/state"
+  mkdir -p "$textfile_dir"
+
+  DOTFILES_TEXTFILE_COLLECTOR_DIR="$textfile_dir" DOTFILES_ZFS_SCRUB_STATE_DIR="$state_dir" \
+    PATH="$STUB_BIN:/usr/bin:/bin" run /bin/sh "$DOTFILES_REPO_ROOT/packages/postinstall/zfs-vdev-textfile-collector.sh"
+  [ "$status" -eq 0 ]
+
+  out="$textfile_dir/zfs_vdev.prom"
+  [ -f "$out" ]
+  grep -qF 'zfs_vdev_read_errors{zpool="tank",vdev="/dev/disk/by-id/ata-DISK1-part1"} 0' "$out"
+  grep -qF 'zfs_vdev_cksum_errors{zpool="tank",vdev="/dev/disk/by-id/ata-DISK2-part1"} 2' "$out"
+  grep -qF 'zfs_scrub_state{zpool="tank"} 2' "$out"
+  grep -qF 'zfs_last_scrub_errors{zpool="tank"} 0' "$out"
+  expected_epoch=$(date -d 'Sun Sep 13 00:43:33 2026' +%s)
+  grep -qF "zfs_last_scrub_completed_seconds{zpool=\"tank\"} $expected_epoch" "$out"
+}
+
+@test "zfs-vdev-textfile-collector.sh: keeps last completed scrub time when the current scan was canceled" {
+  textfile_dir="$SANDBOX/textfile"
+  state_dir="$SANDBOX/state"
+  mkdir -p "$textfile_dir"
+
+  write_zpool_stub tank "$(zfs_config_ok)" \
+    'scrub repaired 0B in 00:19:25 with 0 errors on Sun Sep 13 00:43:33 2026'
+  DOTFILES_TEXTFILE_COLLECTOR_DIR="$textfile_dir" DOTFILES_ZFS_SCRUB_STATE_DIR="$state_dir" \
+    PATH="$STUB_BIN:/usr/bin:/bin" run /bin/sh "$DOTFILES_REPO_ROOT/packages/postinstall/zfs-vdev-textfile-collector.sh"
+  [ "$status" -eq 0 ]
+  expected_epoch=$(date -d 'Sun Sep 13 00:43:33 2026' +%s)
+
+  # Second run: the pool's most recent scan is now a cancel, with no
+  # completion timestamp of its own -- the cached one from the first
+  # run must still show up.
+  rm -f "$SANDBOX/zpool-pools.txt"
+  write_zpool_stub tank "$(zfs_config_ok)" \
+    'scrub canceled on Tue Sep 15 10:11:14 2026'
+  DOTFILES_TEXTFILE_COLLECTOR_DIR="$textfile_dir" DOTFILES_ZFS_SCRUB_STATE_DIR="$state_dir" \
+    PATH="$STUB_BIN:/usr/bin:/bin" run /bin/sh "$DOTFILES_REPO_ROOT/packages/postinstall/zfs-vdev-textfile-collector.sh"
+  [ "$status" -eq 0 ]
+
+  out="$textfile_dir/zfs_vdev.prom"
+  grep -qF 'zfs_scrub_state{zpool="tank"} 3' "$out"
+  grep -qF "zfs_last_scrub_completed_seconds{zpool=\"tank\"} $expected_epoch" "$out"
+}
+
+@test "zfs-vdev-textfile-collector.sh: skips a config line with a trailing annotation instead of misparsing it" {
+  textfile_dir="$SANDBOX/textfile"
+  mkdir -p "$textfile_dir"
+  config=$(cat <<'EOF'
+
+	NAME                                    STATE     READ WRITE CKSUM
+	tank                                    ONLINE       0     0     0
+	  raidz2-0                              ONLINE       0     0     0
+	    /dev/disk/by-id/ata-DISK1-part1     ONLINE       0     0     0  (resilvering)
+EOF
+)
+  write_zpool_stub tank "$config" 'resilver in progress since Mon Sep 14 00:00:00 2026'
+
+  DOTFILES_TEXTFILE_COLLECTOR_DIR="$textfile_dir" DOTFILES_ZFS_SCRUB_STATE_DIR="$SANDBOX/state" \
+    PATH="$STUB_BIN:/usr/bin:/bin" run /bin/sh "$DOTFILES_REPO_ROOT/packages/postinstall/zfs-vdev-textfile-collector.sh"
+  [ "$status" -eq 0 ]
+
+  out="$textfile_dir/zfs_vdev.prom"
+  ! grep -q 'vdev="/dev/disk/by-id/ata-DISK1-part1"' "$out"
+  grep -qF 'zfs_scrub_state{zpool="tank"} 4' "$out"
+}
+
+# --- packages/postinstall/zfs-textfile-collector.sh --------------------------
+
+@test "zfs-textfile-collector.sh: exits 0 when zpool is not on PATH" {
+  PATH="$STUB_BIN" run /bin/sh "$DOTFILES_REPO_ROOT/packages/postinstall/zfs-textfile-collector.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "zpool not found" ]]
+}
+
+@test "zfs-textfile-collector.sh: exits 0 when systemctl is not on PATH" {
+  stub_cmd zpool
+  PATH="$STUB_BIN" run /bin/sh "$DOTFILES_REPO_ROOT/packages/postinstall/zfs-textfile-collector.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "systemctl not found" ]]
+}
+
+@test "zfs-textfile-collector.sh: deploys the collector script and enables the timer" {
+  stub_cmd zpool
+  stub_cmd systemctl
+  stub_sudo_passthrough
+
+  bin_dest="$SANDBOX/usr-local-bin/zfs-vdev-textfile-collector.sh"
+  unit_dir="$SANDBOX/systemd-units"
+  textfile_dir="$SANDBOX/textfile"
+  mkdir -p "$unit_dir" "$textfile_dir"
+
+  DOTFILES_ZFS_COLLECTOR_BIN="$bin_dest" DOTFILES_SYSTEMD_UNIT_DIR="$unit_dir" \
+    DOTFILES_TEXTFILE_COLLECTOR_DIR="$textfile_dir" \
+    PATH="$STUB_BIN:/usr/bin:/bin" run /bin/sh "$DOTFILES_REPO_ROOT/packages/postinstall/zfs-textfile-collector.sh"
+  [ "$status" -eq 0 ]
+
+  [ -x "$bin_dest" ]
+  grep -qF "$bin_dest" "$unit_dir/zfs-vdev-textfile-collector.service"
+  grep -qF "DOTFILES_TEXTFILE_COLLECTOR_DIR=$textfile_dir" "$unit_dir/zfs-vdev-textfile-collector.service"
+  [ -f "$unit_dir/zfs-vdev-textfile-collector.timer" ]
+  [[ "$(stub_log)" =~ "systemctl daemon-reload" ]]
+  [[ "$(stub_log)" =~ "systemctl enable --now zfs-vdev-textfile-collector.timer" ]]
+}
