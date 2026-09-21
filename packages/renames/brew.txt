@@ -28,7 +28,7 @@ agy SKIP
 # wl-clipboard is a Wayland tool; macOS already has pbcopy/pbpaste
 # built in, which nvim's clipboard provider finds natively -- nothing
 # to install.
-wl-clipboard SKIP
+wl-copy SKIP
 # macOS ships an NFS client (mount_nfs) built into the OS; no brew
 # formula needed.
 mount.nfs SKIP

@@ -6,6 +6,9 @@ gpg gnupg
 rg ripgrep
 tree-sitter tree-sitter-cli
 mount.nfs nfs-utils
+# The package is wl-clipboard but it ships wl-copy/wl-paste, and the
+# installed-check is `command -v <logical>`, so list the binary name.
+wl-copy wl-clipboard
 # Claude Code is in the AUR but not the official repos; we don't
 # assume an AUR helper is present. install.sh runs
 # scripts/install-claude.sh (vendor curl-pipe) instead.

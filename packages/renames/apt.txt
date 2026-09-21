@@ -9,6 +9,9 @@ rg ripgrep
 fd fd-find
 docker docker.io
 mount.nfs nfs-common
+# The package is wl-clipboard but it ships wl-copy/wl-paste, and the
+# installed-check is `command -v <logical>`, so list the binary name.
+wl-copy wl-clipboard
 # docker-compose-v2 is the Compose v2 plugin in Debian 12+/Ubuntu 22.04+
 # repos. It often only installs into a cli-plugins dir, not onto PATH,
 # so `command -v docker-compose` may report "missing" even when it's
