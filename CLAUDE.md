@@ -178,6 +178,9 @@ migration is a **(check, fix) pair**; `check` exits `0` satisfied, `1`
 pending, `2` not-applicable-here (and stays silent, so a server never
 reports on desktop-only state). `dj doctor` runs it in check mode and
 folds the result into its own exit status; `dj migrate --fix` applies.
+`dj sync` and `dj upgrade` each close with `migrate.sh --quiet` (§4.5),
+so a pull that makes a machine stale says so right then rather than
+whenever `doctor` next happens to run.
 
 - **Auto vs MANUAL.** A migration is auto-fixable only when the repair
   is local, reversible, and needs no judgement. Anything that rotates a
@@ -244,6 +247,7 @@ $HOME
 │   │   ├── install-packages.sh        # idempotent, SKIP semantics, fallback scripts
 │   │   ├── run-postinstall.sh         # idempotent hook runner (§2.8)
 │   │   ├── migrate.sh                 # stale machine-state check/repair (§2.9)
+│   │   ├── sync-public.sh             # ff-only pull of ~/.dotfiles, first step of `dj sync` (§4.5)
 │   │   ├── rebuild-secrets.sh         # manifest → target paths
 │   │   ├── pre-commit-secrets.sh      # rejects plaintext secrets + gitleaks scan
 │   │   ├── shell-consolidate.sh       # migrate/create ~/.config/{shell,bash,zsh}/
@@ -392,13 +396,19 @@ dj apply-secrets                # re-materialize to target paths
 ### 4.5 Syncing and upgrading
 
 ```sh
-dj sync            # dot pull --rebase && dj apply-secrets
-dj upgrade         # dj sync && dj install-packages && dj postinstall
+dj sync            # pull ~/.dotfiles (ff-only), pull the private repo (rebase),
+                   # apply secrets, rebuild authorized_keys, report stale state
+dj upgrade         # same pull, then install-packages + postinstall, then report
 dj postinstall     # run post-install hooks alone (§2.8)
 dj system-type desktop   # update persisted type (does NOT install packages)
 ```
 
-`apply-secrets` is bundled with `sync` because pulls can update encrypted material. Package install and post-install hooks are separate to keep `sync` fast and sudo-free.
+**Both repos, code first.** The private lists name things that live in the public repo — a hook in `postinstall/common.txt` needs its `packages/postinstall/<name>.sh`, a logical package name needs its `renames/` entry — so pulling only the private side leaves the lists ahead of the code that interprets them. `sync` therefore runs `scripts/sync-public.sh` first (`git pull --ff-only` in `~/.dotfiles`), which means everything after it — `rebuild-secrets.sh`, `authorized-keys.sh`, `migrate.sh` — is the freshly pulled version.
+
+- **The public pull only ever warns.** `~/.dotfiles` is also where tooling gets edited, so diverged history, a local edit the pull would overwrite, no network, a detached HEAD, or no upstream are normal states, not errors: it prints the manual fix (`cd ~/.dotfiles && git pull --rebase`) and carries on. It never merges, rebases, or discards anything. The private pull is the opposite — a failure there aborts, as before.
+- **The closing migration report** (`migrate.sh --quiet`: pending items only, one line when clean) never fails the recipe. Pending work is exactly what `upgrade` goes on to fix, so it can't abort there; `upgrade` runs the report *last*, so it reflects the result rather than the "before".
+- `apply-secrets` is bundled with `sync` because pulls can update encrypted material. Package install and post-install hooks stay out of `sync` to keep it fast and sudo-free — a pending package or hook shows up in the report instead, with the `dj upgrade` / `dj migrate --fix` that resolves it.
+- Internally `sync` and `upgrade` share a hidden `_pull` recipe (and `_migrate-report`), so neither pulls or reports twice.
 
 ### 4.6 Sanity check
 
@@ -523,7 +533,7 @@ Two orthogonal rules:
 
 ## 8. Implementation status
 
-**Complete:** install.sh (POSIX, idempotent, --system-type, --on-conflict, --age-key, three-bucket conflict classification, auto sops-init, shell consolidation, git setup); Justfile (sync, upgrade, add, secret-add, secret-edit, apply-secrets, install-packages, postinstall, system-type, sops-init, doctor, config-diff, audit-config, test, setup, authorized-keys); authorized-keys.sh (per-machine SSH identity + shared `authorized_keys.d` trust, §5.3); dj-setup.sh (`dj setup [user@]host` -- ssh-agent bootstrap, curl-ensure, direct age-key push, forwarded `ssh -A -t` install.sh launch with this machine's own --private-repo filled in); dj-setup-root.sh (`dj setup-root host` -- §4.1a, connects as root, distro-aware useradd with `--skel /dev/null` + temporary per-user NOPASSWD sudoers drop-in for a new account (or reuses an existing one via `getent passwd`), direct key push, install.sh run as that user via `su - USER -c`); ssh-menu-register.sh (§4.1 step 16b -- offers to register a machine in `~/.ssh/config` under a `--system-type`-keyed section, called from both install.sh and dj-setup.sh; section titles keyed via `~/.config/dj/ssh-menu-sections.txt`); os-detect.sh; install-packages.sh (SKIP semantics, fallback scripts); run-postinstall.sh + packages/postinstall/<name>.sh (§2.8 hook mechanism, e.g. docker.sh); migrate.sh (§2.9 stale machine-state check/repair: git-refspec, dotfiles-origin-ssh, ssh-pubkey, ssh-machine-identity, legacy-tmux-conf, tmux-version, bats-version, legacy-home-git, pending-packages, postinstall-hooks, agy-installed; wired into `dj doctor` and `dj migrate`); packages/scripts/{sops,just,starship,bats}.sh; rebuild-secrets.sh (PRIVATE_DIR-based); secret-add.sh (encrypt + manifest update + stage); pre-commit-secrets.sh (guards .private/secrets/); sops-init.sh (auto-called from install.sh, writes to PRIVATE_DIR); shell-consolidate.sh (migrate or create ~/.config/{shell,bash,zsh}/, atomic conflict check); git-setup.sh (identity + SSH + GPG, idempotent); config-diff.sh; audit-config.sh; generic `--system-type` + personal package lists at `~/.config/dj/packages/{common,types/<type>,hosts/<host>}.txt` (private repo) seeded from `packages/template/{common,types/{desktop,server,vm}}.txt`; renames/{apt,pacman,brew}.txt; shell/{init,env,aliases,functions,secrets}.sh; shell/os/{linux,darwin,wsl}.sh; bash/{init,functions,completion,prompt}.sh; zsh/{init,functions,completion,prompt}.sh; bats coverage for all scripts (245 tests, ~20 skipped pending sops/age/zsh); claude-creds-snapshot.sh; install-claude.sh; `dj claude`; project skills (install-package, query-config, dispatch-just, edit-config); **public/private repo split** (public `~/.dotfiles/.git`, private bare `~/.config.git`, secrets at `~/.private/`).
+**Complete:** install.sh (POSIX, idempotent, --system-type, --on-conflict, --age-key, three-bucket conflict classification, auto sops-init, shell consolidation, git setup); Justfile (sync, upgrade, add, secret-add, secret-edit, apply-secrets, install-packages, postinstall, system-type, sops-init, doctor, config-diff, audit-config, test, setup, authorized-keys); authorized-keys.sh (per-machine SSH identity + shared `authorized_keys.d` trust, §5.3); dj-setup.sh (`dj setup [user@]host` -- ssh-agent bootstrap, curl-ensure, direct age-key push, forwarded `ssh -A -t` install.sh launch with this machine's own --private-repo filled in); dj-setup-root.sh (`dj setup-root host` -- §4.1a, connects as root, distro-aware useradd with `--skel /dev/null` + temporary per-user NOPASSWD sudoers drop-in for a new account (or reuses an existing one via `getent passwd`), direct key push, install.sh run as that user via `su - USER -c`); ssh-menu-register.sh (§4.1 step 16b -- offers to register a machine in `~/.ssh/config` under a `--system-type`-keyed section, called from both install.sh and dj-setup.sh; section titles keyed via `~/.config/dj/ssh-menu-sections.txt`); os-detect.sh; install-packages.sh (SKIP semantics, fallback scripts); run-postinstall.sh + packages/postinstall/<name>.sh (§2.8 hook mechanism, e.g. docker.sh); migrate.sh (§2.9 stale machine-state check/repair: git-refspec, dotfiles-origin-ssh, ssh-pubkey, ssh-machine-identity, legacy-tmux-conf, tmux-version, bats-version, legacy-home-git, pending-packages, postinstall-hooks, agy-installed; wired into `dj doctor` and `dj migrate`; `--quiet` is what `dj sync`/`dj upgrade` close with); sync-public.sh (§4.5 -- ff-only pull of `~/.dotfiles`, the warn-never-fail first step of `dj sync`/`dj upgrade`); packages/scripts/{sops,just,starship,bats}.sh; rebuild-secrets.sh (PRIVATE_DIR-based); secret-add.sh (encrypt + manifest update + stage); pre-commit-secrets.sh (guards .private/secrets/); sops-init.sh (auto-called from install.sh, writes to PRIVATE_DIR); shell-consolidate.sh (migrate or create ~/.config/{shell,bash,zsh}/, atomic conflict check); git-setup.sh (identity + SSH + GPG, idempotent); config-diff.sh; audit-config.sh; generic `--system-type` + personal package lists at `~/.config/dj/packages/{common,types/<type>,hosts/<host>}.txt` (private repo) seeded from `packages/template/{common,types/{desktop,server,vm}}.txt`; renames/{apt,pacman,brew}.txt; shell/{init,env,aliases,functions,secrets}.sh; shell/os/{linux,darwin,wsl}.sh; bash/{init,functions,completion,prompt}.sh; zsh/{init,functions,completion,prompt}.sh; bats coverage for all scripts (245 tests, ~20 skipped pending sops/age/zsh); claude-creds-snapshot.sh; install-claude.sh; `dj claude`; project skills (install-package, query-config, dispatch-just, edit-config); **public/private repo split** (public `~/.dotfiles/.git`, private bare `~/.config.git`, secrets at `~/.private/`).
 
 **Outstanding (user task only):**
 - [ ] Push public repo: `cd ~/.dotfiles && git remote add origin https://github.com/endotronic/dotfiles.git && git push -u origin master`

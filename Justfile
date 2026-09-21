@@ -17,14 +17,27 @@ default:
 test ARGS="tests/":
     cd "{{justfile_directory()}}" && bats {{ARGS}}
 
-# Pull latest changes and rematerialize any updated secrets.
+# The pull half shared by `sync` and `upgrade`. Public repo first: the
+# private lists name scripts, renames and hooks that live there, and the
+# steps below should run the freshly pulled versions. That pull only ever
+# warns (see sync-public.sh); the private pull is the part that must work.
 # The authorized-keys rebuild picks up any *other* machine's public key
 # that arrived in the pull; --no-register keeps sync from staging
 # anything of this machine's own in the repo as a side effect.
-sync:
+_pull:
+    @sh "{{SCRIPTS}}/sync-public.sh"
     git --git-dir="{{DOT_DIR}}" --work-tree="$HOME" pull --rebase
     @just apply-secrets
     @sh "{{SCRIPTS}}/authorized-keys.sh" --no-register
+
+# What `sync` and `upgrade` close with: only what needs attention, and a
+# single line when nothing does. Never fails the recipe -- pending work
+# is exactly what `upgrade` goes on to fix, so it must not abort there.
+_migrate-report:
+    @sh "{{SCRIPTS}}/migrate.sh" --quiet || true
+
+# Pull both repos (public code, then private config), rematerialize secrets, report stale state.
+sync: _pull _migrate-report
 
 # Register this machine's SSH public key in ~/.ssh/authorized_keys.d/
 # (tracked, so every other machine ends up trusting this one) and
@@ -34,7 +47,8 @@ authorized-keys *ARGS:
     sh "{{SCRIPTS}}/authorized-keys.sh" {{ARGS}}
 
 # Pull, then install any newly-added packages and run their post-install hooks.
-upgrade: sync install-packages postinstall
+# The migration report comes last so it reflects the result, not the before.
+upgrade: _pull install-packages postinstall _migrate-report
 
 # Stage a file or directory from $HOME into the bare repo and show status.
 add +PATHS:

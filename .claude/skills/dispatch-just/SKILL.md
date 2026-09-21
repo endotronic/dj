@@ -26,8 +26,9 @@ in their interactive shell.
 
 | Intent | Target |
 |---|---|
-| "pull latest", "sync", "update from remote" | `sync` |
+| "pull latest", "sync", "update from remote" | `sync` (pulls both repos — public `~/.dotfiles` ff-only first, then the private one — applies secrets, and ends with a stale-state report) |
 | "pull and install anything new" | `upgrade` |
+| "is this machine stale / behind the new code", "catch this machine up" | `migrate` (report) or `migrate --fix` (apply the auto-fixable ones; MANUAL ones are never auto-applied) |
 | "install / re-install packages" | `install-packages` |
 | "stage <file>", "track <file>" | `add <path>` (or full `git --git-dir=...` if multi-arg quoting matters) |
 | "what's staged / status" | `status` |
@@ -52,7 +53,9 @@ in their interactive shell.
    may have grown a recipe this skill hasn't seen.
 2. **Confirm before destructive verbs.** `commit`, `push`, and anything
    that mutates the remote needs explicit user approval per CLAUDE.md §9.
-   `sync` is safe (rebase + rematerialize secrets).
+   `sync` is safe (fast-forward the public repo, rebase the private one,
+   rematerialize secrets). It will fail if the private repo has uncommitted
+   changes, since `pull --rebase` refuses — say so rather than stashing.
 3. **Don't chain verbs the user didn't ask for.** "Sync" means `sync`,
    not `sync && upgrade && doctor`. Each verb is intentionally small.
 4. **Show exit status and any warnings.** If `doctor` returns non-zero,

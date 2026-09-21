@@ -50,7 +50,7 @@ stub_bats_version() {
 path_without_tmux() {
   local farm="$SANDBOX/minbin" c src
   mkdir -p "$farm"
-  for c in sh awk chmod date git grep head hostname id mkdir mv rm sed ssh-keygen; do
+  for c in sh awk chmod date git grep head hostname id mkdir mv rm sed ssh-keygen uname; do
     src="$(command -v "$c" 2>/dev/null)" || continue
     [ -n "$src" ] && ln -sf "$src" "$farm/$c"
   done
@@ -61,6 +61,10 @@ path_without_tmux() {
 # expresses "bats is not installed" -- needed because the host running
 # these tests has its own (too old) bats on PATH by definition.
 path_without_bats() { path_without_tmux; }
+
+# ...and no `agy` either, for "agy is not installed" on a host (like the
+# one this is developed on) that has the real one in ~/.local/bin.
+path_without_agy() { path_without_tmux; }
 
 # A bare private repo at $DOT_DIR with an origin pointing at a real
 # upstream, mimicking what `git clone --bare` leaves behind: no
@@ -510,6 +514,54 @@ IP
   [[ "$output" == *"ok"* ]]
 }
 
+@test "pending-packages: ok when install-packages reports its '(none)' sentinel" {
+  # The real installer never omits the line: with nothing to do it
+  # prints "to install: (none)", which must not read as a package name.
+  cat > "$FAKE_ROOT/scripts/install-packages.sh" <<'IP'
+#!/bin/sh
+echo "[install-packages] already installed: git tmux"
+echo "[install-packages] skipped (SKIP): (none)"
+echo "[install-packages] to install: (none)"
+IP
+  chmod +x "$FAKE_ROOT/scripts/install-packages.sh"
+  run sh "$MIGRATE" --only pending-packages
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ok"* ]]
+}
+
+@test "--quiet: a clean machine prints only the one summary line" {
+  printf '#!/bin/sh\necho "[install-packages] to install: (none)"\n' \
+    > "$FAKE_ROOT/scripts/install-packages.sh"
+  chmod +x "$FAKE_ROOT/scripts/install-packages.sh"
+  run sh "$MIGRATE" --quiet --only pending-packages
+  [ "$status" -eq 0 ]
+  [ "$output" = "[migrate] machine state is up to date" ]
+}
+
+@test "--quiet: pending work is still reported (and still exits 1), minus the ok lines" {
+  printf '#!/bin/sh\necho "[install-packages] to install: wl-clipboard"\n' \
+    > "$FAKE_ROOT/scripts/install-packages.sh"
+  chmod +x "$FAKE_ROOT/scripts/install-packages.sh"
+  printf '#!/bin/sh\nexit 0\n' > "$FAKE_ROOT/scripts/run-postinstall.sh"
+  chmod +x "$FAKE_ROOT/scripts/run-postinstall.sh"
+  run sh "$MIGRATE" --quiet --only pending-packages --only postinstall-hooks
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"MIGR"* ]]
+  [[ "$output" == *"dj migrate --fix --only pending-packages"* ]]
+  [[ "$output" == *"1 pending migration(s)"* ]]
+  # postinstall-hooks is satisfied here; quiet mode must not list it.
+  [[ "$output" != *"post-install hook"* ]]
+}
+
+@test "-q is short for --quiet" {
+  printf '#!/bin/sh\necho "[install-packages] to install: (none)"\n' \
+    > "$FAKE_ROOT/scripts/install-packages.sh"
+  chmod +x "$FAKE_ROOT/scripts/install-packages.sh"
+  run sh "$MIGRATE" -q --only pending-packages
+  [ "$status" -eq 0 ]
+  [ "$output" = "[migrate] machine state is up to date" ]
+}
+
 @test "postinstall-hooks: MANUAL when a listed hook has no script" {
   cat > "$FAKE_ROOT/scripts/run-postinstall.sh" <<'RP'
 #!/bin/sh
@@ -544,6 +596,7 @@ RP
   printf 'git\nagy\ntmux\n' > "$HOME/.config/dj/packages/common.txt"
   printf '#!/bin/sh\nexit 0\n' > "$FAKE_ROOT/scripts/install-antigravity.sh"
   chmod +x "$FAKE_ROOT/scripts/install-antigravity.sh"
+  path_without_agy
   run sh "$MIGRATE" --only agy-installed
   [ "$status" -eq 1 ]
   [[ "$output" == *"MIGR"* ]]
@@ -558,9 +611,27 @@ printf '#!/bin/sh\nexit 0\n' > "$STUB_BIN/agy"
 chmod +x "$STUB_BIN/agy"
 INST
   chmod +x "$FAKE_ROOT/scripts/install-antigravity.sh"
+  path_without_agy
   run sh "$MIGRATE" --fix --only agy-installed
   [ "$status" -eq 0 ]
   [ -x "$STUB_BIN/agy" ]
+}
+
+@test "agy-installed: hosts/<name>.txt is honored via uname -n when hostname is absent" {
+  # Minimal images (Arch without inetutils) ship no `hostname` binary.
+  # The fallback used to be a second bare `hostname` call, which printed
+  # "command not found" and never found the per-host list.
+  printf '#!/bin/sh\necho "hostname: command not found" >&2\nexit 127\n' > "$STUB_BIN/hostname"
+  chmod +x "$STUB_BIN/hostname"
+  mkdir -p "$HOME/.config/dj/packages/hosts"
+  printf 'agy\n' > "$HOME/.config/dj/packages/hosts/$(uname -n).txt"
+  printf '#!/bin/sh\nexit 0\n' > "$FAKE_ROOT/scripts/install-antigravity.sh"
+  chmod +x "$FAKE_ROOT/scripts/install-antigravity.sh"
+  path_without_agy
+  run sh "$MIGRATE" --only agy-installed
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"MIGR"* ]]
+  [[ "$output" != *"command not found"* ]]
 }
 
 # --- selection --------------------------------------------------------------

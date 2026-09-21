@@ -14,6 +14,8 @@
 #   migrate.sh --fix      apply the auto-fixable repairs, then re-check
 #   migrate.sh --list     list known migrations and exit
 #   migrate.sh --only ID  restrict to one migration (repeatable)
+#   migrate.sh --quiet    omit the "ok" lines; print only what needs attention
+#                         (what `dj sync` / `dj upgrade` close with)
 #
 # Each migration is a (check, fix) pair. check exits:
 #   0 = already satisfied      1 = pending      2 = N/A on this machine
@@ -40,16 +42,18 @@ TMUX_MIN_MINOR=4
 
 FIX=0
 LIST=0
+QUIET=0
 ONLY=''
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --fix)    FIX=1 ;;
     --list)   LIST=1 ;;
+    -q|--quiet) QUIET=1 ;;
     --only)   shift; ONLY="$ONLY ${1:?--only needs a migration id}" ;;
     --only=*) ONLY="$ONLY ${1#*=}" ;;
     -h|--help)
-      sed -n '2,31p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'
       exit 0 ;;
     *)
       printf 'error: unknown argument: %s\n' "$1" >&2
@@ -247,7 +251,7 @@ check_ssh_machine_identity() {
 fix_ssh_machine_identity() {
   log "This machine's SSH identity IS the shared git-host key:"
   log "  $(ssh_fp "$HOME/.ssh/id_ed25519")"
-  log "so ~/.ssh/authorized_keys.d/$(hostname -s).pub publishes the forge key"
+  log "so ~/.ssh/authorized_keys.d/$(hostname -s 2>/dev/null || uname -n).pub publishes the forge key"
   log "to every other machine (§5.3 exists to prevent exactly this)."
   log ""
   log "Rotating is safe but not silent -- until your other machines run"
@@ -257,7 +261,7 @@ fix_ssh_machine_identity() {
   log "  bk=\"\$HOME/.dotfiles-backup/\$(date -u +%Y%m%dT%H%M%SZ)/.ssh\"; mkdir -p \"\$bk\""
   log "  mv ~/.ssh/id_ed25519 ~/.ssh/id_ed25519.pub \"\$bk\"/"
   log "  ssh-keygen -q -t ed25519 -N '' -f ~/.ssh/id_ed25519 \\"
-  log "      -C \"\$(id -un)@\$(hostname -s) (machine identity)\""
+  log "      -C \"\$(id -un)@\$(hostname -s 2>/dev/null || uname -n) (machine identity)\""
   log "  dj authorized-keys && dot push"
 }
 
@@ -464,7 +468,7 @@ fix_bats_version() {
 
 pending_package_line() {
   sh "$REPO_ROOT/scripts/install-packages.sh" --dry-run 2>/dev/null \
-    | sed -n 's/^.*to install: \(.*\)$/\1/p' | head -1
+    | sed -n 's/^.*to install: \(.*\)$/\1/p' | grep -vx '(none)' | head -1
 }
 
 check_pending_packages() {
@@ -511,7 +515,7 @@ fix_postinstall_hooks() {
 agy_listed() {
   for _l in "$HOME/.config/dj/packages/common.txt" \
             "$HOME/.config/dj/packages/types/${DOTFILES_SYSTEM_TYPE:-none}.txt" \
-            "$HOME/.config/dj/packages/hosts/$(hostname -s 2>/dev/null || hostname).txt"; do
+            "$HOME/.config/dj/packages/hosts/$(hostname -s 2>/dev/null || uname -n).txt"; do
     [ -f "$_l" ] || continue
     grep -qx 'agy' "$_l" 2>/dev/null && return 0
   done
@@ -594,7 +598,7 @@ for m in $MIGRATIONS; do
   status=0
   run_check "$m" || status=$?
   case "$status" in
-    0) printf '  ok      %s\n' "$(migration_desc "$m")" ;;
+    0) [ "$QUIET" -eq 1 ] || printf '  ok      %s\n' "$(migration_desc "$m")" ;;
     2) : ;;  # not applicable here -- stay silent
     *)
       if is_manual "$m"; then
@@ -621,7 +625,11 @@ for m in $MIGRATIONS; do
   esac
 done
 
-echo
+# Quiet and clean prints just the one summary line, with no blank line
+# above it (there is no list for it to separate from).
+if [ "$QUIET" -ne 1 ] || [ "$((pending + manual + failed))" -gt 0 ]; then
+  echo
+fi
 if [ "$pending" -gt 0 ]; then
   printf '[migrate] %s pending migration(s) -- repair with: dj migrate --fix\n' "$pending"
 fi
