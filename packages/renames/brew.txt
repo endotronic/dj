@@ -32,3 +32,7 @@ wl-copy SKIP
 # macOS ships an NFS client (mount_nfs) built into the OS; no brew
 # formula needed.
 mount.nfs SKIP
+# The brew formula is node_exporter (binary node_exporter, run via
+# `brew services`), so the logical name never resolves on macOS and
+# would reinstall every run. Servers are Linux; skip it here.
+prometheus-node-exporter SKIP
