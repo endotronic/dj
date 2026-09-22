@@ -18,6 +18,17 @@
 # binary would otherwise read no textfile metrics and silently drop
 # every nvme_*/smartmon_* series.
 #
+# On arm64 kernels with cpufreq's cpuinfo_avg_freq (7.0 on Grace, at
+# least), that file returns EAGAIN for any CPU the AMU hasn't sampled
+# recently -- i.e. any idle one. The cpufreq collector (still as of
+# 1.12.1) parks on that read forever: the same hang as thermal_zone
+# above, just a different file, and upstream doesn't dodge it. So on
+# those hosts the drop-in also disables cpufreq. Keyed on arch + file
+# presence rather than a live read so the answer doesn't depend on
+# which CPUs happen to be idle when the hook runs. That flag is needed
+# even when the packaged binary is new enough, so in that case the
+# drop-in keeps the packaged binary and only adds the flag.
+#
 # DOTFILES_NE_* exist for tests; a real run never needs to set any.
 set -eu
 
@@ -27,6 +38,8 @@ bin_dir="${DOTFILES_NE_BIN_DIR:-/usr/local/bin}"
 dropin_dir="${DOTFILES_NE_DROPIN_DIR:-/etc/systemd/system/prometheus-node-exporter.service.d}"
 textfile_dir="${DOTFILES_NE_TEXTFILE_DIR:-/var/lib/prometheus/node-exporter}"
 unit="${DOTFILES_NE_UNIT:-prometheus-node-exporter.service}"
+cpu_sysfs="${DOTFILES_NE_CPU_SYSFS:-/sys/devices/system/cpu}"
+defaults_file="${DOTFILES_NE_DEFAULTS_FILE:-/etc/default/prometheus-node-exporter}"
 target_bin="$bin_dir/node_exporter"
 
 log() { printf '[postinstall:node-exporter-upstream] %s\n' "$1"; }
@@ -45,16 +58,39 @@ version_ge() {
   [ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -n 1)" = "$2" ]
 }
 
-packaged_version=$(ne_version "$packaged_bin" || true)
-if [ -n "$packaged_version" ] && version_ge "$packaged_version" "$min_version"; then
-  log "packaged node_exporter $packaged_version already >= $min_version; nothing to override"
-  exit 0
-fi
+extra_flags=
+case "${DOTFILES_NE_MACHINE:-$(uname -m)}" in
+  aarch64|arm64)
+    for f in "$cpu_sysfs"/cpu[0-9]*/cpufreq/cpuinfo_avg_freq; do
+      [ -e "$f" ] || continue
+      log 'cpuinfo_avg_freq present on arm64 (EAGAINs when idle); disabling cpufreq collector'
+      extra_flags=' --no-collector.cpufreq'
+      break
+    done
+    ;;
+esac
 
-# Install the upstream binary unless a new-enough one is already there.
+packaged_version=$(ne_version "$packaged_bin" || true)
 current=$(ne_version "$target_bin" 2>/dev/null || true)
-if [ -n "$current" ] && version_ge "$current" "$min_version"; then
+if [ -n "$packaged_version" ] && version_ge "$packaged_version" "$min_version"; then
+  if [ -z "$extra_flags" ]; then
+    log "packaged node_exporter $packaged_version already >= $min_version; nothing to override"
+    exit 0
+  fi
+  # New enough, but the cpufreq hang still needs a flag. Keep the
+  # packaged binary and only override its arguments -- which assumes
+  # Debian's unit shape ($ARGS from /etc/default). Anything else (Arch
+  # reads $NODE_EXPORTER_ARGS from /etc/conf.d) we'd be guessing at.
+  if [ ! -f "$defaults_file" ]; then
+    log "packaged $packaged_version needs$extra_flags, but no $defaults_file (not Debian's unit); not overriding -- /metrics may hang" >&2
+    exit 0
+  fi
+  log "packaged node_exporter $packaged_version already >= $min_version; overriding arguments only"
+  exec_bin=$packaged_bin
+# Install the upstream binary unless a new-enough one is already there.
+elif [ -n "$current" ] && version_ge "$current" "$min_version"; then
   log "$target_bin already at $current; skipping download"
+  exec_bin=$target_bin
 else
   case "$(uname -m)" in
     x86_64)        ARCH=amd64 ;;
@@ -81,9 +117,13 @@ else
     "https://github.com/prometheus/node_exporter/releases/download/v${version}/${tarball}"
   tar -xzf "$TMP/$tarball" -C "$TMP"
   sudo install -m 0755 "$TMP/node_exporter-${version}.linux-${ARCH}/node_exporter" "$target_bin"
+  exec_bin=$target_bin
 fi
 
-# Override ExecStart to run the upstream binary. ExecStart= on its own
+# Override ExecStart to run the upstream binary (or, above, the packaged
+# one with extra flags; the file keeps its name so machines that already
+# have it get it rewritten rather than gaining a second, conflicting
+# override). ExecStart= on its own
 # line clears the unit's own value first -- without that, systemd
 # rejects a second ExecStart on a Type=simple service.
 dropin="$dropin_dir/10-upstream-binary.conf"
@@ -91,7 +131,7 @@ desired=$(cat <<EOF
 # Managed by dotfiles (packages/postinstall/node-exporter-upstream.sh).
 [Service]
 ExecStart=
-ExecStart=$target_bin --collector.textfile.directory=$textfile_dir \$ARGS
+ExecStart=$exec_bin --collector.textfile.directory=$textfile_dir$extra_flags \$ARGS
 EOF
 )
 
@@ -106,4 +146,4 @@ fi
 
 sudo systemctl enable "$unit" >/dev/null 2>&1 || true
 sudo systemctl restart "$unit"
-log "restarted $unit -- $(ne_version "$target_bin" || echo '?') now serving on :9100"
+log "restarted $unit -- $(ne_version "$exec_bin" || echo '?') now serving on :9100"

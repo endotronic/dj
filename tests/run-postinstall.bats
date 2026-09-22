@@ -639,6 +639,18 @@ ne_setup_env() {
   export DOTFILES_NE_TEXTFILE_DIR="$SANDBOX/textfile"
   export DOTFILES_NE_UNIT="fake-node-exporter.service"
   export DOTFILES_NE_VERSION="${NE_DL_VERSION:-1.9.1}"
+  # Empty fake sysfs by default, so the host's own CPUs never leak in.
+  mkdir -p "$SANDBOX/cpu-sysfs"
+  export DOTFILES_NE_CPU_SYSFS="$SANDBOX/cpu-sysfs"
+  # Debian's /etc/default file, present unless a test removes it.
+  : > "$SANDBOX/ne-defaults"
+  export DOTFILES_NE_DEFAULTS_FILE="$SANDBOX/ne-defaults"
+}
+
+# Give the fake sysfs a cpu with cpuinfo_avg_freq.
+ne_fake_avg_freq() {
+  mkdir -p "$SANDBOX/cpu-sysfs/cpu0/cpufreq"
+  : > "$SANDBOX/cpu-sysfs/cpu0/cpufreq/cpuinfo_avg_freq"
 }
 
 @test "node-exporter-upstream.sh: skips when systemd is absent" {
@@ -717,5 +729,80 @@ ne_setup_env() {
   [[ "$output" =~ "skipping download" ]]
   [[ "$output" =~ "drop-in already current" ]]
   ! stub_called curl
+  [[ ! "$(stub_log)" =~ "daemon-reload" ]]
+}
+
+@test "node-exporter-upstream.sh: disables cpufreq on arm64 when cpuinfo_avg_freq exists (it EAGAINs when idle)" {
+  ne_setup_env
+  ne_fake_avg_freq
+  stub_cmd systemctl
+  stub_sudo_passthrough
+  stub_ne_curl
+  DOTFILES_NE_MACHINE=aarch64 PATH="$STUB_BIN:/usr/bin:/bin" run /bin/sh "$(NE_HOOK)"
+  [ "$status" -eq 0 ]
+  grep -q "ExecStart=$NE_BIN_DIR/node_exporter --collector.textfile.directory=$SANDBOX/textfile --no-collector.cpufreq \$ARGS" \
+    "$NE_DROPIN_DIR/10-upstream-binary.conf"
+}
+
+@test "node-exporter-upstream.sh: keeps cpufreq on arm64 without cpuinfo_avg_freq" {
+  ne_setup_env
+  stub_cmd systemctl
+  stub_sudo_passthrough
+  stub_ne_curl
+  DOTFILES_NE_MACHINE=aarch64 PATH="$STUB_BIN:/usr/bin:/bin" run /bin/sh "$(NE_HOOK)"
+  [ "$status" -eq 0 ]
+  ! grep -q -- '--no-collector.cpufreq' "$NE_DROPIN_DIR/10-upstream-binary.conf"
+}
+
+@test "node-exporter-upstream.sh: keeps cpufreq on x86_64 even with cpuinfo_avg_freq" {
+  ne_setup_env
+  ne_fake_avg_freq
+  stub_cmd systemctl
+  stub_sudo_passthrough
+  stub_ne_curl
+  DOTFILES_NE_MACHINE=x86_64 PATH="$STUB_BIN:/usr/bin:/bin" run /bin/sh "$(NE_HOOK)"
+  [ "$status" -eq 0 ]
+  ! grep -q -- '--no-collector.cpufreq' "$NE_DROPIN_DIR/10-upstream-binary.conf"
+}
+
+@test "node-exporter-upstream.sh: new-enough packaged binary on arm64 with cpuinfo_avg_freq keeps the packaged binary, adds the flag" {
+  NE_PACKAGED_VERSION=1.9.1 ne_setup_env
+  ne_fake_avg_freq
+  stub_cmd systemctl
+  stub_sudo_passthrough
+  stub_ne_curl
+  DOTFILES_NE_MACHINE=aarch64 PATH="$STUB_BIN:/usr/bin:/bin" run /bin/sh "$(NE_HOOK)"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "overriding arguments only" ]]
+  grep -q "ExecStart=$NE_PACKAGED --collector.textfile.directory=$SANDBOX/textfile --no-collector.cpufreq \$ARGS" \
+    "$NE_DROPIN_DIR/10-upstream-binary.conf"
+  ! stub_called curl
+  [ ! -e "$NE_BIN_DIR/node_exporter" ]
+  [[ "$(stub_log)" =~ "systemctl restart fake-node-exporter.service" ]]
+}
+
+@test "node-exporter-upstream.sh: new-enough packaged binary without Debian's defaults file is left alone, with a warning" {
+  NE_PACKAGED_VERSION=1.9.1 ne_setup_env
+  ne_fake_avg_freq
+  rm -f "$SANDBOX/ne-defaults"
+  stub_cmd systemctl
+  stub_sudo_passthrough
+  DOTFILES_NE_MACHINE=aarch64 PATH="$STUB_BIN:/usr/bin:/bin" run /bin/sh "$(NE_HOOK)"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "not overriding" ]]
+  [ ! -e "$NE_DROPIN_DIR/10-upstream-binary.conf" ]
+}
+
+@test "node-exporter-upstream.sh: new-enough packaged binary with the flag is idempotent" {
+  NE_PACKAGED_VERSION=1.9.1 ne_setup_env
+  ne_fake_avg_freq
+  stub_cmd systemctl
+  stub_sudo_passthrough
+  DOTFILES_NE_MACHINE=aarch64 PATH="$STUB_BIN:/usr/bin:/bin" run /bin/sh "$(NE_HOOK)"
+  [ "$status" -eq 0 ]
+  rm -f "$SANDBOX/stub.log"
+  DOTFILES_NE_MACHINE=aarch64 PATH="$STUB_BIN:/usr/bin:/bin" run /bin/sh "$(NE_HOOK)"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "drop-in already current" ]]
   [[ ! "$(stub_log)" =~ "daemon-reload" ]]
 }
