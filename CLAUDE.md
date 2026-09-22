@@ -255,13 +255,14 @@ $HOME
 │   │   ├── ssh-menu-register.sh       # offer to add this/a target machine to ~/.ssh/config (§4.1 step 16b)
 │   │   ├── config-diff.sh  audit-config.sh  sops-init.sh
 │   │   ├── claude-creds-snapshot.sh   # Linux/WSL only
-│   │   └── install-claude.sh          # vendor curl-pipe, idempotent
+│   │   ├── install-claude.sh          # vendor curl-pipe, idempotent
+│   │   └── claude-local.sh            # Claude Code via per-session LiteLLM proxy (§10.6)
 │   ├── packages/                       # shared install MECHANISM only
 │   │   ├── template/                   # seed lists for fresh installs (NOT live)
 │   │   │   ├── common.txt
 │   │   │   └── types/{desktop,server,vm}.txt
 │   │   ├── renames/{apt,pacman,brew}.txt   # `logical actual` per line; SKIP to omit
-│   │   ├── scripts/{sops,just,starship,bats}.sh # fallback installers
+│   │   ├── scripts/{sops,just,starship,bats,uv,...}.sh # fallback installers
 │   │   └── postinstall/<name>.sh           # post-install hooks (§2.8), e.g. docker.sh
 │   └── tests/                         # bats suite
 ├── .private/                           # tracked by .config.git (private bare repo)
@@ -533,7 +534,7 @@ Two orthogonal rules:
 
 ## 8. Implementation status
 
-**Complete:** install.sh (POSIX, idempotent, --system-type, --on-conflict, --age-key, three-bucket conflict classification, auto sops-init, shell consolidation, git setup); Justfile (sync, upgrade, add, secret-add, secret-edit, apply-secrets, install-packages, postinstall, system-type, sops-init, doctor, config-diff, audit-config, test, setup, authorized-keys); authorized-keys.sh (per-machine SSH identity + shared `authorized_keys.d` trust, §5.3); dj-setup.sh (`dj setup [user@]host` -- ssh-agent bootstrap, curl-ensure, direct age-key push, forwarded `ssh -A -t` install.sh launch with this machine's own --private-repo filled in); dj-setup-root.sh (`dj setup-root host` -- §4.1a, connects as root, distro-aware useradd with `--skel /dev/null` + temporary per-user NOPASSWD sudoers drop-in for a new account (or reuses an existing one via `getent passwd`), direct key push, install.sh run as that user via `su - USER -c`); ssh-menu-register.sh (§4.1 step 16b -- offers to register a machine in `~/.ssh/config` under a `--system-type`-keyed section, called from both install.sh and dj-setup.sh; section titles keyed via `~/.config/dj/ssh-menu-sections.txt`); os-detect.sh; install-packages.sh (SKIP semantics, fallback scripts); run-postinstall.sh + packages/postinstall/<name>.sh (§2.8 hook mechanism, e.g. docker.sh); migrate.sh (§2.9 stale machine-state check/repair: git-refspec, dotfiles-origin-ssh, ssh-pubkey, ssh-machine-identity, legacy-tmux-conf, tmux-version, bats-version, legacy-home-git, pending-packages, postinstall-hooks, agy-installed; wired into `dj doctor` and `dj migrate`; `--quiet` is what `dj sync`/`dj upgrade` close with); sync-public.sh (§4.5 -- ff-only pull of `~/.dotfiles`, the warn-never-fail first step of `dj sync`/`dj upgrade`); packages/scripts/{sops,just,starship,bats}.sh; rebuild-secrets.sh (PRIVATE_DIR-based); secret-add.sh (encrypt + manifest update + stage); pre-commit-secrets.sh (guards .private/secrets/); sops-init.sh (auto-called from install.sh, writes to PRIVATE_DIR); shell-consolidate.sh (migrate or create ~/.config/{shell,bash,zsh}/, atomic conflict check); git-setup.sh (identity + SSH + GPG, idempotent); config-diff.sh; audit-config.sh; generic `--system-type` + personal package lists at `~/.config/dj/packages/{common,types/<type>,hosts/<host>}.txt` (private repo) seeded from `packages/template/{common,types/{desktop,server,vm}}.txt`; renames/{apt,pacman,brew}.txt; shell/{init,env,aliases,functions,secrets}.sh; shell/os/{linux,darwin,wsl}.sh; bash/{init,functions,completion,prompt}.sh; zsh/{init,functions,completion,prompt}.sh; bats coverage for all scripts (245 tests, ~20 skipped pending sops/age/zsh); claude-creds-snapshot.sh; install-claude.sh; `dj claude`; project skills (install-package, query-config, dispatch-just, edit-config); **public/private repo split** (public `~/.dotfiles/.git`, private bare `~/.config.git`, secrets at `~/.private/`).
+**Complete:** install.sh (POSIX, idempotent, --system-type, --on-conflict, --age-key, three-bucket conflict classification, auto sops-init, shell consolidation, git setup); Justfile (sync, upgrade, add, secret-add, secret-edit, apply-secrets, install-packages, postinstall, system-type, sops-init, doctor, config-diff, audit-config, test, setup, authorized-keys); authorized-keys.sh (per-machine SSH identity + shared `authorized_keys.d` trust, §5.3); dj-setup.sh (`dj setup [user@]host` -- ssh-agent bootstrap, curl-ensure, direct age-key push, forwarded `ssh -A -t` install.sh launch with this machine's own --private-repo filled in); dj-setup-root.sh (`dj setup-root host` -- §4.1a, connects as root, distro-aware useradd with `--skel /dev/null` + temporary per-user NOPASSWD sudoers drop-in for a new account (or reuses an existing one via `getent passwd`), direct key push, install.sh run as that user via `su - USER -c`); ssh-menu-register.sh (§4.1 step 16b -- offers to register a machine in `~/.ssh/config` under a `--system-type`-keyed section, called from both install.sh and dj-setup.sh; section titles keyed via `~/.config/dj/ssh-menu-sections.txt`); os-detect.sh; install-packages.sh (SKIP semantics, fallback scripts); run-postinstall.sh + packages/postinstall/<name>.sh (§2.8 hook mechanism, e.g. docker.sh); migrate.sh (§2.9 stale machine-state check/repair: git-refspec, dotfiles-origin-ssh, ssh-pubkey, ssh-machine-identity, legacy-tmux-conf, tmux-version, bats-version, legacy-home-git, pending-packages, postinstall-hooks, agy-installed; wired into `dj doctor` and `dj migrate`; `--quiet` is what `dj sync`/`dj upgrade` close with); sync-public.sh (§4.5 -- ff-only pull of `~/.dotfiles`, the warn-never-fail first step of `dj sync`/`dj upgrade`); packages/scripts/{sops,just,starship,bats}.sh; rebuild-secrets.sh (PRIVATE_DIR-based); secret-add.sh (encrypt + manifest update + stage); pre-commit-secrets.sh (guards .private/secrets/); sops-init.sh (auto-called from install.sh, writes to PRIVATE_DIR); shell-consolidate.sh (migrate or create ~/.config/{shell,bash,zsh}/, atomic conflict check); git-setup.sh (identity + SSH + GPG, idempotent); config-diff.sh; audit-config.sh; generic `--system-type` + personal package lists at `~/.config/dj/packages/{common,types/<type>,hosts/<host>}.txt` (private repo) seeded from `packages/template/{common,types/{desktop,server,vm}}.txt`; renames/{apt,pacman,brew}.txt; shell/{init,env,aliases,functions,secrets}.sh; shell/os/{linux,darwin,wsl}.sh; bash/{init,functions,completion,prompt}.sh; zsh/{init,functions,completion,prompt}.sh; bats coverage for all scripts (245 tests, ~20 skipped pending sops/age/zsh); claude-creds-snapshot.sh; install-claude.sh; `dj claude`; claude-local.sh (§10.6 -- `claude-local` alias, per-session LiteLLM proxy routing a self-hosted model and Anthropic's models, settings in `~/.config/claude-local/`); packages/scripts/uv.sh; project skills (install-package, query-config, dispatch-just, edit-config); **public/private repo split** (public `~/.dotfiles/.git`, private bare `~/.config.git`, secrets at `~/.private/`).
 
 **Outstanding (user task only):**
 - [ ] Push public repo: `cd ~/.dotfiles && git remote add origin https://github.com/endotronic/dotfiles.git && git push -u origin master`
@@ -626,3 +627,34 @@ Tokens drift over time; re-run `dj claude-creds-snapshot` when expired. macOS: u
 - **Don't commit without explicit approval.** Leave changes staged; the user commits and pushes. No sync needed afterward — edited files are already the deployed files.
 - **Verify before claiming success.** "Added pv to common" = `command -v pv` returns a path AND the change shows in `git status` (inside `~/.dotfiles/`).
 - **Tests run against the live tree.** `dj test` (or `bats ~/.dotfiles/tests/`) exercises the same `~/.dotfiles/scripts/` you edit. There is no second copy that can pass while the real one is broken.
+
+### 10.6 `claude-local`: self-hosted model + Anthropic in one session
+
+```sh
+claude-local            # Claude Code, defaulting to the self-hosted model
+                        # (/model opus etc. switches to Anthropic, /model <local> back)
+```
+
+`scripts/claude-local.sh` (aliased in `~/.config/shell/aliases.sh`) starts a
+LiteLLM proxy on a free `127.0.0.1` port via `uvx` (pinned version; `uv` is
+in the common package list), points Claude Code at it, and stops it when the
+session ends. Plain `claude` is untouched.
+
+- **Routing** lives in the private `~/.config/claude-local/litellm.yaml`:
+  the local model via LiteLLM's OpenAI-compatible `hosted_vllm` route,
+  `claude-*` to Anthropic. `env` there holds the default model, its context
+  window, and the LiteLLM pin.
+- **Anthropic auth is your normal Claude login.** Claude Code sends its OAuth
+  token as `Authorization`; LiteLLM forwards an `sk-ant-oat` token to
+  Anthropic only when the proxy itself was authenticated some other way, so
+  the script generates a random per-session proxy key and sends it as
+  `x-litellm-api-key` (`ANTHROPIC_CUSTOM_HEADERS`).
+- **Why not vLLM's own Anthropic endpoint** (`anthropic/` route)? LiteLLM's
+  anthropic provider swaps a forwarded OAuth token in for the configured
+  key, which would send your Anthropic token to the vLLM server.
+- **`claude_local_hooks.py`** (next to `litellm.yaml`) turns mid-conversation
+  system entries into user turns for non-Claude models: Claude Code sends
+  them, and Qwen's chat template rejects any system message not at the start.
+- The vLLM key is `VLLM_API_KEY`, a SOPS secret materialized to
+  `~/.secrets/vllm.env` (§5.1) and exported by `shell/secrets.sh`; opencode
+  reads the same variable.

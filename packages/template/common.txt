@@ -29,3 +29,4 @@ bats
 claude
 agy
 
+uv

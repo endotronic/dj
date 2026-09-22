@@ -45,3 +45,6 @@ tree-sitter SKIP
 # abort in setup_file and are silently never run. Upstream build via
 # packages/scripts/bats.sh instead.
 bats SKIP
+# Not in Ubuntu 24.04 apt repos; installed via packages/scripts/uv.sh.
+# Needed by claude-local (runs the LiteLLM proxy via uvx).
+uv SKIP
