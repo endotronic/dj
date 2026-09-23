@@ -806,3 +806,177 @@ ne_fake_avg_freq() {
   [[ "$output" =~ "drop-in already current" ]]
   [[ ! "$(stub_log)" =~ "daemon-reload" ]]
 }
+
+# --- packages/postinstall/nvidia-gpu-textfile-collector.sh ------------------
+
+NV_COLLECTOR() { printf '%s' "$DOTFILES_REPO_ROOT/packages/postinstall/nvidia-gpu-textfile-collector.sh"; }
+
+# Stubs `nvidia-smi`: --query-gpu serves $SANDBOX/nvsmi-gpu.csv (exit
+# $NVSMI_GPU_RC, default 0), --query-compute-apps serves
+# $SANDBOX/nvsmi-apps.csv. Field order matches the collector's
+# gpu_fields.
+write_nvsmi_stub() {
+  cat > "$STUB_BIN/nvidia-smi" <<EOF
+#!/bin/sh
+case "\$1" in
+  --query-gpu=*) cat "$SANDBOX/nvsmi-gpu.csv"; exit \${NVSMI_GPU_RC:-0} ;;
+  --query-compute-apps=*) cat "$SANDBOX/nvsmi-apps.csv" 2>/dev/null; exit 0 ;;
+esac
+exit 1
+EOF
+  chmod +x "$STUB_BIN/nvidia-smi"
+}
+
+# A GB10 (DGX Spark) as nvidia-smi actually reports it: power, temp,
+# clocks and utilization populated; memory totals, fan, etc. [N/A].
+nvsmi_gb10_row() {
+  printf '%s\n' '0, GPU-aaaa, NVIDIA GB10, 580.178.04, P0, 52, N/A, 13.79, 14.69, [N/A], 7, 0, [N/A], [N/A], 2411, 2411, [N/A], 2073, 3003, [N/A], [N/A], 0x0000000000000004'
+}
+
+@test "nvidia-gpu-textfile-collector.sh: skips when nvidia-smi is not on PATH" {
+  PATH="$STUB_BIN" run /bin/sh "$(NV_COLLECTOR)"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "nvidia-smi not found" ]]
+}
+
+@test "nvidia-gpu-textfile-collector.sh: emits power, temperature, clocks, utilization, and process memory" {
+  write_nvsmi_stub
+  nvsmi_gb10_row > "$SANDBOX/nvsmi-gpu.csv"
+  printf '%s\n' 'GPU-aaaa, 312952, VLLM::EngineCore, 97894' > "$SANDBOX/nvsmi-apps.csv"
+  textfile_dir="$SANDBOX/textfile"; mkdir -p "$textfile_dir"
+
+  DOTFILES_TEXTFILE_COLLECTOR_DIR="$textfile_dir" \
+    PATH="$STUB_BIN:/usr/bin:/bin" run /bin/sh "$(NV_COLLECTOR)"
+  [ "$status" -eq 0 ]
+
+  out="$textfile_dir/nvidia_gpu.prom"
+  l='gpu="0",uuid="GPU-aaaa"'
+  grep -qF "nvidia_gpu_info{$l,name=\"NVIDIA GB10\",driver_version=\"580.178.04\"} 1" "$out"
+  grep -qF "nvidia_gpu_power_draw_watts{$l} 13.79" "$out"
+  grep -qF "nvidia_gpu_power_draw_instant_watts{$l} 14.69" "$out"
+  grep -qF "nvidia_gpu_temperature_celsius{$l} 52" "$out"
+  grep -qF "nvidia_gpu_pstate{$l} 0" "$out"
+  grep -qF "nvidia_gpu_utilization_ratio{$l} 0.07" "$out"
+  grep -qF "nvidia_gpu_clock_hz{$l,clock=\"graphics\"} 2411000000" "$out"
+  grep -qF "nvidia_gpu_clocks_event_reasons{$l} 4" "$out"
+  grep -qF 'nvidia_gpu_process_memory_used_bytes{uuid="GPU-aaaa",pid="312952",process_name="VLLM::EngineCore"} 102649298944' "$out"
+  grep -qF 'nvidia_gpu_collector_success 1' "$out"
+}
+
+@test "nvidia-gpu-textfile-collector.sh: omits N/A fields instead of emitting them" {
+  write_nvsmi_stub
+  nvsmi_gb10_row > "$SANDBOX/nvsmi-gpu.csv"
+  textfile_dir="$SANDBOX/textfile"; mkdir -p "$textfile_dir"
+
+  DOTFILES_TEXTFILE_COLLECTOR_DIR="$textfile_dir" \
+    PATH="$STUB_BIN:/usr/bin:/bin" run /bin/sh "$(NV_COLLECTOR)"
+  [ "$status" -eq 0 ]
+
+  out="$textfile_dir/nvidia_gpu.prom"
+  ! grep -q 'nvidia_gpu_memory_total_bytes' "$out"
+  ! grep -q 'nvidia_gpu_fan_speed_ratio' "$out"
+  ! grep -q 'nvidia_gpu_power_limit_watts' "$out"
+  ! grep -q 'clock="memory"' "$out"
+  ! grep -q 'N/A' "$out"
+}
+
+@test "nvidia-gpu-textfile-collector.sh: groups each metric's samples across GPUs (one HELP/TYPE per family)" {
+  write_nvsmi_stub
+  {
+    printf '%s\n' '0, GPU-aaaa, NVIDIA A, 1, P2, 40, N/A, 100.5, 101, 300, 50, 20, 1024, 24576, 1500, 1500, 9000, 1400, 2000, 9500, 30, 0x0'
+    printf '%s\n' '1, GPU-bbbb, NVIDIA B, 1, P8, 35, N/A, 20, 21, 300, 0, 0, 0, 24576, 300, 300, 400, 500, 2000, 9500, 30, 0x0'
+  } > "$SANDBOX/nvsmi-gpu.csv"
+  textfile_dir="$SANDBOX/textfile"; mkdir -p "$textfile_dir"
+
+  DOTFILES_TEXTFILE_COLLECTOR_DIR="$textfile_dir" \
+    PATH="$STUB_BIN:/usr/bin:/bin" run /bin/sh "$(NV_COLLECTOR)"
+  [ "$status" -eq 0 ]
+
+  out="$textfile_dir/nvidia_gpu.prom"
+  [ "$(grep -c '^# TYPE nvidia_gpu_power_draw_watts ' "$out")" -eq 1 ]
+  [ "$(grep -c '^# TYPE nvidia_gpu_clock_hz ' "$out")" -eq 1 ]
+  # Every sample of a family sits in one contiguous run after its TYPE.
+  awk '/^# TYPE/ { if ($3 in done) exit 1; if (cur != "") done[cur] = 1; cur = $3; next }
+       /^#/ { next }
+       { n = $0; sub(/[{ ].*/, "", n); if (n != cur) exit 1 }' "$out"
+  grep -qF 'nvidia_gpu_memory_total_bytes{gpu="1",uuid="GPU-bbbb"} 25769803776' "$out"
+  grep -qF 'nvidia_gpu_pstate{gpu="1",uuid="GPU-bbbb"} 8' "$out"
+}
+
+@test "nvidia-gpu-textfile-collector.sh: a failing nvidia-smi reports collector_success 0, not garbage" {
+  write_nvsmi_stub
+  printf '%s\n' 'Failed to initialize NVML: Driver/library version mismatch' > "$SANDBOX/nvsmi-gpu.csv"
+  textfile_dir="$SANDBOX/textfile"; mkdir -p "$textfile_dir"
+
+  NVSMI_GPU_RC=9 DOTFILES_TEXTFILE_COLLECTOR_DIR="$textfile_dir" \
+    PATH="$STUB_BIN:/usr/bin:/bin" run /bin/sh "$(NV_COLLECTOR)"
+  [ "$status" -eq 0 ]
+
+  out="$textfile_dir/nvidia_gpu.prom"
+  grep -qF 'nvidia_gpu_collector_success 0' "$out"
+  ! grep -q 'NVML' "$out"
+  ! grep -q '^nvidia_gpu_info' "$out"
+}
+
+@test "nvidia-gpu-textfile-collector.sh: leaves no temp files behind" {
+  write_nvsmi_stub
+  nvsmi_gb10_row > "$SANDBOX/nvsmi-gpu.csv"
+  textfile_dir="$SANDBOX/textfile"; mkdir -p "$textfile_dir"
+
+  DOTFILES_TEXTFILE_COLLECTOR_DIR="$textfile_dir" \
+    PATH="$STUB_BIN:/usr/bin:/bin" run /bin/sh "$(NV_COLLECTOR)"
+  [ "$status" -eq 0 ]
+  [ "$(ls -A "$textfile_dir")" = "nvidia_gpu.prom" ]
+}
+
+# --- packages/postinstall/nvidia-textfile-collector.sh ----------------------
+
+NV_HOOK() { printf '%s' "$DOTFILES_REPO_ROOT/packages/postinstall/nvidia-textfile-collector.sh"; }
+
+@test "nvidia-textfile-collector.sh: exits 0 when nvidia-smi is not on PATH" {
+  PATH="$STUB_BIN" run /bin/sh "$(NV_HOOK)"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "nvidia-smi not found" ]]
+}
+
+@test "nvidia-textfile-collector.sh: exits 0 when systemctl is not on PATH" {
+  stub_cmd nvidia-smi
+  PATH="$STUB_BIN" run /bin/sh "$(NV_HOOK)"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "systemctl not found" ]]
+}
+
+@test "nvidia-textfile-collector.sh: exits 0 when there's no textfile directory (no node_exporter)" {
+  stub_cmd nvidia-smi
+  stub_cmd systemctl
+  DOTFILES_TEXTFILE_COLLECTOR_DIR="$SANDBOX/nope" \
+    PATH="$STUB_BIN:/usr/bin:/bin" run /bin/sh "$(NV_HOOK)"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "not found (no node_exporter?)" ]]
+  ! stub_log | grep -q 'systemctl'
+}
+
+@test "nvidia-textfile-collector.sh: deploys the collector and (re)starts the looping service" {
+  stub_cmd nvidia-smi
+  stub_cmd systemctl
+  stub_sudo_passthrough
+
+  bin_dest="$SANDBOX/usr-local-bin/nvidia-gpu-textfile-collector.sh"
+  unit_dir="$SANDBOX/systemd-units"
+  textfile_dir="$SANDBOX/textfile"
+  mkdir -p "$unit_dir" "$textfile_dir"
+
+  DOTFILES_NVIDIA_COLLECTOR_BIN="$bin_dest" DOTFILES_SYSTEMD_UNIT_DIR="$unit_dir" \
+    DOTFILES_TEXTFILE_COLLECTOR_DIR="$textfile_dir" \
+    PATH="$STUB_BIN:/usr/bin:/bin" run /bin/sh "$(NV_HOOK)"
+  [ "$status" -eq 0 ]
+
+  [ -x "$bin_dest" ]
+  svc="$unit_dir/nvidia-gpu-textfile-collector.service"
+  grep -qF "ExecStart=$bin_dest --interval 15" "$svc"
+  grep -qF "DOTFILES_TEXTFILE_COLLECTOR_DIR=$textfile_dir" "$svc"
+  grep -qF "Restart=always" "$svc"
+  [[ "$(stub_log)" =~ "systemctl daemon-reload" ]]
+  [[ "$(stub_log)" =~ "systemctl enable nvidia-gpu-textfile-collector.service" ]]
+  [[ "$(stub_log)" =~ "systemctl restart nvidia-gpu-textfile-collector.service" ]]
+}
