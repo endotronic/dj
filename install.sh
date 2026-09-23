@@ -982,6 +982,15 @@ if [ -d "$DOTFILES_DIR/.git" ] && [ -r "$GIT_KEY" ]; then
   unset _origin _rest _host _path _ssh_origin
 fi
 
+# ---------- 13c. Register the grafana MCP server with Claude Code ----------
+# User scope lives in ~/.claude.json (untracked machine state), so each
+# machine registers scripts/grafana-mcp.sh once. The migration owns the
+# logic; it's N/A without claude or ~/.secrets/grafana.env.
+if [ -x "$HOME/.dotfiles/scripts/migrate.sh" ]; then
+  sh "$HOME/.dotfiles/scripts/migrate.sh" --fix --only claude-mcp-grafana \
+    || log "warn: grafana MCP registration failed; retry with: dj migrate --fix --only claude-mcp-grafana"
+fi
+
 # ---------- 14. Optional cleanup of local public-repo source clone ----------
 
 # If --repo was a local directory other than ~/.dotfiles itself, that

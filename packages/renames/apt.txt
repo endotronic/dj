@@ -48,3 +48,5 @@ bats SKIP
 # Not in Ubuntu 24.04 apt repos; installed via packages/scripts/uv.sh.
 # Needed by claude-local (runs the LiteLLM proxy via uvx).
 uv SKIP
+# Grafana's MCP server; not in apt, installed via packages/scripts/mcp-grafana.sh.
+mcp-grafana SKIP

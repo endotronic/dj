@@ -256,7 +256,8 @@ $HOME
 │   │   ├── config-diff.sh  audit-config.sh  sops-init.sh
 │   │   ├── claude-creds-snapshot.sh   # Linux/WSL only
 │   │   ├── install-claude.sh          # vendor curl-pipe, idempotent
-│   │   └── claude-local.sh            # Claude Code via per-session LiteLLM proxy (§10.6)
+│   │   ├── claude-local.sh            # Claude Code via per-session LiteLLM proxy (§10.6)
+│   │   └── grafana-mcp.sh             # launcher for Claude Code's user-scope grafana MCP server (§10.7)
 │   ├── packages/                       # shared install MECHANISM only
 │   │   ├── template/                   # seed lists for fresh installs (NOT live)
 │   │   │   ├── common.txt
@@ -346,6 +347,7 @@ curl -fsSL https://raw.githubusercontent.com/<you>/dotfiles/main/install.sh \
 12. Initialize SOPS — run `sops-init.sh` (generate age key + write `~/.private/.sops.yaml`) if sops and age-keygen are present and not yet done.
 13. Apply secrets (`dj apply-secrets`) if age key is present — decrypts from `~/.private/secrets/` to target paths.
 13b. Rewrite `~/.dotfiles`' origin from `https://` to the matching `git@host:path` form, but only once `~/.ssh/id_githost` is actually present (via `--git-key` or the secrets manifest just applied above) — https is what makes the initial clone work with zero credentials, but it can never push, so once the key exists there's no reason to keep it. Generic across git hosts, idempotent (no-op if already ssh, or if there's still no key).
+13c. Register the grafana MCP server with Claude Code at user scope (`migrate.sh --fix --only claude-mcp-grafana`, §10.7). N/A when `claude` or `~/.secrets/grafana.env` is absent.
 14. Optional cleanup of local source clone.
 15. Offer shell consolidation (`shell-consolidate.sh`) — migrate or create `~/.config/{shell,bash,zsh}/`.
 16. Git identity, SSH key, GPG key (`git-setup.sh`) — adopt existing config, prompt if missing, generate keys if absent. The SSH key is per-machine and never registered as a secret; its public half is published via `authorized-keys.sh` (§5.3).
@@ -443,7 +445,10 @@ See §2.9 for why this exists and what belongs in it.
 secrets/.ssh/id_ed25519.enc             ~/.ssh/id_ed25519        0600
 secrets/claude/credentials.json.enc     ~/.claude/.credentials.json  0600
 secrets/env/api-keys.env.enc            ~/.secrets/api-keys.env  0600
+secrets/.secrets/grafana.env.enc        ~/.secrets/grafana.env   600
 ```
+
+Every `~/.secrets/*.env` is sourced (and its vars exported) by `shell/secrets.sh`. Known ones: `vllm.env` (`VLLM_API_KEY`, §10.6), `serper.env` (`SERPER_API_KEY`, §10.6), `grafana.env` (`GRAFANA_URL`, `GRAFANA_TOKEN`, §10.7).
 
 `dj apply-secrets` (`rebuild-secrets.sh`) iterates the manifest: decrypt src → write dst with mode. Idempotent. Set `PRIVATE_DIR` to override the default `~/.private`.
 
@@ -534,7 +539,7 @@ Two orthogonal rules:
 
 ## 8. Implementation status
 
-**Complete:** install.sh (POSIX, idempotent, --system-type, --on-conflict, --age-key, three-bucket conflict classification, auto sops-init, shell consolidation, git setup); Justfile (sync, upgrade, add, secret-add, secret-edit, apply-secrets, install-packages, postinstall, system-type, sops-init, doctor, config-diff, audit-config, test, setup, authorized-keys); authorized-keys.sh (per-machine SSH identity + shared `authorized_keys.d` trust, §5.3); dj-setup.sh (`dj setup [user@]host` -- ssh-agent bootstrap, curl-ensure, direct age-key push, forwarded `ssh -A -t` install.sh launch with this machine's own --private-repo filled in); dj-setup-root.sh (`dj setup-root host` -- §4.1a, connects as root, distro-aware useradd with `--skel /dev/null` + temporary per-user NOPASSWD sudoers drop-in for a new account (or reuses an existing one via `getent passwd`), direct key push, install.sh run as that user via `su - USER -c`); ssh-menu-register.sh (§4.1 step 16b -- offers to register a machine in `~/.ssh/config` under a `--system-type`-keyed section, called from both install.sh and dj-setup.sh; section titles keyed via `~/.config/dj/ssh-menu-sections.txt`); os-detect.sh; install-packages.sh (SKIP semantics, fallback scripts); run-postinstall.sh + packages/postinstall/<name>.sh (§2.8 hook mechanism, e.g. docker.sh); migrate.sh (§2.9 stale machine-state check/repair: git-refspec, dotfiles-origin-ssh, ssh-pubkey, ssh-machine-identity, legacy-tmux-conf, tmux-version, bats-version, legacy-home-git, pending-packages, postinstall-hooks, agy-installed; wired into `dj doctor` and `dj migrate`; `--quiet` is what `dj sync`/`dj upgrade` close with); sync-public.sh (§4.5 -- ff-only pull of `~/.dotfiles`, the warn-never-fail first step of `dj sync`/`dj upgrade`); packages/scripts/{sops,just,starship,bats}.sh; rebuild-secrets.sh (PRIVATE_DIR-based); secret-add.sh (encrypt + manifest update + stage); pre-commit-secrets.sh (guards .private/secrets/); sops-init.sh (auto-called from install.sh, writes to PRIVATE_DIR); shell-consolidate.sh (migrate or create ~/.config/{shell,bash,zsh}/, atomic conflict check); git-setup.sh (identity + SSH + GPG, idempotent); config-diff.sh; audit-config.sh; generic `--system-type` + personal package lists at `~/.config/dj/packages/{common,types/<type>,hosts/<host>}.txt` (private repo) seeded from `packages/template/{common,types/{desktop,server,vm}}.txt`; renames/{apt,pacman,brew}.txt; shell/{init,env,aliases,functions,secrets}.sh; shell/os/{linux,darwin,wsl}.sh; bash/{init,functions,completion,prompt}.sh; zsh/{init,functions,completion,prompt}.sh; bats coverage for all scripts (245 tests, ~20 skipped pending sops/age/zsh); claude-creds-snapshot.sh; install-claude.sh; `dj claude`; claude-local.sh (§10.6 -- `claude-local` alias, per-session LiteLLM proxy routing a self-hosted model and Anthropic's models, settings in `~/.config/claude-local/`); packages/scripts/uv.sh; project skills (install-package, query-config, dispatch-just, edit-config); **public/private repo split** (public `~/.dotfiles/.git`, private bare `~/.config.git`, secrets at `~/.private/`).
+**Complete:** install.sh (POSIX, idempotent, --system-type, --on-conflict, --age-key, three-bucket conflict classification, auto sops-init, shell consolidation, git setup); Justfile (sync, upgrade, add, secret-add, secret-edit, apply-secrets, install-packages, postinstall, system-type, sops-init, doctor, config-diff, audit-config, test, setup, authorized-keys); authorized-keys.sh (per-machine SSH identity + shared `authorized_keys.d` trust, §5.3); dj-setup.sh (`dj setup [user@]host` -- ssh-agent bootstrap, curl-ensure, direct age-key push, forwarded `ssh -A -t` install.sh launch with this machine's own --private-repo filled in); dj-setup-root.sh (`dj setup-root host` -- §4.1a, connects as root, distro-aware useradd with `--skel /dev/null` + temporary per-user NOPASSWD sudoers drop-in for a new account (or reuses an existing one via `getent passwd`), direct key push, install.sh run as that user via `su - USER -c`); ssh-menu-register.sh (§4.1 step 16b -- offers to register a machine in `~/.ssh/config` under a `--system-type`-keyed section, called from both install.sh and dj-setup.sh; section titles keyed via `~/.config/dj/ssh-menu-sections.txt`); os-detect.sh; install-packages.sh (SKIP semantics, fallback scripts); run-postinstall.sh + packages/postinstall/<name>.sh (§2.8 hook mechanism, e.g. docker.sh); migrate.sh (§2.9 stale machine-state check/repair: git-refspec, dotfiles-origin-ssh, ssh-pubkey, ssh-machine-identity, legacy-tmux-conf, tmux-version, bats-version, legacy-home-git, pending-packages, postinstall-hooks, agy-installed, claude-mcp-grafana; wired into `dj doctor` and `dj migrate`; `--quiet` is what `dj sync`/`dj upgrade` close with); sync-public.sh (§4.5 -- ff-only pull of `~/.dotfiles`, the warn-never-fail first step of `dj sync`/`dj upgrade`); packages/scripts/{sops,just,starship,bats}.sh; rebuild-secrets.sh (PRIVATE_DIR-based); secret-add.sh (encrypt + manifest update + stage); pre-commit-secrets.sh (guards .private/secrets/); sops-init.sh (auto-called from install.sh, writes to PRIVATE_DIR); shell-consolidate.sh (migrate or create ~/.config/{shell,bash,zsh}/, atomic conflict check); git-setup.sh (identity + SSH + GPG, idempotent); config-diff.sh; audit-config.sh; generic `--system-type` + personal package lists at `~/.config/dj/packages/{common,types/<type>,hosts/<host>}.txt` (private repo) seeded from `packages/template/{common,types/{desktop,server,vm}}.txt`; renames/{apt,pacman,brew}.txt; shell/{init,env,aliases,functions,secrets}.sh; shell/os/{linux,darwin,wsl}.sh; bash/{init,functions,completion,prompt}.sh; zsh/{init,functions,completion,prompt}.sh; bats coverage for all scripts (245 tests, ~20 skipped pending sops/age/zsh); claude-creds-snapshot.sh; install-claude.sh; `dj claude`; claude-local.sh (§10.6 -- `claude-local` alias, per-session LiteLLM proxy routing a self-hosted model and Anthropic's models, settings in `~/.config/claude-local/`); packages/scripts/{uv,mcp-grafana}.sh; grafana-mcp.sh (§10.7 -- user-scope grafana MCP server for Claude Code on every machine); packages/postinstall/nvidia-textfile-collector.sh (GPU power/temp/clocks/utilization via node_exporter's textfile collector; Grafana dashboard "NVIDIA GPU" in the Infrastructure folder); project skills (install-package, query-config, dispatch-just, edit-config); **public/private repo split** (public `~/.dotfiles/.git`, private bare `~/.config.git`, secrets at `~/.private/`).
 
 **Outstanding (user task only):**
 - [ ] Push public repo: `cd ~/.dotfiles && git remote add origin https://github.com/endotronic/dotfiles.git && git push -u origin master`
@@ -667,3 +672,40 @@ session ends. Plain `claude` is untouched.
 - The vLLM key is `VLLM_API_KEY`, a SOPS secret materialized to
   `~/.secrets/vllm.env` (§5.1) and exported by `shell/secrets.sh`; opencode
   reads the same variable.
+
+### 10.7 Grafana: shared secret + user-scope MCP server
+
+Grafana is at `https://grafana.kevinfinity.com`. Its URL and a
+service-account token live in the SOPS secret
+`secrets/.secrets/grafana.env.enc`, materialized by `dj apply-secrets` to
+`~/.secrets/grafana.env` on every machine and exported by
+`shell/secrets.sh`:
+
+```sh
+GRAFANA_URL=https://grafana.kevinfinity.com
+GRAFANA_TOKEN=glsa_...          # Bearer token for the HTTP API
+```
+
+So any script or shell can call the API directly
+(`curl -H "Authorization: Bearer $GRAFANA_TOKEN" "$GRAFANA_URL/api/..."`),
+e.g. to import a dashboard (`POST /api/dashboards/db`). Rotate with
+`dj secret-edit .secrets/grafana.env`, then `dj sync` elsewhere.
+
+**MCP.** Claude Code gets Grafana's official MCP server (`mcp-grafana`)
+as a **user-scope** server named `grafana`, so it's available from any
+directory, not just `~/.dotfiles/`:
+
+- `mcp-grafana` is in the personal `common.txt`; brew ships it, apt and
+  pacman are `SKIP` + `packages/scripts/mcp-grafana.sh` (GitHub release).
+- The registered command is `scripts/grafana-mcp.sh`, not the binary. It
+  reads `~/.secrets/grafana.env` at launch (already-exported values win)
+  and maps `GRAFANA_TOKEN` to mcp-grafana's `GRAFANA_SERVICE_ACCOUNT_TOKEN`.
+  Deliberately not `claude mcp add -e TOKEN=...`: that would copy the
+  token in plaintext into `~/.claude.json`, where rotation would leave it
+  stale.
+- User-scope servers live in `~/.claude.json`, which is untracked machine
+  state, so registration can't travel via `dot`. The `claude-mcp-grafana`
+  migration (§2.9) does it per machine: install.sh step 13c on fresh
+  machines, `dj migrate --fix` on existing ones (`dj sync` reports it as
+  pending until then). N/A without `claude` or the secret.
+- Check: `claude mcp get grafana` → Connected.

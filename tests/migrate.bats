@@ -634,6 +634,89 @@ INST
   [[ "$output" != *"command not found"* ]]
 }
 
+# --- claude-mcp-grafana -----------------------------------------------------
+
+# A `claude` whose `mcp add -s user grafana -- CMD` writes CMD into
+# $HOME/.claude.json (as the real one does) and whose `mcp get`
+# reports it; every call is logged via stub.log.
+stub_claude_mcp() {
+  cat > "$STUB_BIN/claude" <<EOF
+#!/bin/sh
+{ printf 'claude'; for a in "\$@"; do printf ' %s' "\$a"; done; printf '\n'; } >> "$SANDBOX/stub.log"
+case "\$1 \$2" in
+  'mcp add') cmd=; for a in "\$@"; do cmd=\$a; done
+             printf '{"mcpServers":{"grafana":{"type":"stdio","command":"%s"}}}\n' "\$cmd" > "\$HOME/.claude.json" ;;
+  'mcp remove') printf '{"mcpServers":{}}\n' > "\$HOME/.claude.json" ;;
+  'mcp get') c=\$(sed -n 's/.*"command":"\([^"]*\)".*/\1/p' "\$HOME/.claude.json" 2>/dev/null)
+             [ -n "\$c" ] || exit 1; printf 'grafana:\n  Command: %s\n' "\$c" ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_BIN/claude"
+}
+
+grafana_secret() {
+  mkdir -p "$HOME/.secrets"
+  printf 'GRAFANA_URL=https://g.example\nGRAFANA_TOKEN=t\n' > "$HOME/.secrets/grafana.env"
+}
+
+@test "claude-mcp-grafana: N/A without the grafana secret" {
+  stub_claude_mcp
+  run sh "$MIGRATE" --only claude-mcp-grafana
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"grafana"* ]]
+}
+
+@test "claude-mcp-grafana: N/A without claude on PATH" {
+  grafana_secret
+  PATH="$STUB_BIN:/usr/bin:/bin" run sh "$MIGRATE" --only claude-mcp-grafana
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"grafana"* ]]
+}
+
+@test "claude-mcp-grafana: pending when not registered" {
+  grafana_secret
+  stub_claude_mcp
+  run sh "$MIGRATE" --only claude-mcp-grafana
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"MIGR"* ]]
+}
+
+@test "claude-mcp-grafana: --fix registers the launcher at user scope, then reports ok" {
+  grafana_secret
+  stub_claude_mcp
+  run sh "$MIGRATE" --fix --only claude-mcp-grafana
+  [ "$status" -eq 0 ]
+  [[ "$(stub_log)" == *"claude mcp add -s user grafana -- $FAKE_ROOT/scripts/grafana-mcp.sh"* ]]
+  [[ "$(stub_log)" != *"mcp remove"* ]]
+  run sh "$MIGRATE" --only claude-mcp-grafana
+  [ "$status" -eq 0 ]
+}
+
+@test "claude-mcp-grafana: --fix replaces a stale registration" {
+  grafana_secret
+  stub_claude_mcp
+  printf '{"mcpServers":{"grafana":{"type":"stdio","command":"/old/mcp-grafana"}}}\n' > "$HOME/.claude.json"
+  run sh "$MIGRATE" --fix --only claude-mcp-grafana
+  [ "$status" -eq 0 ]
+  [[ "$(stub_log)" == *"claude mcp remove -s user grafana"* ]]
+  [[ "$(stub_log)" == *"claude mcp add -s user grafana"* ]]
+}
+
+@test "claude-mcp-grafana: without jq, falls back to claude mcp get" {
+  grafana_secret
+  stub_claude_mcp
+  printf '{"mcpServers":{"grafana":{"type":"stdio","command":"%s"}}}\n' "$FAKE_ROOT/scripts/grafana-mcp.sh" > "$HOME/.claude.json"
+  # A PATH of symlinks to everything migrate needs, minus jq.
+  nojq="$SANDBOX/nojq-bin"; mkdir -p "$nojq"
+  for t in sh sed grep awk cat git ssh-keygen hostname uname date mkdir dirname; do
+    p=$(command -v "$t" 2>/dev/null) && ln -sf "$p" "$nojq/$t"
+  done
+  PATH="$STUB_BIN:$nojq" run sh "$MIGRATE" --only claude-mcp-grafana
+  [ "$status" -eq 0 ]
+  [[ "$(stub_log)" == *"claude mcp get grafana"* ]]
+}
+
 # --- selection --------------------------------------------------------------
 
 @test "migrate: --only restricts the run to the named migration" {

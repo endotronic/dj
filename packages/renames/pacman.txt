@@ -17,3 +17,6 @@ claude SKIP
 # install.sh runs scripts/install-antigravity.sh (vendor curl-pipe)
 # instead.
 agy SKIP
+# Grafana's MCP server; not in the official repos, installed via
+# packages/scripts/mcp-grafana.sh.
+mcp-grafana SKIP

@@ -79,7 +79,7 @@ backup_dir() {
 MIGRATIONS='git-refspec dotfiles-origin-ssh ssh-pubkey ssh-machine-identity
             legacy-home-git legacy-tmux-conf tmux-version bats-version
             pending-packages postinstall-hooks
-            agy-installed'
+            agy-installed claude-mcp-grafana'
 
 # Migrations that are detected but never auto-applied.
 MANUAL_MIGRATIONS='ssh-machine-identity postinstall-hooks legacy-home-git'
@@ -97,6 +97,7 @@ migration_desc() {
     pending-packages)     echo "every package in the active lists is installed" ;;
     postinstall-hooks)    echo "every listed post-install hook has a script" ;;
     agy-installed)        echo "agy (antigravity) is installed, as the package list asks" ;;
+    claude-mcp-grafana)   echo "Claude Code has the grafana MCP server registered at user scope" ;;
     *)                    echo "(unknown migration: $1)" ;;
   esac
 }
@@ -537,6 +538,44 @@ fix_agy_installed() {
   fi
 }
 
+# ---------- claude-mcp-grafana ----------
+#
+# Claude Code keeps user-scope MCP servers in ~/.claude.json -- machine
+# state full of per-project history, not something to track -- so the
+# registration can't travel via `dot`. What travels is the secret
+# (~/.secrets/grafana.env) and the launcher (scripts/grafana-mcp.sh);
+# this registers the launcher once per machine, at user scope so it
+# works from any directory. The launcher reads the token at start, so
+# nothing secret lands in ~/.claude.json.
+
+grafana_mcp_launcher() { printf '%s' "$REPO_ROOT/scripts/grafana-mcp.sh"; }
+
+grafana_mcp_registered() {
+  _cj="${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json"
+  if command -v jq >/dev/null 2>&1 && [ -r "$_cj" ]; then
+    jq -r '.mcpServers.grafana.command // empty' "$_cj" 2>/dev/null
+  else
+    # `claude mcp get` prints "Command: <path>"; slower (~1s), hence
+    # only the fallback.
+    claude mcp get grafana 2>/dev/null | sed -n 's/^ *Command: *//p'
+  fi
+}
+
+check_claude_mcp_grafana() {
+  command -v claude >/dev/null 2>&1 || return 2
+  [ -r "$HOME/.secrets/grafana.env" ] || return 2
+  [ "$(grafana_mcp_registered)" = "$(grafana_mcp_launcher)" ] || return 1
+  return 0
+}
+
+fix_claude_mcp_grafana() {
+  # A stale entry (other command, other scope) would make `add` fail.
+  if [ -n "$(grafana_mcp_registered)" ]; then
+    claude mcp remove -s user grafana >/dev/null 2>&1 || true
+  fi
+  claude mcp add -s user grafana -- "$(grafana_mcp_launcher)"
+}
+
 # ---------- dispatch ----------
 
 run_check() {
@@ -552,6 +591,7 @@ run_check() {
     pending-packages)     check_pending_packages ;;
     postinstall-hooks)    check_postinstall_hooks ;;
     agy-installed)        check_agy_installed ;;
+    claude-mcp-grafana)   check_claude_mcp_grafana ;;
     *) return 2 ;;
   esac
 }
@@ -569,6 +609,7 @@ run_fix() {
     pending-packages)     fix_pending_packages ;;
     postinstall-hooks)    fix_postinstall_hooks ;;
     agy-installed)        fix_agy_installed ;;
+    claude-mcp-grafana)   fix_claude_mcp_grafana ;;
     *) return 1 ;;
   esac
 }
