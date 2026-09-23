@@ -651,6 +651,11 @@ session ends. Plain `claude` is untouched.
   the local model via LiteLLM's OpenAI-compatible `hosted_vllm` route,
   `claude-*` to Anthropic. `env` there holds the default model, its context
   window, and the LiteLLM pin.
+- **The default is `qwen-local`**, an alias both vLLM containers on the
+  server answer to: whichever of the big and small model is up (only one
+  runs at a time). It's also the Haiku slot (`ANTHROPIC_DEFAULT_HAIKU_MODEL`),
+  which Claude Code uses for background calls, so switching containers on
+  the server needs no client change. The real model names are routed too.
 - **Anthropic auth is your normal Claude login.** Claude Code sends its OAuth
   token as `Authorization`; LiteLLM forwards an `sk-ant-oat` token to
   Anthropic only when the proxy itself was authenticated some other way, so
