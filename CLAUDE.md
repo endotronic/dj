@@ -581,6 +581,8 @@ dj claude install pv and add to common  # one-shot (claude -p)
 
 `dj claude` (a `Justfile` target) `cd`s into `~/.dotfiles/` then launches `claude`. Requires `claude` on PATH.
 
+`dj opencode` (alias `dj o`) is the same thing for opencode: same cwd, args become a one-shot `opencode run`, `-y`/`--yolo` → `--auto`, `-r`/`--resume` → `--continue`. opencode picks up `CLAUDE.md` and `.claude/skills/` as fallbacks, so it gets the same project context.
+
 **Two repos, no dev clone.** `~/.dotfiles/` is a normal git repo (public) carrying `CLAUDE.md`, `.claude/skills/`, and all shareable tooling. Personal configs and secrets live in the private bare repo (`~/.config.git`, work-tree `$HOME`). Claude edits the **live `$HOME` files directly**: tooling changes go through `git` inside `~/.dotfiles/`; personal config changes go through `dot` (`git --git-dir="$HOME/.config.git" --work-tree="$HOME"`). Tests in `~/.dotfiles/tests/` run against the same scripts Claude edits — no drift, no lost updates.
 
 ### 10.2 Project skills

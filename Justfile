@@ -216,6 +216,39 @@ claude *ARGS:
       exit "$rc"
     fi
 
+# Launch opencode in the dotfiles project context -- the opencode
+# counterpart of `dj claude`, same cwd and arg conventions. opencode
+# reads CLAUDE.md and .claude/skills/ as fallbacks, so it gets the same
+# project context. Args become a one-shot query via `opencode run`
+# (streams its own output, so no spinner); no args -> TUI.
+# Pass -y or --yolo (anywhere in args) to add --auto. -r/--resume maps
+# to opencode's --continue; -c/--continue and -s/--session pass through.
+# Any of those skips `run` (resume implies an interactive session).
+alias o := opencode
+
+opencode *ARGS:
+    #!/bin/sh
+    set -eu
+    command -v opencode >/dev/null 2>&1 || { echo "opencode not on PATH; install opencode first" >&2; exit 127; }
+    auto_flag=""
+    resuming=0
+    rest=""
+    for arg in {{ARGS}}; do
+      case "$arg" in
+        -y|--yolo)              auto_flag="--auto" ;;
+        -r|--resume)            resuming=1; rest="$rest --continue" ;;
+        -c|--continue|-s|--session) resuming=1; rest="$rest $arg" ;;
+        *)                      rest="$rest $arg" ;;
+      esac
+    done
+    rest="${rest# }"
+    cd "$HOME/.dotfiles"
+    if [ "$resuming" -eq 1 ] || [ -z "$rest" ]; then
+      exec opencode $rest $auto_flag
+    else
+      exec opencode run $auto_flag "$rest"
+    fi
+
 # Audit every entry under ~/.config and classify it against the
 # Omarchy default tree. Pass -q for a newline-separated track-list
 # you can pipe.
