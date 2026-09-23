@@ -655,6 +655,13 @@ session ends. Plain `claude` is untouched.
 - **`claude_local_hooks.py`** (next to `litellm.yaml`) turns mid-conversation
   system entries into user turns for non-Claude models: Claude Code sends
   them, and Qwen's chat template rejects any system message not at the start.
+- **WebSearch** for the local model: Claude Code's WebSearch is a server-side
+  Anthropic tool vLLM can't run (the model just writes prose). LiteLLM's
+  `websearch_interception` callback, enabled only for `hosted_vllm`, runs the
+  query on Serper.dev (Google results) instead; `claude-*` keep Anthropic's
+  native search. `claude_local_hooks.py` also strips Claude Code's "Perform a
+  web search for the query:" prefix, which worsened results. `SERPER_API_KEY`
+  is a SOPS secret materialized to `~/.secrets/serper.env`.
 - The vLLM key is `VLLM_API_KEY`, a SOPS secret materialized to
   `~/.secrets/vllm.env` (§5.1) and exported by `shell/secrets.sh`; opencode
   reads the same variable.
