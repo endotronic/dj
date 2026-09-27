@@ -4,3 +4,6 @@
 #
 # Add entries here when a package name differs between Debian and the
 # apt.txt default, or when a tool is not available in Debian's repos.
+
+# Debian's repos ship diffnav (bookworm+); Ubuntu's don't (apt.txt SKIP).
+diffnav diffnav

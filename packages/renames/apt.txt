@@ -50,3 +50,6 @@ bats SKIP
 uv SKIP
 # Grafana's MCP server; not in apt, installed via packages/scripts/mcp-grafana.sh.
 mcp-grafana SKIP
+# Not in Ubuntu's apt repos (Debian has it; see debian.txt); on other
+# apt machines installed via packages/scripts/diffnav.sh.
+diffnav SKIP
