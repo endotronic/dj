@@ -256,7 +256,7 @@ $HOME
 │   │   ├── config-diff.sh  audit-config.sh  sops-init.sh
 │   │   ├── claude-creds-snapshot.sh   # Linux/WSL only
 │   │   ├── install-claude.sh          # vendor curl-pipe, idempotent
-│   │   ├── claude-local.sh            # Claude Code via per-session LiteLLM proxy (§10.6)
+│   │   ├── claude-local.sh            # Claude Code via the shared LiteLLM proxy (§10.6)
 │   │   └── grafana-mcp.sh             # launcher for Claude Code's user-scope grafana MCP server (§10.7)
 │   ├── packages/                       # shared install MECHANISM only
 │   │   ├── template/                   # seed lists for fresh installs (NOT live)
@@ -448,7 +448,7 @@ secrets/env/api-keys.env.enc            ~/.secrets/api-keys.env  0600
 secrets/.secrets/grafana.env.enc        ~/.secrets/grafana.env   600
 ```
 
-Every `~/.secrets/*.env` is sourced (and its vars exported) by `shell/secrets.sh`. Known ones: `vllm.env` (`VLLM_API_KEY`, §10.6), `serper.env` (`SERPER_API_KEY`, §10.6), `grafana.env` (`GRAFANA_URL`, `GRAFANA_TOKEN`, §10.7).
+Every `~/.secrets/*.env` is sourced (and its vars exported) by `shell/secrets.sh`. Known ones: `vllm.env` (`VLLM_API_KEY`, §10.6), `serper.env` (`SERPER_API_KEY`, §10.6), `litellm.env` (`LITELLM_MASTER_KEY`, §10.6), `grafana.env` (`GRAFANA_URL`, `GRAFANA_TOKEN`, §10.7).
 
 `dj apply-secrets` (`rebuild-secrets.sh`) iterates the manifest: decrypt src → write dst with mode. Idempotent. Set `PRIVATE_DIR` to override the default `~/.private`.
 
@@ -539,7 +539,7 @@ Two orthogonal rules:
 
 ## 8. Implementation status
 
-**Complete:** install.sh (POSIX, idempotent, --system-type, --on-conflict, --age-key, three-bucket conflict classification, auto sops-init, shell consolidation, git setup); Justfile (sync, upgrade, add, secret-add, secret-edit, apply-secrets, install-packages, postinstall, system-type, sops-init, doctor, config-diff, audit-config, test, setup, authorized-keys); authorized-keys.sh (per-machine SSH identity + shared `authorized_keys.d` trust, §5.3); dj-setup.sh (`dj setup [user@]host` -- ssh-agent bootstrap, curl-ensure, direct age-key push, forwarded `ssh -A -t` install.sh launch with this machine's own --private-repo filled in); dj-setup-root.sh (`dj setup-root host` -- §4.1a, connects as root, distro-aware useradd with `--skel /dev/null` + temporary per-user NOPASSWD sudoers drop-in for a new account (or reuses an existing one via `getent passwd`), direct key push, install.sh run as that user via `su - USER -c`); ssh-menu-register.sh (§4.1 step 16b -- offers to register a machine in `~/.ssh/config` under a `--system-type`-keyed section, called from both install.sh and dj-setup.sh; section titles keyed via `~/.config/dj/ssh-menu-sections.txt`); os-detect.sh; install-packages.sh (SKIP semantics, fallback scripts); run-postinstall.sh + packages/postinstall/<name>.sh (§2.8 hook mechanism, e.g. docker.sh); migrate.sh (§2.9 stale machine-state check/repair: git-refspec, dotfiles-origin-ssh, ssh-pubkey, ssh-machine-identity, legacy-tmux-conf, tmux-version, bats-version, legacy-home-git, pending-packages, postinstall-hooks, agy-installed, claude-mcp-grafana; wired into `dj doctor` and `dj migrate`; `--quiet` is what `dj sync`/`dj upgrade` close with); sync-public.sh (§4.5 -- ff-only pull of `~/.dotfiles`, the warn-never-fail first step of `dj sync`/`dj upgrade`); packages/scripts/{sops,just,starship,bats}.sh; rebuild-secrets.sh (PRIVATE_DIR-based); secret-add.sh (encrypt + manifest update + stage); pre-commit-secrets.sh (guards .private/secrets/); sops-init.sh (auto-called from install.sh, writes to PRIVATE_DIR); shell-consolidate.sh (migrate or create ~/.config/{shell,bash,zsh}/, atomic conflict check); git-setup.sh (identity + SSH + GPG, idempotent); config-diff.sh; audit-config.sh; generic `--system-type` + personal package lists at `~/.config/dj/packages/{common,types/<type>,hosts/<host>}.txt` (private repo) seeded from `packages/template/{common,types/{desktop,server,vm}}.txt`; renames/{apt,pacman,brew}.txt; shell/{init,env,aliases,functions,secrets}.sh; shell/os/{linux,darwin,wsl}.sh; bash/{init,functions,completion,prompt}.sh; zsh/{init,functions,completion,prompt}.sh; bats coverage for all scripts (245 tests, ~20 skipped pending sops/age/zsh); claude-creds-snapshot.sh; install-claude.sh; `dj claude`; claude-local.sh (§10.6 -- `claude-local` alias, per-session LiteLLM proxy routing a self-hosted model and Anthropic's models, settings in `~/.config/claude-local/`); packages/scripts/{uv,mcp-grafana}.sh; grafana-mcp.sh (§10.7 -- user-scope grafana MCP server for Claude Code on every machine); packages/postinstall/nvidia-textfile-collector.sh (GPU power/temp/clocks/utilization via node_exporter's textfile collector; Grafana dashboard "NVIDIA GPU" in the Infrastructure folder); project skills (install-package, query-config, dispatch-just, edit-config); **public/private repo split** (public `~/.dotfiles/.git`, private bare `~/.config.git`, secrets at `~/.private/`).
+**Complete:** install.sh (POSIX, idempotent, --system-type, --on-conflict, --age-key, three-bucket conflict classification, auto sops-init, shell consolidation, git setup); Justfile (sync, upgrade, add, secret-add, secret-edit, apply-secrets, install-packages, postinstall, system-type, sops-init, doctor, config-diff, audit-config, test, setup, authorized-keys); authorized-keys.sh (per-machine SSH identity + shared `authorized_keys.d` trust, §5.3); dj-setup.sh (`dj setup [user@]host` -- ssh-agent bootstrap, curl-ensure, direct age-key push, forwarded `ssh -A -t` install.sh launch with this machine's own --private-repo filled in); dj-setup-root.sh (`dj setup-root host` -- §4.1a, connects as root, distro-aware useradd with `--skel /dev/null` + temporary per-user NOPASSWD sudoers drop-in for a new account (or reuses an existing one via `getent passwd`), direct key push, install.sh run as that user via `su - USER -c`); ssh-menu-register.sh (§4.1 step 16b -- offers to register a machine in `~/.ssh/config` under a `--system-type`-keyed section, called from both install.sh and dj-setup.sh; section titles keyed via `~/.config/dj/ssh-menu-sections.txt`); os-detect.sh; install-packages.sh (SKIP semantics, fallback scripts); run-postinstall.sh + packages/postinstall/<name>.sh (§2.8 hook mechanism, e.g. docker.sh); migrate.sh (§2.9 stale machine-state check/repair: git-refspec, dotfiles-origin-ssh, ssh-pubkey, ssh-machine-identity, legacy-tmux-conf, tmux-version, bats-version, legacy-home-git, pending-packages, postinstall-hooks, agy-installed, claude-mcp-grafana; wired into `dj doctor` and `dj migrate`; `--quiet` is what `dj sync`/`dj upgrade` close with); sync-public.sh (§4.5 -- ff-only pull of `~/.dotfiles`, the warn-never-fail first step of `dj sync`/`dj upgrade`); packages/scripts/{sops,just,starship,bats}.sh; rebuild-secrets.sh (PRIVATE_DIR-based); secret-add.sh (encrypt + manifest update + stage); pre-commit-secrets.sh (guards .private/secrets/); sops-init.sh (auto-called from install.sh, writes to PRIVATE_DIR); shell-consolidate.sh (migrate or create ~/.config/{shell,bash,zsh}/, atomic conflict check); git-setup.sh (identity + SSH + GPG, idempotent); config-diff.sh; audit-config.sh; generic `--system-type` + personal package lists at `~/.config/dj/packages/{common,types/<type>,hosts/<host>}.txt` (private repo) seeded from `packages/template/{common,types/{desktop,server,vm}}.txt`; renames/{apt,pacman,brew}.txt; shell/{init,env,aliases,functions,secrets}.sh; shell/os/{linux,darwin,wsl}.sh; bash/{init,functions,completion,prompt}.sh; zsh/{init,functions,completion,prompt}.sh; bats coverage for all scripts (245 tests, ~20 skipped pending sops/age/zsh); claude-creds-snapshot.sh; install-claude.sh; `dj claude`; claude-local.sh (§10.6 -- `claude-local` alias, thin launcher for the shared LiteLLM proxy on ruby routing a self-hosted model and Anthropic's models, settings in `~/.config/claude-local/`); packages/scripts/{uv,mcp-grafana}.sh; grafana-mcp.sh (§10.7 -- user-scope grafana MCP server for Claude Code on every machine); packages/postinstall/nvidia-textfile-collector.sh (GPU power/temp/clocks/utilization via node_exporter's textfile collector; Grafana dashboard "NVIDIA GPU" in the Infrastructure folder); project skills (install-package, query-config, dispatch-just, edit-config); **public/private repo split** (public `~/.dotfiles/.git`, private bare `~/.config.git`, secrets at `~/.private/`).
 
 **Outstanding (user task only):**
 - [ ] Push public repo: `cd ~/.dotfiles && git remote add origin https://github.com/endotronic/dotfiles.git && git push -u origin master`
@@ -642,15 +642,17 @@ claude-local            # Claude Code, defaulting to the self-hosted model
                         # (/model opus etc. switches to Anthropic, /model <local> back)
 ```
 
-`scripts/claude-local.sh` (aliased in `~/.config/shell/aliases.sh`) starts a
-LiteLLM proxy on a free `127.0.0.1` port via `uvx` (pinned version; `uv` is
-in the common package list), points Claude Code at it, and stops it when the
-session ends. Plain `claude` is untouched.
+`scripts/claude-local.sh` (aliased in `~/.config/shell/aliases.sh`) is a thin
+launcher: it spawns nothing and simply points Claude Code at the shared
+LiteLLM proxy -- the `litellm` service in ruby's `~/services`
+(https://litellm.ruby.kevinfinity.com, Traefik TLS) -- and execs it. Plain
+`claude` is untouched.
 
-- **Routing** lives in the private `~/.config/claude-local/litellm.yaml`:
+- **Routing** lives in ruby's copy of the private
+  `~/.config/claude-local/litellm.yaml` (same tracked file, dot-synced):
   the local model via LiteLLM's OpenAI-compatible `hosted_vllm` route,
-  `claude-*` to Anthropic. `env` there holds the default model, its context
-  window, and the LiteLLM pin.
+  `claude-*` to Anthropic. `env` holds the default model, its context
+  window, and `CLAUDE_LOCAL_PROXY_URL`.
 - **The default is `qwen-local`**, an alias both vLLM containers on the
   server answer to: whichever of the big and small model is up (only one
   runs at a time). It's also the Haiku slot (`ANTHROPIC_DEFAULT_HAIKU_MODEL`),
@@ -659,8 +661,10 @@ session ends. Plain `claude` is untouched.
 - **Anthropic auth is your normal Claude login.** Claude Code sends its OAuth
   token as `Authorization`; LiteLLM forwards an `sk-ant-oat` token to
   Anthropic only when the proxy itself was authenticated some other way, so
-  the script generates a random per-session proxy key and sends it as
-  `x-litellm-api-key` (`ANTHROPIC_CUSTOM_HEADERS`).
+  the script authenticates to the proxy with the shared master key
+  (`LITELLM_MASTER_KEY`, a SOPS secret at `~/.secrets/litellm.env`, sent as
+  `x-litellm-api-key` via `ANTHROPIC_CUSTOM_HEADERS`). ruby's container reads
+  `LITELLM_MASTER_KEY` from the same materialized file.
 - **Why not vLLM's own Anthropic endpoint** (`anthropic/` route)? LiteLLM's
   anthropic provider swaps a forwarded OAuth token in for the configured
   key, which would send your Anthropic token to the vLLM server.
