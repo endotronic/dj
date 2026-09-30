@@ -980,3 +980,121 @@ NV_HOOK() { printf '%s' "$DOTFILES_REPO_ROOT/packages/postinstall/nvidia-textfil
   [[ "$(stub_log)" =~ "systemctl enable nvidia-gpu-textfile-collector.service" ]]
   [[ "$(stub_log)" =~ "systemctl restart nvidia-gpu-textfile-collector.service" ]]
 }
+
+# --- packages/postinstall/memory-size-textfile-collector.sh -----------------
+
+MEM_COLLECTOR() { printf '%s' "$DOTFILES_REPO_ROOT/packages/postinstall/memory-size-textfile-collector.sh"; }
+
+# Fake /sys/devices/system/memory: $1 online blocks, $2 offline, of
+# 128 MiB each (block_size_bytes is hex, no 0x -- as the kernel writes it).
+write_sysfs_memory() {
+  d="$SANDBOX/sysmem"; mkdir -p "$d"
+  printf '8000000\n' > "$d/block_size_bytes"
+  i=0
+  while [ "$i" -lt "$1" ]; do mkdir -p "$d/memory$i"; echo online > "$d/memory$i/state"; i=$((i + 1)); done
+  j=0
+  while [ "$j" -lt "$2" ]; do mkdir -p "$d/memory$i"; echo offline > "$d/memory$i/state"; i=$((i + 1)); j=$((j + 1)); done
+}
+
+# dmidecode --type 17 output with two populated slots and an empty one,
+# plus the "Volatile Size" / "Cache Size" lines that must not be counted.
+write_dmidecode_stub() {
+  cat > "$STUB_BIN/dmidecode" <<'EOS'
+#!/bin/sh
+cat <<'EOD'
+Handle 0x0010, DMI type 17, 92 bytes
+Memory Device
+	Size: 64 GB
+	Volatile Size: 64 GB
+	Cache Size: None
+Handle 0x0011, DMI type 17, 92 bytes
+Memory Device
+	Size: 65536 MB
+	Volatile Size: 64 GB
+Handle 0x0012, DMI type 17, 92 bytes
+Memory Device
+	Size: No Module Installed
+EOD
+EOS
+  chmod +x "$STUB_BIN/dmidecode"
+}
+
+@test "memory-size-textfile-collector.sh: emits online bytes from sysfs, counting only online blocks" {
+  write_sysfs_memory 1023 2
+  textfile_dir="$SANDBOX/textfile"; mkdir -p "$textfile_dir"
+
+  DOTFILES_SYSFS_MEMORY_DIR="$SANDBOX/sysmem" DOTFILES_TEXTFILE_COLLECTOR_DIR="$textfile_dir" \
+    PATH="$STUB_BIN:/usr/bin:/bin" run /bin/sh "$(MEM_COLLECTOR)"
+  [ "$status" -eq 0 ]
+
+  out="$textfile_dir/memory_size.prom"
+  grep -qF 'host_memory_online_bytes 137304735744' "$out"
+}
+
+@test "memory-size-textfile-collector.sh: emits installed bytes from dmidecode, ignoring empty slots and non-Size fields" {
+  write_sysfs_memory 1 0
+  write_dmidecode_stub
+  textfile_dir="$SANDBOX/textfile"; mkdir -p "$textfile_dir"
+
+  DOTFILES_SYSFS_MEMORY_DIR="$SANDBOX/sysmem" DOTFILES_TEXTFILE_COLLECTOR_DIR="$textfile_dir" \
+    PATH="$STUB_BIN:/usr/bin:/bin" run /bin/sh "$(MEM_COLLECTOR)"
+  [ "$status" -eq 0 ]
+
+  grep -qF 'host_memory_installed_bytes 137438953472' "$textfile_dir/memory_size.prom"
+}
+
+@test "memory-size-textfile-collector.sh: omits each metric whose source is unavailable" {
+  printf '#!/bin/sh\nexit 1\n' > "$STUB_BIN/dmidecode"; chmod +x "$STUB_BIN/dmidecode"
+  textfile_dir="$SANDBOX/textfile"; mkdir -p "$textfile_dir"
+
+  DOTFILES_SYSFS_MEMORY_DIR="$SANDBOX/nope" DOTFILES_TEXTFILE_COLLECTOR_DIR="$textfile_dir" \
+    PATH="$STUB_BIN:/usr/bin:/bin" run /bin/sh "$(MEM_COLLECTOR)"
+  [ "$status" -eq 0 ]
+
+  out="$textfile_dir/memory_size.prom"
+  [ -f "$out" ]
+  ! grep -q 'host_memory' "$out"
+  [ "$(ls -A "$textfile_dir")" = "memory_size.prom" ]
+}
+
+# --- packages/postinstall/memory-textfile-collector.sh ----------------------
+
+MEM_HOOK() { printf '%s' "$DOTFILES_REPO_ROOT/packages/postinstall/memory-textfile-collector.sh"; }
+
+@test "memory-textfile-collector.sh: exits 0 when systemctl is not on PATH" {
+  PATH="$STUB_BIN" run /bin/sh "$(MEM_HOOK)"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "systemctl not found" ]]
+}
+
+@test "memory-textfile-collector.sh: exits 0 when there's no textfile directory (no node_exporter)" {
+  stub_cmd systemctl
+  DOTFILES_TEXTFILE_COLLECTOR_DIR="$SANDBOX/nope" \
+    PATH="$STUB_BIN:/usr/bin:/bin" run /bin/sh "$(MEM_HOOK)"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "not found (no node_exporter?)" ]]
+  ! stub_log | grep -q 'systemctl'
+}
+
+@test "memory-textfile-collector.sh: deploys the collector, enables the timer, and runs it once" {
+  stub_cmd systemctl
+  stub_sudo_passthrough
+
+  bin_dest="$SANDBOX/usr-local-bin/memory-size-textfile-collector.sh"
+  unit_dir="$SANDBOX/systemd-units"
+  textfile_dir="$SANDBOX/textfile"
+  mkdir -p "$unit_dir" "$textfile_dir"
+
+  DOTFILES_MEMORY_COLLECTOR_BIN="$bin_dest" DOTFILES_SYSTEMD_UNIT_DIR="$unit_dir" \
+    DOTFILES_TEXTFILE_COLLECTOR_DIR="$textfile_dir" \
+    PATH="$STUB_BIN:/usr/bin:/bin" run /bin/sh "$(MEM_HOOK)"
+  [ "$status" -eq 0 ]
+
+  [ -x "$bin_dest" ]
+  grep -qF "ExecStart=$bin_dest" "$unit_dir/memory-size-textfile-collector.service"
+  grep -qF "DOTFILES_TEXTFILE_COLLECTOR_DIR=$textfile_dir" "$unit_dir/memory-size-textfile-collector.service"
+  grep -qF "OnUnitActiveSec=1h" "$unit_dir/memory-size-textfile-collector.timer"
+  [[ "$(stub_log)" =~ "systemctl daemon-reload" ]]
+  [[ "$(stub_log)" =~ "systemctl enable --now memory-size-textfile-collector.timer" ]]
+  [[ "$(stub_log)" =~ "systemctl start memory-size-textfile-collector.service" ]]
+}
