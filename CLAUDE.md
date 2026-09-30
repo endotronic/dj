@@ -584,7 +584,7 @@ dj claude                               # interactive session
 dj claude install pv and add to common  # one-shot (claude -p)
 ```
 
-`dj claude` (a `Justfile` target) `cd`s into `~/.dotfiles/` then launches `claude`. Requires `claude` on PATH.
+`dj claude` (a `Justfile` target) `cd`s into `~/.dotfiles/` then launches `claude` via `scripts/claude-local.sh` (§10.6) — i.e. through the shared LiteLLM proxy, defaulting to the self-hosted model, same as the `claude-local` alias. Requires `claude` on PATH, `~/.config/claude-local/env`, and `LITELLM_MASTER_KEY`. Plain `claude` remains the direct, unproxied launcher.
 
 `dj opencode` (alias `dj o`) is the same thing for opencode: same cwd, args become a one-shot `opencode run`, `-y`/`--yolo` → `--auto`, `-r`/`--resume` → `--continue`. opencode picks up `CLAUDE.md` and `.claude/skills/` as fallbacks, so it gets the same project context.
 

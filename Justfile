@@ -170,6 +170,10 @@ claude-creds-snapshot:
 # Remote Control is enabled by default; pass --no-remote-control to opt out.
 # Always enables auto-mode. If -r/--resume is present, -p/--print is
 # skipped (resume implies an interactive session).
+# Launches through scripts/claude-local.sh, i.e. via the shared LiteLLM
+# proxy (self-hosted vLLM model by default, Anthropic via /model), same
+# as the `claude-local` alias. Requires ~/.config/claude-local/env and
+# LITELLM_MASTER_KEY (dj apply-secrets).
 alias c := claude
 
 claude *ARGS:
@@ -189,15 +193,16 @@ claude *ARGS:
       esac
     done
     rest="${rest# }"
+    launcher="{{SCRIPTS}}/claude-local.sh"
     cd "$HOME/.dotfiles"
     if [ "$resuming" -eq 1 ]; then
-      claude $rest $yolo_flag $remote_flag --enable-auto-mode
+      sh "$launcher" $rest $yolo_flag $remote_flag --enable-auto-mode
     elif [ -z "$rest" ]; then
-      claude $yolo_flag $remote_flag --enable-auto-mode
+      sh "$launcher" $yolo_flag $remote_flag --enable-auto-mode
     else
       tmpout=$(mktemp)
       tmperr=$(mktemp)
-      claude -p "$rest" $yolo_flag $remote_flag --enable-auto-mode >"$tmpout" 2>"$tmperr" &
+      sh "$launcher" -p "$rest" $yolo_flag $remote_flag --enable-auto-mode >"$tmpout" 2>"$tmperr" &
       pid=$!
       i=0
       while kill -0 "$pid" 2>/dev/null; do
