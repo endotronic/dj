@@ -112,6 +112,24 @@ resolve_name() {
   printf '%s' "$_rn"
 }
 
+# Some packages (nfs-common, e.g. its mount.nfs/showmount/...) only
+# ever install into /sbin or /usr/sbin, which a non-root user's $PATH
+# deliberately excludes -- by distro design, regular users invoke
+# `mount`, not `mount.nfs` directly. `command -v` alone would report
+# such a tool "missing" forever, even right after a successful
+# install, since nothing about re-running the package manager changes
+# that -- install-packages (and migrate.sh's pending-packages check,
+# which just re-runs this with --dry-run) would otherwise never
+# converge. DOTFILES_SBIN_DIRS overrides the dirs checked (tests).
+sbin_dirs=${DOTFILES_SBIN_DIRS:-/sbin /usr/sbin}
+tool_present() {
+  command -v "$1" >/dev/null 2>&1 && return 0
+  for _d in $sbin_dirs; do
+    [ -x "$_d/$1" ] && return 0
+  done
+  return 1
+}
+
 # missing: logical names to install via pkg manager (still missing from PATH)
 # skipped: logical names marked SKIP (may have packages/scripts/ fallbacks)
 missing=
@@ -125,7 +143,7 @@ while IFS= read -r logical; do
     skipped="$skipped $logical"
     continue
   fi
-  if command -v "$logical" >/dev/null 2>&1; then
+  if tool_present "$logical"; then
     already="$already $logical"
   else
     missing="$missing $logical"
@@ -201,7 +219,7 @@ fi
 # Fallback: for any tool still absent (including SKIP items), run
 # packages/scripts/<logical>.sh if present.
 for _l in $missing $skipped; do
-  command -v "$_l" >/dev/null 2>&1 && continue
+  tool_present "$_l" && continue
   _script="$scripts_dir/${_l}.sh"
   [ -f "$_script" ] || continue
   printf '[install-packages] running fallback script for %s\n' "$_l"
@@ -215,7 +233,7 @@ done
 # Final summary of anything that could not be installed by any means.
 _still_missing=
 for _l in $missing $skipped; do
-  command -v "$_l" >/dev/null 2>&1 || _still_missing="$_still_missing $_l"
+  tool_present "$_l" || _still_missing="$_still_missing $_l"
 done
 if [ -n "$_still_missing" ]; then
   printf '[install-packages] WARNING: could not install:%s\n' "$_still_missing" >&2

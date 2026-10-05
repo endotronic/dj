@@ -22,5 +22,11 @@ TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
 printf '[glow] installing v%s (%s)\n' "$GLOW_VERSION" "$ARCH"
-curl -fsSL "$URL" | tar -xz -C "$TMP" glow
-sudo install -m 0755 "$TMP/glow" /usr/local/bin/glow
+# The release tarball nests everything under a
+# glow_<version>_Linux_<arch>/ directory (as of v3.0.0; older releases
+# had `glow` at the tar root) -- extract fully and find the binary
+# rather than assuming either layout.
+curl -fsSL "$URL" | tar -xz -C "$TMP"
+GLOW_BIN=$(find "$TMP" -type f -name glow | head -1)
+[ -n "$GLOW_BIN" ] || { printf '[glow] could not find glow binary in extracted archive\n' >&2; exit 1; }
+sudo install -m 0755 "$GLOW_BIN" /usr/local/bin/glow

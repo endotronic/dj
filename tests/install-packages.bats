@@ -261,6 +261,45 @@ STUBEOF
   [ -f "$marker" ]
 }
 
+# --- sbin-only tools (e.g. mount.nfs) ---------------------------------------
+#
+# nfs-common's binaries (mount.nfs, showmount, ...) only ever install
+# into /sbin or /usr/sbin, which a non-root $PATH deliberately
+# excludes. A `command -v`-only check would report such a tool
+# "missing" on every single run, forever, even right after a
+# successful package install -- install-packages (and migrate.sh's
+# pending-packages check, which just re-runs this with --dry-run)
+# would never converge. DOTFILES_SBIN_DIRS lets tests point at a fake
+# dir instead of the real /sbin.
+
+@test "a tool only present under DOTFILES_SBIN_DIRS counts as already installed" {
+  fake_pkgs="$SANDBOX/fake-pkgs"
+  mkdir -p "$fake_pkgs/renames"
+  printf 'dotfiles-test-sbin-tool\n' > "$fake_pkgs/common.txt"
+
+  fake_sbin="$SANDBOX/fake-sbin"
+  mkdir -p "$fake_sbin"
+  printf '#!/bin/sh\n' > "$fake_sbin/dotfiles-test-sbin-tool"
+  chmod +x "$fake_sbin/dotfiles-test-sbin-tool"
+
+  DOTFILES_PACKAGES_DIR="$fake_pkgs" DOTFILES_DJ_PACKAGES_DIR="$fake_pkgs" \
+    DOTFILES_SBIN_DIRS="$fake_sbin" run sh "$INSTALL_PKGS" --dry-run
+  [ "$status" -eq 0 ]
+  grep -qE "already installed:.*dotfiles-test-sbin-tool" <<< "$output"
+  ! grep -qE "to install:.*dotfiles-test-sbin-tool" <<< "$output"
+}
+
+@test "a tool absent from PATH and every DOTFILES_SBIN_DIRS is still reported missing" {
+  fake_pkgs="$SANDBOX/fake-pkgs"
+  mkdir -p "$fake_pkgs/renames"
+  printf 'dotfiles-test-sbin-tool\n' > "$fake_pkgs/common.txt"
+
+  DOTFILES_PACKAGES_DIR="$fake_pkgs" DOTFILES_DJ_PACKAGES_DIR="$fake_pkgs" \
+    DOTFILES_SBIN_DIRS="$SANDBOX/empty-sbin" run sh "$INSTALL_PKGS" --dry-run
+  [ "$status" -eq 0 ]
+  grep -qE "to install:.*dotfiles-test-sbin-tool" <<< "$output"
+}
+
 # --- packages/scripts/fd.sh: Debian fdfind symlink -------------------------
 
 @test "fd.sh: exits 0 immediately when fd is already on PATH" {
