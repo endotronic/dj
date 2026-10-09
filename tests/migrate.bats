@@ -240,6 +240,68 @@ setup_public_repo() {
   [[ "$output" == *"ok"* ]]
 }
 
+# --- ssh-pubkey-match -------------------------------------------------------
+
+# Leave ~/.ssh/<name> holding one key and <name>.pub holding another --
+# what a manifest key restored over an older hand-made one looks like.
+make_stale_pubkey() {
+  ssh-keygen -q -t ed25519 -N '' -f "$HOME/.ssh/$1" -C current
+  ssh-keygen -q -t ed25519 -N '' -f "$SANDBOX/old" -C old
+  cp "$SANDBOX/old.pub" "$HOME/.ssh/$1.pub"
+}
+
+@test "ssh-pubkey-match: ok when every pair matches" {
+  ssh-keygen -q -t ed25519 -N '' -f "$HOME/.ssh/id_ed25519" -C machine
+  ssh-keygen -q -t ed25519 -N '' -f "$HOME/.ssh/onyx_id_ed25519" -C shared
+  run sh "$MIGRATE" --only ssh-pubkey-match
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ok"*"matches the private key"* ]]
+}
+
+@test "ssh-pubkey-match: a private key with no .pub is fine" {
+  ssh-keygen -q -t ed25519 -N '' -f "$HOME/.ssh/onyx_id_ed25519" -C shared
+  rm -f "$HOME/.ssh/onyx_id_ed25519.pub"
+  run sh "$MIGRATE" --only ssh-pubkey-match
+  [ "$status" -eq 0 ]
+  [ ! -e "$HOME/.ssh/onyx_id_ed25519.pub" ]
+}
+
+@test "ssh-pubkey-match: pending when a .pub belongs to a different key" {
+  make_stale_pubkey onyx_id_ed25519
+  run sh "$MIGRATE" --only ssh-pubkey-match
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"MIGR"* ]]
+}
+
+@test "ssh-pubkey-match: --fix regenerates the .pub and backs up the stale one" {
+  make_stale_pubkey onyx_id_ed25519
+  run sh "$MIGRATE" --fix --only ssh-pubkey-match
+  [ "$status" -eq 0 ]
+  [ "$(ssh-keygen -y -f "$HOME/.ssh/onyx_id_ed25519" | awk '{print $2}')" = \
+    "$(awk '{print $2}' "$HOME/.ssh/onyx_id_ed25519.pub")" ]
+  [ "$(stat -c '%a' "$HOME/.ssh/onyx_id_ed25519.pub")" = 644 ]
+  cmp -s "$SANDBOX/old.pub" "$DOTFILES_BACKUP_DIR/.ssh/onyx_id_ed25519.pub"
+  # the matching pair is left alone, and a second run is a no-op
+  run sh "$MIGRATE" --fix --only ssh-pubkey-match
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"regenerated"* ]]
+}
+
+@test "ssh-pubkey-match: a differing comment alone is not a mismatch" {
+  ssh-keygen -q -t ed25519 -N '' -f "$HOME/.ssh/id_ed25519" -C original
+  sed -i 's/original$/renamed by hand/' "$HOME/.ssh/id_ed25519.pub"
+  run sh "$MIGRATE" --only ssh-pubkey-match
+  [ "$status" -eq 0 ]
+}
+
+@test "ssh-pubkey-match: a passphrase-protected key is skipped, not prompted for" {
+  ssh-keygen -q -t ed25519 -N 'secret' -f "$HOME/.ssh/id_locked" -C locked
+  ssh-keygen -q -t ed25519 -N '' -f "$SANDBOX/old" -C old
+  cp "$SANDBOX/old.pub" "$HOME/.ssh/id_locked.pub"
+  run sh "$MIGRATE" --only ssh-pubkey-match < /dev/null
+  [ "$status" -eq 0 ]
+}
+
 # --- ssh-machine-identity (manual) -----------------------------------------
 
 @test "ssh-machine-identity: ok when the two keys differ" {

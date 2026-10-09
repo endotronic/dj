@@ -96,6 +96,24 @@ while IFS= read -r line || [ -n "$line" ]; do
   fi
   log "$src -> $dst (mode ${mode:-keep})"
   n_applied=$((n_applied + 1))
+
+  # An SSH private key's .pub isn't in the manifest, so a .pub left over
+  # from whatever key used to live at $dst survives the overwrite. ssh
+  # offers that stale key, the server accepts it, and signing then fails
+  # -- so re-derive it. A missing .pub stays missing: ssh doesn't need it.
+  if [ -f "$dst.pub" ] && command -v ssh-keygen >/dev/null 2>&1 &&
+     derived=$(ssh-keygen -y -P '' -f "$dst" 2>/dev/null) && [ -n "$derived" ]; then
+    if [ "$(printf '%s\n' "$derived" | awk '{print $1, $2}')" != \
+         "$(awk '{print $1, $2; exit}' "$dst.pub")" ]; then
+      backup_pub=$BACKUP_DIR$dst.pub
+      mkdir -p "$(dirname "$backup_pub")"
+      cp -p "$dst.pub" "$backup_pub"
+      printf '%s\n' "$derived" > "$dst.pub"
+      chmod 644 "$dst.pub"
+      log "warn: $dst.pub did not match $dst -- regenerated (stale copy: $backup_pub)"
+      n_backed_up=$((n_backed_up + 1))
+    fi
+  fi
 done < "$tmp_manifest"
 
 log "applied=$n_applied skipped=$n_skipped backed_up=$n_backed_up"

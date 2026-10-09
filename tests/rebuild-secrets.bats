@@ -213,6 +213,59 @@ EOF
   [ ! -d "$BACKUP_DIR" ]
 }
 
+# --- SSH .pub beside a restored private key --------------------------------
+
+# Encrypt a freshly generated ed25519 private key to secrets/ssh.enc and
+# point the manifest at ~/.ssh/shared_key. $SANDBOX/new{,.pub} is the
+# restored pair.
+manifest_with_ssh_key() {
+  ssh-keygen -q -t ed25519 -N '' -f "$SANDBOX/new" -C restored
+  sops_encrypt_to secrets/ssh.enc "$(cat "$SANDBOX/new")
+"
+  manifest="$SANDBOX/manifest-plain"
+  echo 'secrets/ssh.enc  ~/.ssh/shared_key  0600' > "$manifest"
+  ( cd "$FAKE_REPO" && sops -e --input-type binary --output-type binary \
+      --filename-override secrets/manifest.txt.enc "$manifest" \
+      > secrets/manifest.txt.enc )
+  mkdir -p "$HOME/.ssh"
+}
+
+@test "stale .pub beside a restored SSH key is regenerated and backed up" {
+  sops_sandbox
+  manifest_with_ssh_key
+  ssh-keygen -q -t ed25519 -N '' -f "$SANDBOX/old" -C old
+  cp "$SANDBOX/old.pub" "$HOME/.ssh/shared_key.pub"
+
+  export BACKUP_DIR="$SANDBOX/backup"
+  run sh "$FAKE_REPO/scripts/rebuild-secrets.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "did not match" ]]
+  [ "$(awk '{print $2}' "$HOME/.ssh/shared_key.pub")" = \
+    "$(awk '{print $2}' "$SANDBOX/new.pub")" ]
+  cmp -s "$SANDBOX/old.pub" "$BACKUP_DIR/$HOME/.ssh/shared_key.pub"
+}
+
+@test "matching .pub beside a restored SSH key is left untouched" {
+  sops_sandbox
+  manifest_with_ssh_key
+  cp "$SANDBOX/new.pub" "$HOME/.ssh/shared_key.pub"
+
+  export BACKUP_DIR="$SANDBOX/backup"
+  run sh "$FAKE_REPO/scripts/rebuild-secrets.sh"
+  [ "$status" -eq 0 ]
+  [[ ! "$output" =~ "did not match" ]]
+  [[ "$output" =~ "backed_up=0" ]]
+  cmp -s "$SANDBOX/new.pub" "$HOME/.ssh/shared_key.pub"
+}
+
+@test "restored SSH key with no .pub does not get one created" {
+  sops_sandbox
+  manifest_with_ssh_key
+  run sh "$FAKE_REPO/scripts/rebuild-secrets.sh"
+  [ "$status" -eq 0 ]
+  [ ! -e "$HOME/.ssh/shared_key.pub" ]
+}
+
 # --- GPG key/ownertrust import ---------------------------------------------
 
 # GPG stub: logs every invocation; --import and --import-ownertrust succeed.
