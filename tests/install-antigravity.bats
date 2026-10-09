@@ -121,3 +121,23 @@ EOF
   [ "$status" -eq 0 ]
   [[ "$output" =~ "warn:" ]]
 }
+
+@test "undoes the vendor installer's PATH edit to shell rc files" {
+  clean_path bash sh dash cat touch chmod printf grep awk rm dirname mkdir date git uname sed
+  printf '# rc\n' > "$HOME/.bashrc"
+  # The real installer ends with `agy install`, which appends this block.
+  cat > "$STUB_BIN/curl" <<EOF
+#!/bin/sh
+cat <<'INSTALLER'
+#!/bin/sh
+touch "$STUB_BIN/agy"
+chmod +x "$STUB_BIN/agy"
+printf '\n\n# Added by Antigravity CLI installer\nexport PATH="\$HOME/.local/bin:\$PATH"\n' >> "$HOME/.bashrc"
+INSTALLER
+EOF
+  chmod +x "$STUB_BIN/curl"
+
+  run sh "$INSTALL_ANTIGRAVITY"
+  [ "$status" -eq 0 ]
+  [ "$(cat "$HOME/.bashrc")" = "# rc" ]
+}

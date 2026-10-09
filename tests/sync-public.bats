@@ -222,6 +222,17 @@ dry_run() {
   [ "$d" -lt "$e" ]
 }
 
+@test "just sync: pushes the private repo only after the rebase, and only when ahead" {
+  dry_run sync
+  b=$(line_of 'pull --rebase')
+  p=$(line_of ' push')
+  c=$(line_of 'apply-secrets')
+  [ -n "$b" ] && [ -n "$p" ] && [ -n "$c" ]
+  [ "$b" -lt "$p" ]
+  [ "$p" -lt "$c" ]
+  [[ "$output" == *"rev-list '@{upstream}..HEAD'"* ]]
+}
+
 @test "just sync: stays sudo-free -- no package install, no post-install hooks" {
   dry_run sync
   [[ "$output" != *"install-packages.sh"* ]]

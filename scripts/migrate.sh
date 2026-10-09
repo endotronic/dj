@@ -79,7 +79,7 @@ backup_dir() {
 MIGRATIONS='git-refspec dotfiles-origin-ssh ssh-pubkey ssh-machine-identity
             legacy-home-git legacy-tmux-conf tmux-version bats-version
             pending-packages postinstall-hooks
-            agy-installed claude-mcp-grafana'
+            agy-installed agy-shell-rc claude-mcp-grafana'
 
 # Migrations that are detected but never auto-applied.
 MANUAL_MIGRATIONS='ssh-machine-identity postinstall-hooks legacy-home-git'
@@ -97,6 +97,7 @@ migration_desc() {
     pending-packages)     echo "every package in the active lists is installed" ;;
     postinstall-hooks)    echo "every listed post-install hook has a script" ;;
     agy-installed)        echo "agy (antigravity) is installed, as the package list asks" ;;
+    agy-shell-rc)         echo "no Antigravity installer PATH edits in shell rc files" ;;
     claude-mcp-grafana)   echo "Claude Code has the grafana MCP server registered at user scope" ;;
     *)                    echo "(unknown migration: $1)" ;;
   esac
@@ -538,6 +539,56 @@ fix_agy_installed() {
   fi
 }
 
+# ---------- agy-shell-rc ----------
+#
+# The vendor installer ends with `agy install`, which appends
+#
+#   # Added by Antigravity CLI installer
+#   export PATH="$HOME/.local/bin:$PATH"
+#
+# to every shell rc file it finds -- tracked files (~/.bashrc,
+# ~/.bash_profile, ...) that then show up dirty in `dot status` and
+# would block `dj sync`'s rebase. The line is redundant here:
+# ~/.config/shell/env.sh already prepends ~/.local/bin for every shell
+# (§2.4). `agy install --skip-path` would avoid it, but the vendor
+# script runs `agy install` itself and passes no flags through, so the
+# block is removed after the fact (install-antigravity.sh runs this fix
+# straight after installing).
+
+AGY_RC_MARKER='# Added by Antigravity CLI installer'
+
+agy_rc_files() {
+  for _f in "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.profile" \
+            "$HOME/.zshrc" "$HOME/.zprofile" "$HOME/.zshenv"; do
+    [ -f "$_f" ] && grep -qxF "$AGY_RC_MARKER" "$_f" 2>/dev/null && printf '%s\n' "$_f"
+  done
+  return 0
+}
+
+check_agy_shell_rc() {
+  [ -n "$(agy_rc_files)" ] && return 1
+  return 0
+}
+
+# Drop each marker line, the PATH export right after it, and the blank
+# lines the installer put in front of it. Rewritten in place (cat >) so
+# the file keeps its inode and mode.
+fix_agy_shell_rc() {
+  for _f in $(agy_rc_files); do
+    _tmp="$_f.agy-strip.$$"
+    awk -v m="$AGY_RC_MARKER" '
+      skip && /^export PATH=/ { skip = 0; next }
+      { skip = 0 }
+      /^[ \t]*$/ { blanks = blanks $0 "\n"; next }
+      $0 == m     { blanks = ""; skip = 1; next }
+      { printf "%s%s\n", blanks, $0; blanks = "" }
+      END { printf "%s", blanks }
+    ' "$_f" > "$_tmp" && cat "$_tmp" > "$_f"
+    rm -f "$_tmp"
+    log "removed Antigravity installer PATH edit from $_f"
+  done
+}
+
 # ---------- claude-mcp-grafana ----------
 #
 # Claude Code keeps user-scope MCP servers in ~/.claude.json -- machine
@@ -591,6 +642,7 @@ run_check() {
     pending-packages)     check_pending_packages ;;
     postinstall-hooks)    check_postinstall_hooks ;;
     agy-installed)        check_agy_installed ;;
+    agy-shell-rc)         check_agy_shell_rc ;;
     claude-mcp-grafana)   check_claude_mcp_grafana ;;
     *) return 2 ;;
   esac
@@ -609,6 +661,7 @@ run_fix() {
     pending-packages)     fix_pending_packages ;;
     postinstall-hooks)    fix_postinstall_hooks ;;
     agy-installed)        fix_agy_installed ;;
+    agy-shell-rc)         fix_agy_shell_rc ;;
     claude-mcp-grafana)   fix_claude_mcp_grafana ;;
     *) return 1 ;;
   esac

@@ -40,6 +40,12 @@ case ":$PATH:" in
   *) PATH="$HOME/.local/bin:$PATH" ;;
 esac
 
+# The vendor script finishes with `agy install`, which appends a PATH
+# export to tracked shell rc files. ~/.config/shell/env.sh already puts
+# ~/.local/bin on PATH, so undo that edit (migrate.sh's agy-shell-rc).
+MIGRATE="${0%/*}/migrate.sh"
+[ -f "$MIGRATE" ] && sh "$MIGRATE" --fix --quiet --only agy-shell-rc >/dev/null || true
+
 if command -v agy >/dev/null 2>&1; then
   log "installed: $(command -v agy)"
 else

@@ -21,12 +21,17 @@ test ARGS="tests/":
 # private lists name scripts, renames and hooks that live there, and the
 # steps below should run the freshly pulled versions. That pull only ever
 # warns (see sync-public.sh); the private pull is the part that must work.
+# Once the private rebase has succeeded, any local commits sitting on top
+# of upstream (e.g. `dj authorized-keys`, which commits but never pushes)
+# are pushed -- a sync that only pulls makes it too easy to forget. No
+# upstream, or nothing ahead of it, means nothing to push.
 # The authorized-keys rebuild picks up any *other* machine's public key
 # that arrived in the pull; --no-register keeps sync from staging
 # anything of this machine's own in the repo as a side effect.
 _pull:
     @sh "{{SCRIPTS}}/sync-public.sh"
     git --git-dir="{{DOT_DIR}}" --work-tree="$HOME" pull --rebase
+    @if [ -n "$(git --git-dir="{{DOT_DIR}}" rev-list '@{upstream}..HEAD' 2>/dev/null)" ]; then git --git-dir="{{DOT_DIR}}" --work-tree="$HOME" push; fi
     @just apply-secrets
     @sh "{{SCRIPTS}}/authorized-keys.sh" --no-register
 
@@ -36,7 +41,7 @@ _pull:
 _migrate-report:
     @sh "{{SCRIPTS}}/migrate.sh" --quiet || true
 
-# Pull both repos (public code, then private config), rematerialize secrets, report stale state.
+# Pull both repos (public code, then private config), push local private commits, rematerialize secrets, report stale state.
 sync: _pull _migrate-report
 
 # Register this machine's SSH public key in ~/.ssh/authorized_keys.d/

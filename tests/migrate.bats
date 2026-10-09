@@ -737,3 +737,48 @@ grafana_secret() {
   [[ "$output" == *"MIGR"* ]]
   [[ "$output" == *"MANUAL"* ]]
 }
+
+# --- agy-shell-rc -----------------------------------------------------------
+
+AGY_BLOCK='
+
+# Added by Antigravity CLI installer
+export PATH="/home/kevin/.local/bin:$PATH"'
+
+@test "agy-shell-rc: ok when no rc file carries the installer edit" {
+  printf 'echo hi\n' > "$HOME/.bashrc"
+  run sh "$MIGRATE" --only agy-shell-rc
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ok"* ]]
+}
+
+@test "agy-shell-rc: pending when the installer appended its PATH export" {
+  printf 'echo hi\n%s\n' "$AGY_BLOCK" > "$HOME/.bashrc"
+  run sh "$MIGRATE" --only agy-shell-rc
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"MIGR"* ]]
+}
+
+@test "agy-shell-rc: --fix restores each file byte-for-byte, keeping mode" {
+  printf '# rc\n[ -r a ] && . a\n' > "$HOME/.bashrc"
+  printf '[[ -f ~/.bashrc ]] && . ~/.bashrc\n' > "$HOME/.bash_profile"
+  cp "$HOME/.bashrc" "$SANDBOX/bashrc.orig"
+  cp "$HOME/.bash_profile" "$SANDBOX/profile.orig"
+  chmod 640 "$HOME/.bashrc"
+  printf '%s\n' "$AGY_BLOCK" >> "$HOME/.bashrc"
+  printf '%s\n' "$AGY_BLOCK" >> "$HOME/.bash_profile"
+  run sh "$MIGRATE" --fix --only agy-shell-rc
+  [ "$status" -eq 0 ]
+  cmp "$HOME/.bashrc" "$SANDBOX/bashrc.orig"
+  cmp "$HOME/.bash_profile" "$SANDBOX/profile.orig"
+  [ "$(stat -c %a "$HOME/.bashrc")" = 640 ]
+  run sh "$MIGRATE" --fix --only agy-shell-rc
+  [ "$status" -eq 0 ]
+}
+
+@test "agy-shell-rc: --fix leaves unrelated PATH exports and blank lines alone" {
+  printf 'a\n\nexport PATH="/opt/x:$PATH"\n%s\n\nb\n' "$AGY_BLOCK" > "$HOME/.zshrc"
+  run sh "$MIGRATE" --fix --only agy-shell-rc
+  [ "$status" -eq 0 ]
+  [ "$(cat "$HOME/.zshrc")" = "$(printf 'a\n\nexport PATH="/opt/x:$PATH"\n\nb')" ]
+}
