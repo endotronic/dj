@@ -779,6 +779,53 @@ grafana_secret() {
   [[ "$(stub_log)" == *"claude mcp get grafana"* ]]
 }
 
+# --- claude-statusline ------------------------------------------------------
+
+statusline_script() {
+  mkdir -p "$HOME/.claude"
+  printf '#!/usr/bin/env bash\n' > "$HOME/.claude/statusline-command.sh"
+}
+
+@test "claude-statusline: N/A without the tracked script" {
+  run sh "$MIGRATE" --only claude-statusline
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"statusline"* ]]
+}
+
+@test "claude-statusline: pending when settings.json is missing" {
+  statusline_script
+  run sh "$MIGRATE" --only claude-statusline
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"MIGR"* ]]
+}
+
+@test "claude-statusline: --fix creates settings.json, then reports ok" {
+  statusline_script
+  run sh "$MIGRATE" --fix --only claude-statusline
+  [ "$status" -eq 0 ]
+  [ "$(jq -r .statusLine.command "$HOME/.claude/settings.json")" = "bash $HOME/.claude/statusline-command.sh" ]
+  run sh "$MIGRATE" --only claude-statusline
+  [ "$status" -eq 0 ]
+}
+
+@test "claude-statusline: --fix merges, preserving other settings" {
+  statusline_script
+  printf '{"theme":"dark","permissions":{"defaultMode":"auto"}}\n' > "$HOME/.claude/settings.json"
+  run sh "$MIGRATE" --fix --only claude-statusline
+  [ "$status" -eq 0 ]
+  [ "$(jq -r .theme "$HOME/.claude/settings.json")" = "dark" ]
+  [ "$(jq -r .permissions.defaultMode "$HOME/.claude/settings.json")" = "auto" ]
+  [ "$(jq -r .statusLine.type "$HOME/.claude/settings.json")" = "command" ]
+}
+
+@test "claude-statusline: --fix replaces a stale command" {
+  statusline_script
+  printf '{"statusLine":{"type":"command","command":"bash /old/home/.claude/statusline-command.sh"}}\n' > "$HOME/.claude/settings.json"
+  run sh "$MIGRATE" --fix --only claude-statusline
+  [ "$status" -eq 0 ]
+  [ "$(jq -r .statusLine.command "$HOME/.claude/settings.json")" = "bash $HOME/.claude/statusline-command.sh" ]
+}
+
 # --- selection --------------------------------------------------------------
 
 @test "migrate: --only restricts the run to the named migration" {

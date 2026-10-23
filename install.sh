@@ -991,6 +991,14 @@ if [ -x "$HOME/.dotfiles/scripts/migrate.sh" ]; then
     || log "warn: grafana MCP registration failed; retry with: dj migrate --fix --only claude-mcp-grafana"
 fi
 
+# ---------- 13d. Enable the Claude Code status line ----------
+# The script is tracked; the settings.json key that enables it is not
+# (Claude Code owns that file), so the migration merges just that key.
+if [ -x "$HOME/.dotfiles/scripts/migrate.sh" ]; then
+  sh "$HOME/.dotfiles/scripts/migrate.sh" --fix --only claude-statusline \
+    || log "warn: status line setup failed; retry with: dj migrate --fix --only claude-statusline"
+fi
+
 # ---------- 14. Optional cleanup of local public-repo source clone ----------
 
 # If --repo was a local directory other than ~/.dotfiles itself, that
