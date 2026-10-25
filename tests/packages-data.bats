@@ -40,10 +40,10 @@ pkg_lines() {
   fi
 }
 
-@test "every renames file has exactly 2 fields per entry" {
+@test "every renames file has 2 fields per entry, or 3 when naming the binary to look for" {
   for f in "$DOTFILES_REPO_ROOT"/packages/renames/*.txt; do
     [ -e "$f" ] || continue
-    bad=$(pkg_lines "$f" | awk 'NF != 2 { print FILENAME ": " $0 }')
+    bad=$(pkg_lines "$f" | awk 'NF < 2 || NF > 3 { print FILENAME ": " $0 }')
     if [ -n "$bad" ]; then
       printf 'malformed lines:\n%s\n' "$bad" >&2
       false

@@ -22,3 +22,7 @@ agy SKIP
 mcp-grafana SKIP
 # WireGuard CLI: binary is wg, package is wireguard-tools
 wg wireguard-tools
+# VS Code, Open Source build (Open VSX marketplace). The package is `code`;
+# it ships both `code` and `code-oss`. Elsewhere this logical name is
+# VSCodium -- see the third column in apt.txt / brew.txt.
+code-oss code

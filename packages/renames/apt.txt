@@ -58,3 +58,7 @@ mcp-grafana SKIP
 diffnav SKIP
 # WireGuard CLI: binary is wg, package is wireguard-tools
 wg wireguard-tools
+# VSCodium (the Open VSX build of VS Code) stands in for Arch's code-oss.
+# Debian/Ubuntu don't carry it, so packages/scripts/code-oss.sh adds
+# VSCodium's own apt repo. Third column: its binary is codium, not code-oss.
+code-oss SKIP codium

@@ -22,7 +22,8 @@
 #
 # For tools not available in a distro's package repo, place an install
 # script at packages/scripts/<logical-name>.sh and mark the tool SKIP
-# in the appropriate renames file.
+# in the appropriate renames file. A renames line may add a third column
+# naming the binary to look for when it isn't the logical name.
 
 set -eu
 
@@ -130,6 +131,29 @@ tool_present() {
   return 1
 }
 
+# A renames line may carry an optional third column: the binary to look for
+# when it differs from the logical name on that manager, e.g.
+#   pacman:  code-oss code            (package `code` ships /usr/bin/code-oss)
+#   apt:     code-oss SKIP codium     (fallback script installs VSCodium)
+# Without it the logical name is the binary, as everywhere else. This keeps
+# one logical name for "the same tool, packaged differently" instead of two
+# names of which one is permanently absent (and warned about) on every OS.
+renames_line() {
+  for _f in "${distro_renames:-}" "$pkg_renames"; do
+    [ -n "$_f" ] && [ -f "$_f" ] || continue
+    _ln=$(awk -v want="$1" '$1 == want { print; exit }' "$_f")
+    if [ -n "$_ln" ]; then printf '%s' "$_ln"; return 0; fi
+  done
+  return 0
+}
+
+resolve_bin() {
+  _rb=$(renames_line "$1" | awk '$3 !~ /^#/ { print $3 }')
+  printf '%s' "${_rb:-$1}"
+}
+
+present() { tool_present "$(resolve_bin "$1")"; }
+
 # missing: logical names to install via pkg manager (still missing from PATH)
 # skipped: logical names marked SKIP (may have packages/scripts/ fallbacks)
 missing=
@@ -143,7 +167,7 @@ while IFS= read -r logical; do
     skipped="$skipped $logical"
     continue
   fi
-  if tool_present "$logical"; then
+  if present "$logical"; then
     already="$already $logical"
   else
     missing="$missing $logical"
@@ -219,7 +243,7 @@ fi
 # Fallback: for any tool still absent (including SKIP items), run
 # packages/scripts/<logical>.sh if present.
 for _l in $missing $skipped; do
-  tool_present "$_l" && continue
+  present "$_l" && continue
   _script="$scripts_dir/${_l}.sh"
   [ -f "$_script" ] || continue
   printf '[install-packages] running fallback script for %s\n' "$_l"
@@ -233,7 +257,7 @@ done
 # Final summary of anything that could not be installed by any means.
 _still_missing=
 for _l in $missing $skipped; do
-  tool_present "$_l" || _still_missing="$_still_missing $_l"
+  present "$_l" || _still_missing="$_still_missing $_l"
 done
 if [ -n "$_still_missing" ]; then
   printf '[install-packages] WARNING: could not install:%s\n' "$_still_missing" >&2

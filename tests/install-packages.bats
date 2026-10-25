@@ -445,3 +445,94 @@ EOF
   [ -x "$prefix/bin/bats" ]
   [[ "$output" =~ "ahead of /usr/bin on PATH" ]]
 }
+
+# --- renames: optional third column (the binary to look for) ---------------
+#
+# `code-oss SKIP codium` / `code-oss code`: one logical name whose binary
+# differs per package manager, so the presence check looks for the right
+# thing instead of leaving a permanently-"missing" twin on every OS.
+
+bin_column_setup() {
+  fake_pkgs="$SANDBOX/fake-pkgs"
+  mkdir -p "$fake_pkgs/renames" "$fake_pkgs/scripts"
+  printf 'faketool\n' > "$fake_pkgs/common.txt"
+  stub_cmd apt
+  stub_sudo_passthrough
+  stub_cmd apt-get
+}
+
+@test "third column: a SKIP tool is present when its named binary is on PATH" {
+  bin_column_setup
+  printf 'faketool SKIP faketool-bin\n' > "$fake_pkgs/renames/apt.txt"
+  marker="$SANDBOX/script-ran"
+  printf '#!/bin/sh\ntouch "%s"\n' "$marker" > "$fake_pkgs/scripts/faketool.sh"
+  stub_cmd faketool-bin
+
+  DOTFILES_PACKAGES_DIR="$fake_pkgs" DOTFILES_DJ_PACKAGES_DIR="$fake_pkgs" run sh "$INSTALL_PKGS"
+  [ "$status" -eq 0 ]
+  [ ! -f "$marker" ]
+  [[ "$output" != *"WARNING"* ]]
+  [[ "$output" != *"running fallback script"* ]]
+}
+
+@test "third column: a SKIP tool whose binary is absent runs its fallback script" {
+  bin_column_setup
+  printf 'faketool SKIP faketool-bin\n' > "$fake_pkgs/renames/apt.txt"
+  # The script provides the *named* binary, not one called after the logical name.
+  printf '#!/bin/sh\nprintf "#!/bin/sh\\n" > "%s/faketool-bin"; chmod +x "%s/faketool-bin"\n' \
+    "$STUB_BIN" "$STUB_BIN" > "$fake_pkgs/scripts/faketool.sh"
+
+  DOTFILES_PACKAGES_DIR="$fake_pkgs" DOTFILES_DJ_PACKAGES_DIR="$fake_pkgs" run sh "$INSTALL_PKGS"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"running fallback script for faketool"* ]]
+  [[ "$output" != *"could not install"* ]]
+  [ -x "$STUB_BIN/faketool-bin" ]
+}
+
+@test "third column: a package-manager entry is 'already installed' via the named binary" {
+  bin_column_setup
+  printf 'faketool realpkg faketool-bin\n' > "$fake_pkgs/renames/apt.txt"
+  stub_cmd faketool-bin
+
+  DOTFILES_PACKAGES_DIR="$fake_pkgs" DOTFILES_DJ_PACKAGES_DIR="$fake_pkgs" run sh "$INSTALL_PKGS" --dry-run
+  [ "$status" -eq 0 ]
+  grep -qE "already installed:.*faketool" <<< "$output"
+  ! grep -qE "to install:.*realpkg" <<< "$output"
+}
+
+@test "third column: a package-manager entry installs the package when the named binary is absent" {
+  bin_column_setup
+  printf 'faketool realpkg faketool-bin\n' > "$fake_pkgs/renames/apt.txt"
+
+  DOTFILES_PACKAGES_DIR="$fake_pkgs" DOTFILES_DJ_PACKAGES_DIR="$fake_pkgs" run sh "$INSTALL_PKGS"
+  [ "$status" -eq 0 ]
+  grep -q "apt-get install.*realpkg" "$SANDBOX/stub.log"
+}
+
+@test "third column: a package-manager entry does nothing when the named binary is present" {
+  bin_column_setup
+  printf 'faketool realpkg faketool-bin\n' > "$fake_pkgs/renames/apt.txt"
+  stub_cmd faketool-bin
+
+  DOTFILES_PACKAGES_DIR="$fake_pkgs" DOTFILES_DJ_PACKAGES_DIR="$fake_pkgs" run sh "$INSTALL_PKGS"
+  [ "$status" -eq 0 ]
+  ! grep -q "apt-get install.*realpkg" "$SANDBOX/stub.log"
+}
+
+@test "third column: without one, the logical name is the binary (unchanged behaviour)" {
+  bin_column_setup
+  printf 'faketool realpkg\n' > "$fake_pkgs/renames/apt.txt"
+  stub_cmd faketool
+
+  DOTFILES_PACKAGES_DIR="$fake_pkgs" DOTFILES_DJ_PACKAGES_DIR="$fake_pkgs" run sh "$INSTALL_PKGS" --dry-run
+  grep -qE "already installed:.*faketool" <<< "$output"
+}
+
+@test "third column: a trailing comment is not mistaken for a binary name" {
+  bin_column_setup
+  printf 'faketool realpkg # not a binary\n' > "$fake_pkgs/renames/apt.txt"
+  stub_cmd faketool
+
+  DOTFILES_PACKAGES_DIR="$fake_pkgs" DOTFILES_DJ_PACKAGES_DIR="$fake_pkgs" run sh "$INSTALL_PKGS" --dry-run
+  grep -qE "already installed:.*faketool" <<< "$output"
+}

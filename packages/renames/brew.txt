@@ -38,3 +38,7 @@ mount.nfs SKIP
 prometheus-node-exporter SKIP
 # WireGuard CLI: binary is wg, package is wireguard-tools
 wg wireguard-tools
+# VSCodium stands in for Arch's code-oss. It is a cask, which this mechanism
+# can't install itself, so packages/scripts/code-oss.sh runs
+# `brew install --cask vscodium`. Third column: its binary is codium.
+code-oss SKIP codium
