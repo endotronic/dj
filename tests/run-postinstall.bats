@@ -262,6 +262,12 @@ EOF
 
 # --- packages/postinstall/tmux-backports.sh ---------------------------------
 
+# The dpkg stub below delegates --compare-versions to the real dpkg, which
+# only exists on Debian-family hosts.
+require_real_dpkg() {
+  [ -x /usr/bin/dpkg ] || skip "needs /usr/bin/dpkg (Debian-family host)"
+}
+
 # Stubs `dpkg` (handles `-s tmux` via $TMUX_DPKG_INSTALLED, and passes
 # `--compare-versions` through to the real binary -- that subcommand is
 # a pure version-string comparator with no dpkg-database side effects,
@@ -341,6 +347,7 @@ write_os_release() {
 }
 
 @test "tmux-backports.sh: skips when the installed tmux already meets the minimum" {
+  require_real_dpkg
   TMUX_OLD_VERSION="3.5a-1" stub_tmux_backports_apt
   write_os_release debian bookworm
   PATH="$STUB_BIN:/usr/bin:/bin" run /bin/sh "$DOTFILES_REPO_ROOT/packages/postinstall/tmux-backports.sh"
@@ -358,6 +365,7 @@ write_os_release() {
 }
 
 @test "tmux-backports.sh: below the minimum installs from <codename>-backports" {
+  require_real_dpkg
   stub_tmux_backports_apt
   stub_sudo_passthrough
   write_os_release debian bookworm
@@ -374,6 +382,7 @@ write_os_release() {
 }
 
 @test "tmux-backports.sh: does not duplicate an existing sources.list.d entry" {
+  require_real_dpkg
   stub_tmux_backports_apt
   stub_sudo_passthrough
   write_os_release debian bookworm
@@ -394,6 +403,7 @@ write_os_release() {
 }
 
 @test "tmux-backports.sh: warns and exits nonzero if the version is still too old afterward" {
+  require_real_dpkg
   TMUX_NEW_VERSION="3.3a-3" stub_tmux_backports_apt
   stub_sudo_passthrough
   write_os_release debian bookworm

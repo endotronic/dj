@@ -12,10 +12,11 @@
 # fleet: no-ops on hosts without zfs or without systemd.
 set -eu
 
-script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-
 command -v zpool >/dev/null 2>&1 || { printf '[postinstall:zfs-textfile-collector] zpool not found; skipping\n' >&2; exit 0; }
 command -v systemctl >/dev/null 2>&1 || { printf '[postinstall:zfs-textfile-collector] systemctl not found; skipping\n' >&2; exit 0; }
+
+# After the guards: a skipping host needs nothing but `command`.
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
 bin_dest="${DOTFILES_ZFS_COLLECTOR_BIN:-/usr/local/bin/zfs-vdev-textfile-collector.sh}"
 unit_dir="${DOTFILES_SYSTEMD_UNIT_DIR:-/etc/systemd/system}"

@@ -303,7 +303,7 @@ EOF
 # ---------- argument / precondition errors ----------------------------
 
 @test "no arguments prints usage and exits 2" {
-  run sh "$SETUP"
+  run sh "$SETUP" < /dev/null
   [ "$status" -eq 2 ]
   [[ "$output" =~ usage ]]
 }
@@ -313,7 +313,7 @@ EOF
   private_repo_with_remote
   dotfiles_repo_with_origin git@github.com:someuser/somerepo.git
 
-  run sh "$SETUP" testhost
+  run sh "$SETUP" testhost < /dev/null
   [ "$status" -eq 1 ]
   [[ "$output" =~ "no SSH key at" ]]
 }
@@ -323,7 +323,7 @@ EOF
   git init --bare -q "$DOT_DIR"
   dotfiles_repo_with_origin git@github.com:someuser/somerepo.git
 
-  run sh "$SETUP" testhost
+  run sh "$SETUP" testhost < /dev/null
   [ "$status" -eq 1 ]
   [[ "$output" =~ "has no remote configured" ]]
 }
@@ -338,7 +338,7 @@ EOF
   private_repo_with_remote
   dotfiles_repo_with_origin git@github.com:someuser/somerepo.git
 
-  run sh "$SETUP" testhost
+  run sh "$SETUP" testhost < /dev/null
   [ "$status" -eq 0 ]
   stub_called ssh-agent
 }
@@ -348,7 +348,7 @@ EOF
   private_repo_with_remote
   dotfiles_repo_with_origin git@github.com:someuser/somerepo.git
 
-  run sh "$SETUP" testhost
+  run sh "$SETUP" testhost < /dev/null
   [ "$status" -eq 0 ]
   ! stub_called ssh-agent
 }
@@ -358,7 +358,7 @@ EOF
   private_repo_with_remote
   dotfiles_repo_with_origin git@github.com:someuser/somerepo.git
 
-  run sh "$SETUP" testhost
+  run sh "$SETUP" testhost < /dev/null
   [ "$status" -eq 0 ]
   grep -qx "ssh-add $HOME/.ssh/id_ed25519" "$SANDBOX/stub.log"
 }
@@ -368,7 +368,7 @@ EOF
   private_repo_with_remote
   dotfiles_repo_with_origin git@github.com:someuser/somerepo.git
 
-  run sh "$SETUP" testhost
+  run sh "$SETUP" testhost < /dev/null
   [ "$status" -eq 0 ]
   ! grep -qx "ssh-add $HOME/.ssh/id_ed25519" "$SANDBOX/stub.log"
 }
@@ -380,7 +380,7 @@ EOF
   private_repo_with_remote
   dotfiles_repo_with_origin git@github.com:someuser/somerepo.git main
 
-  run sh "$SETUP" testhost
+  run sh "$SETUP" testhost < /dev/null
   [ "$status" -eq 0 ]
   remote_cmd=$(remote_cmd_from_ssh_call)
   [[ "$remote_cmd" == *"https://raw.githubusercontent.com/someuser/somerepo/main/install.sh"* ]]
@@ -391,7 +391,7 @@ EOF
   private_repo_with_remote
   dotfiles_repo_with_origin https://github.com/someuser/somerepo.git develop
 
-  run sh "$SETUP" testhost
+  run sh "$SETUP" testhost < /dev/null
   [ "$status" -eq 0 ]
   remote_cmd=$(remote_cmd_from_ssh_call)
   [[ "$remote_cmd" == *"https://raw.githubusercontent.com/someuser/somerepo/develop/install.sh"* ]]
@@ -402,7 +402,7 @@ EOF
   private_repo_with_remote
   dotfiles_repo_with_origin https://gitlab.example.com/someuser/somerepo.git
 
-  run sh "$SETUP" testhost
+  run sh "$SETUP" testhost < /dev/null
   [ "$status" -eq 0 ]
   remote_cmd=$(remote_cmd_from_ssh_call)
   [[ "$remote_cmd" == *"https://raw.githubusercontent.com/endotronic/dj/master/install.sh"* ]]
@@ -415,7 +415,7 @@ EOF
   private_repo_with_remote
   dotfiles_repo_with_origin git@github.com:someuser/somerepo.git
 
-  run sh "$SETUP" kevin@testhost
+  run sh "$SETUP" kevin@testhost < /dev/null
   [ "$status" -eq 0 ]
   [ "$(cat "$SANDBOX/ssh_argc")" = 12 ]
   [ "$(cat "$SANDBOX/ssh_argv_1")" = "-A" ]
@@ -436,7 +436,7 @@ EOF
   private_repo_with_remote
   dotfiles_repo_with_origin git@github.com:someuser/somerepo.git
 
-  run sh "$SETUP" testhost
+  run sh "$SETUP" testhost < /dev/null
   [ "$status" -eq 0 ]
   grep -q -- "-O exit testhost$" "$SANDBOX/stub.log"
 }
@@ -446,7 +446,7 @@ EOF
   private_repo_with_remote git@git.example.com:kevin/dotfiles.git
   dotfiles_repo_with_origin git@github.com:someuser/somerepo.git
 
-  run sh "$SETUP" testhost
+  run sh "$SETUP" testhost < /dev/null
   [ "$status" -eq 0 ]
   remote_cmd=$(remote_cmd_from_ssh_call)
   [[ "$remote_cmd" == *"--private-repo 'git@git.example.com:kevin/dotfiles.git'"* ]]
@@ -460,7 +460,7 @@ EOF
   private_repo_with_remote
   dotfiles_repo_with_origin git@github.com:someuser/somerepo.git
 
-  run sh "$SETUP" testhost
+  run sh "$SETUP" testhost < /dev/null
   [ "$status" -eq 1 ]
   [[ "$output" =~ "no age key at" ]]
   ! stub_called scp
@@ -471,7 +471,7 @@ EOF
   private_repo_with_remote
   dotfiles_repo_with_origin git@github.com:someuser/somerepo.git
 
-  run sh "$SETUP" testhost
+  run sh "$SETUP" testhost < /dev/null
   [ "$status" -eq 0 ]
   grep -q "^scp -q -o StrictHostKeyChecking=accept-new .*sops/age/keys.txt testhost:/tmp/dj-setup-agekey-" "$SANDBOX/stub.log"
 }
@@ -481,7 +481,7 @@ EOF
   private_repo_with_remote
   dotfiles_repo_with_origin git@github.com:someuser/somerepo.git
 
-  run sh "$SETUP" testhost
+  run sh "$SETUP" testhost < /dev/null
   [ "$status" -eq 0 ]
   remote_cmd=$(remote_cmd_from_ssh_call)
   [[ "$remote_cmd" == "export DOTFILES_ACCEPT_NEW_HOSTS=1;"* ]]
@@ -520,7 +520,7 @@ EOF
   private_repo_with_remote
   dotfiles_repo_with_origin git@github.com:someuser/somerepo.git
 
-  run sh "$SETUP" testhost
+  run sh "$SETUP" testhost < /dev/null
   [ "$status" -eq 0 ]
   remote_cmd=$(remote_cmd_from_ssh_call)
   [[ "$remote_cmd" == *"--age-key '/tmp/dj-setup-agekey-"* ]]
@@ -532,7 +532,7 @@ EOF
   private_repo_with_remote
   dotfiles_repo_with_origin git@github.com:someuser/somerepo.git
 
-  run sh "$SETUP" testhost
+  run sh "$SETUP" testhost < /dev/null
   [ "$status" -eq 0 ]
   remote_cmd=$(remote_cmd_from_ssh_call)
   [[ "$remote_cmd" == *"shred -u '/tmp/dj-setup-agekey-"* ]]
@@ -561,7 +561,7 @@ EOF
   private_repo_with_remote
   dotfiles_repo_with_origin git@github.com:someuser/somerepo.git
 
-  run sh "$SETUP" testhost
+  run sh "$SETUP" testhost < /dev/null
   [ "$status" -eq 0 ]
   remote_cmd=$(remote_cmd_from_ssh_call)
 
@@ -592,7 +592,7 @@ EOF
   dotfiles_repo_with_origin git@github.com:someuser/somerepo.git
   stub_sudo_passthrough
 
-  run sh "$SETUP" testhost
+  run sh "$SETUP" testhost < /dev/null
   [ "$status" -eq 0 ]
   remote_cmd=$(remote_cmd_from_ssh_call)
 
@@ -648,7 +648,7 @@ EOF
   private_repo_with_remote
   dotfiles_repo_with_origin git@github.com:someuser/somerepo.git
 
-  run sh "$SETUP" testhost --system-type server --theme '#2596be'
+  run sh "$SETUP" testhost --system-type server --theme '#2596be' < /dev/null
   [ "$status" -eq 0 ]
   remote_cmd=$(remote_cmd_from_ssh_call)
 
