@@ -20,3 +20,5 @@ agy SKIP
 # Grafana's MCP server; not in the official repos, installed via
 # packages/scripts/mcp-grafana.sh.
 mcp-grafana SKIP
+# WireGuard CLI: binary is wg, package is wireguard-tools
+wg wireguard-tools
