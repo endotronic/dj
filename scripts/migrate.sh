@@ -79,7 +79,8 @@ backup_dir() {
 MIGRATIONS='git-refspec dotfiles-origin-ssh ssh-pubkey ssh-pubkey-match
             ssh-machine-identity legacy-home-git legacy-tmux-conf tmux-version bats-version
             pending-packages postinstall-hooks
-            agy-installed agy-shell-rc claude-mcp-grafana claude-statusline'
+            agy-installed agy-shell-rc claude-mcp-grafana claude-statusline
+            sudo-nopasswd-tools'
 
 # Migrations that are detected but never auto-applied.
 MANUAL_MIGRATIONS='ssh-machine-identity postinstall-hooks legacy-home-git'
@@ -101,6 +102,7 @@ migration_desc() {
     agy-shell-rc)         echo "no Antigravity installer PATH edits in shell rc files" ;;
     claude-mcp-grafana)   echo "Claude Code has the grafana MCP server registered at user scope" ;;
     claude-statusline)    echo "Claude Code's settings.json points at the tracked status line script" ;;
+    sudo-nopasswd-tools)  echo "passwordless sudo for wg show, docker and zfs (installed ones only)" ;;
     *)                    echo "(unknown migration: $1)" ;;
   esac
 }
@@ -721,6 +723,51 @@ fix_claude_statusline() {
   fi
 }
 
+# ---------- sudo-nopasswd-tools ----------
+#
+# Passwordless sudo for `wg show`, docker and zfs (the Omarchy bar's
+# WireGuard widget wants `wg show` for the last-handshake time; docker and
+# zfs are a stream of sudo prompts). The /etc/sudoers.d write lives in
+# packages/postinstall/sudo-nopasswd-tools.sh -- CLAUDE.md §9 keeps system
+# changes in post-install hooks -- which also defines what the rule grants
+# (`--specs`), so this check and the repair can't drift apart. See that
+# hook's header for the security trade-off.
+#
+# The hook is deliberately in no postinstall list: `dj sync` / `dj upgrade`
+# only ever REPORT this migration, and it is applied by an explicit
+# `dj migrate --fix`, never as a side effect of pulling code.
+
+sudo_nopasswd_hook() { printf '%s' "$REPO_ROOT/packages/postinstall/sudo-nopasswd-tools.sh"; }
+
+# Every command that `sudo -l` shows this user may run with NOPASSWD, one
+# per line. `sudo -n -l` needs no password here and, unlike a refused
+# `sudo -n <cmd>`, leaves nothing in the journal.
+sudo_nopasswd_entries() {
+  sudo -n -l 2>/dev/null | tr '\n' ' ' | tr -s ' ' | grep -o 'NOPASSWD: [^()]*' \
+    | sed 's/^NOPASSWD: //' | tr ',' '\n' | sed 's/^ *//; s/ *$//' || true
+}
+
+check_sudo_nopasswd_tools() {
+  [ -f "$(sudo_nopasswd_hook)" ] || return 2
+  # Empty means the rule doesn't apply here (no such tools, not Linux, no
+  # sudo/visudo/sudoers.d, or root), which is not-applicable, not pending.
+  _specs=$(sh "$(sudo_nopasswd_hook)" --specs)
+  [ -n "$_specs" ] || return 2
+  _have=$(sudo_nopasswd_entries)
+  printf '%s\n' "$_specs" | while IFS= read -r _s; do
+    printf '%s\n' "$_have" | grep -Fxq -- "$_s" || exit 1
+  done
+}
+
+fix_sudo_nopasswd_tools() {
+  _hook=$(sudo_nopasswd_hook)
+  [ -f "$_hook" ] || {
+    log "warn: $_hook not found; cannot install the sudoers rule"
+    return 1
+  }
+  sh "$_hook"
+}
+
 # ---------- dispatch ----------
 
 run_check() {
@@ -740,6 +787,7 @@ run_check() {
     agy-shell-rc)         check_agy_shell_rc ;;
     claude-mcp-grafana)   check_claude_mcp_grafana ;;
     claude-statusline)    check_claude_statusline ;;
+    sudo-nopasswd-tools)  check_sudo_nopasswd_tools ;;
     *) return 2 ;;
   esac
 }
@@ -761,6 +809,7 @@ run_fix() {
     agy-shell-rc)         fix_agy_shell_rc ;;
     claude-mcp-grafana)   fix_claude_mcp_grafana ;;
     claude-statusline)    fix_claude_statusline ;;
+    sudo-nopasswd-tools)  fix_sudo_nopasswd_tools ;;
     *) return 1 ;;
   esac
 }

@@ -21,6 +21,10 @@ setup() {
   export DOTFILES_REPO_ROOT="$FAKE_ROOT"
   export DOT_DIR="$HOME/.config.git"
   export DOTFILES_BACKUP_DIR="$SANDBOX/backup"
+  # A sudoers.d that doesn't exist makes sudo-nopasswd-tools N/A, so the
+  # host's own wg / docker / sudo rules can't leak into unrelated tests.
+  # Its own tests create the directory (see sudo_tools_setup).
+  export DOTFILES_SUDOERS_DIR="$SANDBOX/no-sudoers.d"
   mkdir -p "$HOME/.ssh"
   chmod 700 "$HOME/.ssh"
 }
@@ -890,4 +894,199 @@ export PATH="/home/kevin/.local/bin:$PATH"'
   run sh "$MIGRATE" --fix --only agy-shell-rc
   [ "$status" -eq 0 ]
   [ "$(cat "$HOME/.zshrc")" = "$(printf 'a\n\nexport PATH="/opt/x:$PATH"\n\nb')" ]
+}
+
+# --- sudo-nopasswd-tools ----------------------------------------------------
+#
+# The sandbox only PREPENDS $STUB_BIN to PATH, so the host's own wg / docker
+# would always be visible. These tests therefore swap PATH for a farm of
+# symlinks to just the binaries migrate.sh calls, plus whichever tool stubs
+# a test asks for.
+
+sudo_tools_setup() {
+  [ "$(uname -s)" = Linux ] || skip "sudoers.d is Linux-only"
+  [ "$(id -u)" -ne 0 ] || skip "needs a non-root user"
+  export DOTFILES_SUDOERS_DIR="$SANDBOX/sudoers.d"
+  mkdir -p "$DOTFILES_SUDOERS_DIR"
+  # The migration defers to this hook for what to grant and for the install.
+  cp "${MIGRATE%/scripts/migrate.sh}/packages/postinstall/sudo-nopasswd-tools.sh" \
+    "$FAKE_ROOT/packages/postinstall/"
+
+  local farm="$SANDBOX/sudo-farm" c src
+  mkdir -p "$farm"
+  for c in sh awk cat chmod cmp cp date git grep head id install ln mkdir mktemp mv paste rm rmdir sed stat tr uname; do
+    src="$(command -v "$c" 2>/dev/null)" || continue
+    [ -n "$src" ] && ln -sf "$src" "$farm/$c"
+  done
+  export PATH="$STUB_BIN:$farm"
+
+  # sudo: `-n -l` lists the NOPASSWD rules found in the sandbox drop-ins (the
+  # way real sudo would after installing one); anything else just runs, since
+  # the sandbox has no privilege to drop.
+  cat > "$STUB_BIN/sudo" <<STUB
+#!/bin/sh
+if [ "\$1" = -n ] && [ "\$2" = -l ]; then
+  [ -n "\${SUDO_LISTING:-}" ] && cat "\$SUDO_LISTING"
+  cat "$DOTFILES_SUDOERS_DIR"/dj-nopasswd-* 2>/dev/null \
+    | grep '^[^#].*NOPASSWD:' | sed 's/^[^ ]* ALL=(root)/    (root)/'
+  exit 0
+fi
+exec "\$@"
+STUB
+  chmod +x "$STUB_BIN/sudo"
+
+  printf '#!/bin/sh\n[ "${VISUDO_FAIL:-0}" = 1 ] && exit 1\nexit 0\n' > "$STUB_BIN/visudo"
+  chmod +x "$STUB_BIN/visudo"
+}
+
+stub_tool() {
+  printf '#!/bin/sh\nexit 0\n' > "$STUB_BIN/$1"
+  chmod +x "$STUB_BIN/$1"
+}
+
+dropin_path() { printf '%s/dj-nopasswd-%s' "$DOTFILES_SUDOERS_DIR" "$(id -un)"; }
+
+@test "sudo-nopasswd-tools: N/A (silent) when none of wg, docker, zfs is installed" {
+  sudo_tools_setup
+  run sh "$MIGRATE" --only sudo-nopasswd-tools
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"passwordless"* ]]
+}
+
+@test "sudo-nopasswd-tools: N/A when running as root" {
+  sudo_tools_setup
+  stub_tool docker
+  printf '#!/bin/sh\ncase "$1" in -u) echo 0 ;; -un) echo root ;; esac\n' > "$STUB_BIN/id"
+  chmod +x "$STUB_BIN/id"
+  run sh "$MIGRATE" --only sudo-nopasswd-tools
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"passwordless"* ]]
+}
+
+@test "sudo-nopasswd-tools: N/A without visudo, so the drop-in can't be validated" {
+  sudo_tools_setup
+  stub_tool docker
+  rm "$STUB_BIN/visudo"
+  run sh "$MIGRATE" --only sudo-nopasswd-tools
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"passwordless"* ]]
+}
+
+@test "sudo-nopasswd-tools: pending when a tool is installed and nothing is granted" {
+  sudo_tools_setup
+  stub_tool docker
+  run sh "$MIGRATE" --only sudo-nopasswd-tools
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"MIGR"* ]]
+  [[ "$output" == *"dj migrate --fix --only sudo-nopasswd-tools"* ]]
+}
+
+@test "sudo-nopasswd-tools: a plain report never writes the drop-in" {
+  sudo_tools_setup
+  stub_tool docker
+  run sh "$MIGRATE" --only sudo-nopasswd-tools
+  [ ! -e "$(dropin_path)" ]
+}
+
+@test "sudo-nopasswd-tools: ok when every installed tool is granted NOPASSWD" {
+  sudo_tools_setup
+  stub_tool wg
+  stub_tool docker
+  export SUDO_LISTING="$SANDBOX/listing"
+  printf '    (ALL) ALL\n    (root) NOPASSWD: %s show *, %s\n' "$STUB_BIN/wg" "$STUB_BIN/docker" > "$SUDO_LISTING"
+  run sh "$MIGRATE" --only sudo-nopasswd-tools
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ok"* ]]
+}
+
+@test "sudo-nopasswd-tools: pending when only some installed tools are granted" {
+  sudo_tools_setup
+  stub_tool wg
+  stub_tool docker
+  export SUDO_LISTING="$SANDBOX/listing"
+  printf '    (root) NOPASSWD: %s\n' "$STUB_BIN/docker" > "$SUDO_LISTING"
+  run sh "$MIGRATE" --only sudo-nopasswd-tools
+  [ "$status" -eq 1 ]
+}
+
+@test "sudo-nopasswd-tools: wg without the show restriction does not count" {
+  sudo_tools_setup
+  stub_tool wg
+  export SUDO_LISTING="$SANDBOX/listing"
+  printf '    (root) NOPASSWD: %s\n' "$STUB_BIN/wg" > "$SUDO_LISTING"
+  run sh "$MIGRATE" --only sudo-nopasswd-tools
+  [ "$status" -eq 1 ]
+}
+
+@test "sudo-nopasswd-tools: a grant that still needs a password does not count" {
+  sudo_tools_setup
+  stub_tool docker
+  export SUDO_LISTING="$SANDBOX/listing"
+  printf '    (ALL) ALL\n    (root) %s\n' "$STUB_BIN/docker" > "$SUDO_LISTING"
+  run sh "$MIGRATE" --only sudo-nopasswd-tools
+  [ "$status" -eq 1 ]
+}
+
+@test "sudo-nopasswd-tools: --fix installs a 0440 drop-in for exactly the installed tools" {
+  sudo_tools_setup
+  stub_tool wg
+  stub_tool docker
+  run sh "$MIGRATE" --fix --only sudo-nopasswd-tools
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ok"* ]]
+  f="$(dropin_path)"
+  [ -f "$f" ]
+  [ "$(stat -c %a "$f")" = 440 ]
+  grep -qF "$(id -un) ALL=(root) NOPASSWD: $STUB_BIN/wg show *, $STUB_BIN/docker" "$f"
+  ! grep -q zfs "$f"
+}
+
+@test "sudo-nopasswd-tools: --fix twice is a no-op the second time" {
+  sudo_tools_setup
+  stub_tool docker
+  run sh "$MIGRATE" --fix --only sudo-nopasswd-tools
+  [ "$status" -eq 0 ]
+  cp "$(dropin_path)" "$SANDBOX/first"
+  run sh "$MIGRATE" --fix --only sudo-nopasswd-tools
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"fixing"* ]]
+  cmp "$(dropin_path)" "$SANDBOX/first"
+}
+
+@test "sudo-nopasswd-tools: installing another tool later makes it pending, and --fix extends the rule" {
+  sudo_tools_setup
+  stub_tool docker
+  run sh "$MIGRATE" --fix --only sudo-nopasswd-tools
+  [ "$status" -eq 0 ]
+  ! grep -q zfs "$(dropin_path)"
+  stub_tool zfs
+  run sh "$MIGRATE" --only sudo-nopasswd-tools
+  [ "$status" -eq 1 ]
+  run sh "$MIGRATE" --fix --only sudo-nopasswd-tools
+  [ "$status" -eq 0 ]
+  grep -qF "$STUB_BIN/zfs" "$(dropin_path)"
+  grep -qF "$STUB_BIN/docker" "$(dropin_path)"
+}
+
+@test "sudo-nopasswd-tools: --fix refuses to install a rule visudo rejects" {
+  sudo_tools_setup
+  stub_tool docker
+  VISUDO_FAIL=1 run sh "$MIGRATE" --fix --only sudo-nopasswd-tools
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"failed visudo validation"* ]]
+  [ ! -e "$(dropin_path)" ]
+}
+
+@test "sudo-nopasswd-tools: --list tags it auto (explicit --fix only, never a sync side effect)" {
+  run sh "$MIGRATE" --list
+  [[ "$output" == *"sudo-nopasswd-tools"*"auto"* ]]
+}
+
+@test "sudo-nopasswd-tools: N/A when the sudoers.d directory does not exist" {
+  sudo_tools_setup
+  stub_tool docker
+  rmdir "$DOTFILES_SUDOERS_DIR"
+  run sh "$MIGRATE" --only sudo-nopasswd-tools
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"passwordless"* ]]
 }
