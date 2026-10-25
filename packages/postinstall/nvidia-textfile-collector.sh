@@ -15,8 +15,6 @@
 # without a node_exporter textfile directory to write into.
 set -eu
 
-script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-
 log() { printf '[postinstall:nvidia-textfile-collector] %s\n' "$1"; }
 
 command -v nvidia-smi >/dev/null 2>&1 || { log 'nvidia-smi not found; skipping' >&2; exit 0; }
@@ -29,6 +27,9 @@ interval="${DOTFILES_NVIDIA_COLLECTOR_INTERVAL:-15}"
 unit=nvidia-gpu-textfile-collector.service
 
 [ -d "$textfile_dir" ] || { log "$textfile_dir not found (no node_exporter?); skipping" >&2; exit 0; }
+
+# After every skip guard: a skipping host needs nothing but `command`.
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
 sudo install -d -m 755 "$(dirname "$bin_dest")"
 sudo install -m 755 "$script_dir/nvidia-gpu-textfile-collector.sh" "$bin_dest"
