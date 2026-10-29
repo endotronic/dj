@@ -172,7 +172,12 @@ claude-creds-snapshot:
 # directly via the bare repo (`dot`); there is no separate dev clone.
 # Args become a one-shot query via `claude -p`; no args -> interactive.
 # Pass -y or --yolo (anywhere in args) to add --dangerously-skip-permissions.
-# Remote Control is enabled by default; pass --no-remote-control to opt out.
+# Remote Control is OFF by default: it exists to mirror the session to
+# Anthropic's bridge so another device can watch it, which defeats the
+# local-only point of this launcher. Pass --remote-control to opt in (it
+# also re-enables the feature-flag service, which RC needs and which this
+# recipe otherwise disables). The --settings guard below keeps
+# remoteControlAtStartup from re-arming it from a settings file.
 # Always enables auto-mode. If -r/--resume is present, -p/--print is
 # skipped (resume implies an interactive session).
 # Launches through scripts/claude-local.sh, i.e. via the shared LiteLLM
@@ -186,28 +191,48 @@ claude *ARGS:
     set -eu
     command -v claude >/dev/null 2>&1 || { echo "claude not on PATH; install Claude Code first" >&2; exit 127; }
     yolo_flag=""
-    remote_flag="--remote-control"
+    # Remote Control is off unless asked for. The --settings guard below
+    # keeps a settings file's remoteControlAtStartup from arming it behind
+    # this recipe's back; it's skipped when the caller passed their own
+    # --settings, since only one such flag can take effect.
+    rc=0
+    user_settings=0
     resuming=0
     rest=""
     for arg in {{ARGS}}; do
       case "$arg" in
         -y|--yolo)            yolo_flag="--dangerously-skip-permissions" ;;
-        --no-remote-control)  remote_flag="" ;;
+        --remote-control)     rc=1 ;;
+        --no-remote-control)  rc=0 ;;
+        --settings|--settings=*) user_settings=1; rest="$rest $arg" ;;
         -r|--resume)          resuming=1; rest="$rest $arg" ;;
         *)                    rest="$rest $arg" ;;
       esac
     done
     rest="${rest# }"
+    rc_settings=""
+    if [ "$rc" -eq 1 ]; then
+      rc_flag="--remote-control"
+      # Remote Control needs feature-flag evaluation, which the launcher
+      # otherwise turns off.
+      gb=0
+      [ "$user_settings" -eq 0 ] && rc_settings='{"remoteControlAtStartup":true}'
+    else
+      rc_flag=""
+      gb=1
+      [ "$user_settings" -eq 0 ] && rc_settings='{"remoteControlAtStartup":false}'
+    fi
+    [ -n "$rc_settings" ] && rc_settings_flag="--settings $rc_settings" || rc_settings_flag=""
     launcher="{{SCRIPTS}}/claude-local.sh"
     cd "$HOME/.dotfiles"
     if [ "$resuming" -eq 1 ]; then
-      sh "$launcher" $rest $yolo_flag $remote_flag --enable-auto-mode
+      CLAUDE_LOCAL_DISABLE_GROWTHBOOK=$gb sh "$launcher" $rest $yolo_flag $rc_flag $rc_settings_flag --enable-auto-mode
     elif [ -z "$rest" ]; then
-      sh "$launcher" $yolo_flag $remote_flag --enable-auto-mode
+      CLAUDE_LOCAL_DISABLE_GROWTHBOOK=$gb sh "$launcher" $yolo_flag $rc_flag $rc_settings_flag --enable-auto-mode
     else
       tmpout=$(mktemp)
       tmperr=$(mktemp)
-      sh "$launcher" -p "$rest" $yolo_flag $remote_flag --enable-auto-mode >"$tmpout" 2>"$tmperr" &
+      CLAUDE_LOCAL_DISABLE_GROWTHBOOK=$gb sh "$launcher" -p "$rest" $yolo_flag $rc_flag $rc_settings_flag --enable-auto-mode >"$tmpout" 2>"$tmperr" &
       pid=$!
       i=0
       while kill -0 "$pid" 2>/dev/null; do

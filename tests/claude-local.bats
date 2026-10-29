@@ -20,6 +20,11 @@ EOF
   export LITELLM_MASTER_KEY=shared-test-key
   export ANTHROPIC_API_KEY=should-be-unset
 
+  # The posture assertions only mean something if a value inherited from
+  # whoever ran the suite can't pass them by accident.
+  unset DISABLE_TELEMETRY DISABLE_ERROR_REPORTING \
+    ENABLE_CLAUDEAI_MCP_SERVERS DISABLE_GROWTHBOOK DISABLE_AUTOUPDATER
+
   # Only what the script and stubs need, so a real claude on this host
   # can never leak into a test.
   for u in sh cat printf grep cut sed rm mkdir ls env; do
@@ -34,6 +39,11 @@ EOF
   printf 'MODEL=%s\n' "\$ANTHROPIC_MODEL"
   printf 'HAIKU=%s\n' "\$ANTHROPIC_DEFAULT_HAIKU_MODEL"
   printf 'CONTEXT=%s\n' "\$CLAUDE_CODE_MAX_CONTEXT_TOKENS"
+  printf 'TELEM=%s\n' "\${DISABLE_TELEMETRY-<unset>}"
+  printf 'ERRREP=%s\n' "\${DISABLE_ERROR_REPORTING-<unset>}"
+  printf 'AICONN=%s\n' "\${ENABLE_CLAUDEAI_MCP_SERVERS-<unset>}"
+  printf 'GB=%s\n' "\${DISABLE_GROWTHBOOK-<unset>}"
+  printf 'UPD=%s\n' "\${DISABLE_AUTOUPDATER-<unset>}"
   printf 'APIKEY=%s\n' "\${ANTHROPIC_API_KEY-<unset>}"
   printf 'AUTHTOKEN=%s\n' "\${ANTHROPIC_AUTH_TOKEN-<unset>}"
   printf 'ARGS=%s\n' "\$*"
@@ -62,6 +72,41 @@ claude_env() { grep "^$1=" "$SANDBOX/claude.env" | cut -d= -f2-; }
   [ "$(claude_env APIKEY)" = "<unset>" ]
   [ "$(claude_env AUTHTOKEN)" = "<unset>" ]
   [ "$(claude_env ARGS)" = "-p hello" ]
+}
+
+@test "keeps the session local: telemetry, error reporting and claude.ai connectors off" {
+  run sh "$CLAUDE_LOCAL" -p hello
+  [ "$status" -eq 0 ]
+
+  [ "$(claude_env TELEM)" = 1 ]
+  [ "$(claude_env ERRREP)" = 1 ]
+  [ "$(claude_env AICONN)" = 0 ]
+}
+
+@test "leaves updates and feature flags on by default: RC opt-in needs the latter" {
+  run sh "$CLAUDE_LOCAL" -p hello
+  [ "$status" -eq 0 ]
+
+  # Remote Control refuses to run with flag evaluation disabled, so the
+  # launcher only disables it when the caller says RC is definitely off —
+  # via CLAUDE_LOCAL_DISABLE_GROWTHBOOK, which the Justfile's claude recipe
+  # sets precisely when it is not passing --remote-control.
+  [ "$(claude_env GB)" = "<unset>" ]
+  [ "$(claude_env UPD)" = "<unset>" ]
+}
+
+@test "disables feature flags when told Remote Control is off" {
+  export CLAUDE_LOCAL_DISABLE_GROWTHBOOK=1
+  run sh "$CLAUDE_LOCAL" -p hello
+  [ "$status" -eq 0 ]
+  [ "$(claude_env GB)" = 1 ]
+}
+
+@test "any CLAUDE_LOCAL_DISABLE_GROWTHBOOK value but 1 leaves flags on" {
+  export CLAUDE_LOCAL_DISABLE_GROWTHBOOK=0
+  run sh "$CLAUDE_LOCAL" -p hello
+  [ "$status" -eq 0 ]
+  [ "$(claude_env GB)" = "<unset>" ]
 }
 
 @test "spawns nothing: succeeds with no uvx or curl on PATH" {
