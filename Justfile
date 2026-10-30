@@ -3,6 +3,16 @@
 #
 # `just` defaults to listing recipes.
 
+# Hand arguments to recipes as real positional parameters ($1, "$@") instead
+# of interpolating them into the recipe's command line. The default mode
+# re-quotes arguments as it splices them in, so by the time a recipe body
+# runs, quoting is gone and the shell re-processes the text: a prompt like
+# `dj claude 'fix the `id` bug'` had its backticks executed by the recipe's
+# own shell, and a flag whose value contains a space arrived glued to its
+# argument. Recipes that want the old space-joined form can still interpolate
+# {{ARGS}} explicitly; everything here renders identically either way.
+set positional-arguments
+
 DOT_DIR := env_var_or_default("DOT_DIR", env_var("HOME") + "/.config.git")
 TIER_FILE := env_var_or_default("XDG_CONFIG_HOME", env_var("HOME") + "/.config") + "/dotfiles/system-type"
 SCRIPTS := justfile_directory() + "/scripts"
@@ -170,7 +180,10 @@ claude-creds-snapshot:
 # .claude/skills/ and where the bulk of the editable tooling (scripts,
 # tests, Justfile, packages) lives. Claude edits the live $HOME files
 # directly via the bare repo (`dot`); there is no separate dev clone.
-# Args become a one-shot query via `claude -p`; no args -> interactive.
+# Args become a one-shot query via `claude -p`; no args -> interactive,
+# which needs a terminal (headless with no prompt explains itself rather
+# than inheriting claude's confusing print-mode error). A prompt piped on
+# stdin works either way.
 # Pass -y or --yolo (anywhere in args) to add --dangerously-skip-permissions.
 # Remote Control is OFF by default: it exists to mirror the session to
 # Anthropic's bridge so another device can watch it, which defeats the
@@ -196,43 +209,136 @@ claude *ARGS:
     # this recipe's back; it's skipped when the caller passed their own
     # --settings, since only one such flag can take effect.
     rc=0
-    user_settings=0
     resuming=0
-    rest=""
-    for arg in {{ARGS}}; do
+    user_settings=""
+    prompt=""
+    # Sort the caller's arguments into three buckets: flags this recipe owns,
+    # flags to hand straight to claude, and the prompt text.
+    #
+    # "$@" is the caller's own argv, one element per word, because of the
+    # `set positional-arguments` at the top of this file. Interpolating
+    # {{ARGS}} instead -- what this recipe used to do -- hands the whole line
+    # to this shell to re-parse, which silently expands $HOME inside a prompt,
+    # runs its backticks, and glues --settings' JSON value onto the word after
+    # it. A counted rotation (POSIX has no arrays) rebuilds the pass-through
+    # list with the boundaries it came in with.
+    #
+    # Telling a prompt from a flag's value is the one genuinely ambiguous
+    # thing here: `dj claude --model opus hi` has two bare words and only one
+    # is the prompt. The answer is claude's own, so this lists the flags that
+    # take a value (from `claude --help`). A flag missing from the list
+    # degrades to what this recipe always did -- its value read as prompt
+    # text -- so staleness is a wrong prompt, never a lost one.
+    n=$#
+    while [ "$n" -gt 0 ]; do
+      arg=$1
+      shift
+      n=$((n - 1))
       case "$arg" in
-        -y|--yolo)            yolo_flag="--dangerously-skip-permissions" ;;
-        --remote-control)     rc=1 ;;
-        --no-remote-control)  rc=0 ;;
-        --settings|--settings=*) user_settings=1; rest="$rest $arg" ;;
-        -r|--resume)          resuming=1; rest="$rest $arg" ;;
-        *)                    rest="$rest $arg" ;;
+        -y|--yolo)
+          yolo_flag="--dangerously-skip-permissions" ;;
+        --remote-control)    rc=1 ;;
+        --no-remote-control) rc=0 ;;
+        -r|--resume)
+          resuming=1 ;;
+        -p|--print)
+          # Added below, only when there's a prompt to go with it; -r means
+          # an interactive session, where it would be wrong.
+          ;;
+        --settings)
+          if [ "$n" -eq 0 ]; then
+            echo "dj claude: --settings needs a value" >&2
+            exit 2
+          fi
+          user_settings=$1
+          shift
+          n=$((n - 1))
+          set -- "$@" --settings "$user_settings" ;;
+        --settings=*)
+          user_settings=${arg#--settings=}
+          set -- "$@" --settings "$user_settings" ;;
+        -*)
+          # A flag this recipe doesn't know: pass it through, and if it's one
+          # that takes a value, carry the value with it so the word after it
+          # isn't mistaken for the prompt.
+          set -- "$@" "$arg"
+          case "$arg" in
+            --model|--fallback-model|--agent|--agents|--effort|--name|-n|\
+            --system-prompt|--append-system-prompt|--input-format|\
+            --output-format|--permission-mode|--session-id|--setting-sources|\
+            --debug-file|--plugin-dir|--plugin-url|--max-budget-usd|\
+            --add-dir|--mcp-config|--tools|--allowedTools|--allowed-tools|\
+            --disallowedTools|--disallowed-tools|--betas|--file|--json-schema)
+              if [ "$n" -gt 0 ]; then
+                set -- "$@" "$1"
+                shift
+                n=$((n - 1))
+              fi ;;
+          esac ;;
+        *)
+          prompt="$prompt $arg" ;;
       esac
     done
-    rest="${rest# }"
+    prompt="${prompt# }"
     rc_settings=""
     if [ "$rc" -eq 1 ]; then
       rc_flag="--remote-control"
       # Remote Control needs feature-flag evaluation, which the launcher
       # otherwise turns off.
       gb=0
-      [ "$user_settings" -eq 0 ] && rc_settings='{"remoteControlAtStartup":true}'
+      if [ -z "$user_settings" ]; then
+        rc_settings='{"remoteControlAtStartup":true}'
+      fi
     else
       rc_flag=""
       gb=1
-      [ "$user_settings" -eq 0 ] && rc_settings='{"remoteControlAtStartup":false}'
+      if [ -z "$user_settings" ]; then
+        rc_settings='{"remoteControlAtStartup":false}'
+      fi
     fi
-    [ -n "$rc_settings" ] && rc_settings_flag="--settings $rc_settings" || rc_settings_flag=""
     launcher="{{SCRIPTS}}/claude-local.sh"
     cd "$HOME/.dotfiles"
+    # "$@" now holds only the flags being passed through; put the session
+    # selector in front of them, then this recipe's own flags in front of
+    # that. Each `set --` keeps every word its own argument.
     if [ "$resuming" -eq 1 ]; then
-      CLAUDE_LOCAL_DISABLE_GROWTHBOOK=$gb sh "$launcher" $rest $yolo_flag $rc_flag $rc_settings_flag --enable-auto-mode
-    elif [ -z "$rest" ]; then
-      CLAUDE_LOCAL_DISABLE_GROWTHBOOK=$gb sh "$launcher" $yolo_flag $rc_flag $rc_settings_flag --enable-auto-mode
+      set -- -r "$@"
+      [ -z "$prompt" ] || set -- "$@" "$prompt"
+    elif [ -n "$prompt" ]; then
+      set -- -p "$prompt" "$@"
+    fi
+    if [ -n "$rc_settings" ]; then
+      set -- --settings "$rc_settings" "$@"
+    fi
+    set -- --enable-auto-mode "$@"
+    [ -z "$rc_flag" ] || set -- "$rc_flag" "$@"
+    [ -z "$yolo_flag" ] || set -- "$yolo_flag" "$@"
+    if [ "$resuming" -eq 1 ]; then
+      CLAUDE_LOCAL_DISABLE_GROWTHBOOK=$gb sh "$launcher" "$@"
+    elif [ -z "$prompt" ]; then
+      # No prompt means an interactive session, which needs a terminal.
+      # Without one, claude silently switches to print mode and then fails
+      # on the empty input with "Input must be provided either through
+      # stdin or as a prompt argument when using --print" -- naming a flag
+      # this recipe never passed. Say what is actually wrong instead.
+      #
+      # A pipe or a redirected file still falls through untouched: claude
+      # reads the prompt from stdin, which is how `echo ... | dj claude`
+      # works. Everything else -- a closed stdin, or /dev/null, which is
+      # neither a terminal nor readable -- gets the explanation rather than
+      # claude's message about a flag this recipe never sent.
+      if [ -t 0 ] || [ -p /dev/stdin ] 2>/dev/null || [ -f /dev/stdin ] 2>/dev/null; then
+        CLAUDE_LOCAL_DISABLE_GROWTHBOOK=$gb sh "$launcher" "$@"
+      else
+        echo "dj claude: no prompt given, and stdin is not a terminal to open a session in." >&2
+        echo "  pass one:  dj claude \"your question\"" >&2
+        echo "  or pipe it: echo \"your question\" | dj claude" >&2
+        exit 2
+      fi
     else
       tmpout=$(mktemp)
       tmperr=$(mktemp)
-      CLAUDE_LOCAL_DISABLE_GROWTHBOOK=$gb sh "$launcher" -p "$rest" $yolo_flag $rc_flag $rc_settings_flag --enable-auto-mode >"$tmpout" 2>"$tmperr" &
+      CLAUDE_LOCAL_DISABLE_GROWTHBOOK=$gb sh "$launcher" "$@" >"$tmpout" 2>"$tmperr" &
       pid=$!
       i=0
       while kill -0 "$pid" 2>/dev/null; do
@@ -268,7 +374,14 @@ opencode *ARGS:
     auto_flag=""
     resuming=0
     rest=""
-    for arg in {{ARGS}}; do
+    # Same counted rotation as the claude recipe above: "$@" holds the
+    # caller's words with their boundaries, so a prompt containing $ or `
+    # reaches opencode as text rather than being re-parsed here.
+    n=$#
+    while [ "$n" -gt 0 ]; do
+      arg=$1
+      shift
+      n=$((n - 1))
       case "$arg" in
         -y|--yolo)              auto_flag="--auto" ;;
         -r|--resume)            resuming=1; rest="$rest --continue" ;;
@@ -279,6 +392,7 @@ opencode *ARGS:
     rest="${rest# }"
     cd "$HOME/.dotfiles"
     if [ "$resuming" -eq 1 ] || [ -z "$rest" ]; then
+      # shellcheck disable=SC2086  # deliberate: flags assembled above
       exec opencode $rest $auto_flag
     else
       exec opencode run $auto_flag "$rest"

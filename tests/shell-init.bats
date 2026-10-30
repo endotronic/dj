@@ -121,6 +121,113 @@ in_bash() {
   [ "$status" -ne 0 ]
 }
 
+# --- the claude wrapper ---------------------------------------------------
+#
+# It lives in the shared POSIX layer, so these assertions are shell-agnostic:
+# a bash-only copy silently did nothing under zsh, leaving `claude` there as
+# the bare binary (no --yolo rewrite, no Remote Control). in_bash runs with
+# STUB_BIN on PATH, so `command claude` lands on a recorder and the real
+# Claude Code is never launched.
+
+# Record what the wrapper passed to claude, one argument per line.
+stub_claude_recorder() {
+  cat > "$STUB_BIN/claude" <<EOF
+#!/bin/sh
+{ for a in "\$@"; do printf '%s\n' "\$a"; done; } > "$SANDBOX/claude.argv"
+exit 0
+EOF
+  chmod +x "$STUB_BIN/claude"
+}
+
+claude_argv() { in_bash "claude $1" >/dev/null 2>&1; cat "$SANDBOX/claude.argv"; }
+
+@test "claude is a function from the shared layer, not a second bash copy" {
+  run in_bash 'type -t claude'
+  [ "$status" -eq 0 ]
+  [ "$output" = function ]
+  # Two definitions would leave bash's as the winner and zsh without one.
+  run grep -q '^claude()' "$_DOTFILES_SHELL_ROOT/.config/bash/functions.sh"
+  [ "$status" -ne 0 ]
+}
+
+@test "claude always adds --enable-auto-mode" {
+  stub_claude_recorder
+  run claude_argv ''
+  [[ "$output" == *"--enable-auto-mode"* ]]
+}
+
+@test "claude enables Remote Control unless told not to" {
+  stub_claude_recorder
+  claude_argv '' >/dev/null
+  [ -e "$SANDBOX/claude.argv" ]
+  grep -qx -- '--remote-control' "$SANDBOX/claude.argv"
+
+  claude_argv '--no-remote-control hi' >/dev/null
+  ! grep -qx -- '--remote-control' "$SANDBOX/claude.argv"
+  # The opt-out is consumed, not forwarded: claude has no such flag.
+  ! grep -qx -- '--no-remote-control' "$SANDBOX/claude.argv"
+}
+
+@test "claude maps -y/--yolo to --dangerously-skip-permissions" {
+  stub_claude_recorder
+  claude_argv '-y hi' >/dev/null
+  grep -qx -- '--dangerously-skip-permissions' "$SANDBOX/claude.argv"
+  ! grep -qx -- '-y' "$SANDBOX/claude.argv"
+
+  claude_argv '--yolo hi' >/dev/null
+  grep -qx -- '--dangerously-skip-permissions' "$SANDBOX/claude.argv"
+  ! grep -qx -- '--yolo' "$SANDBOX/claude.argv"
+}
+
+@test "claude keeps a prompt intact, including one with spaces" {
+  stub_claude_recorder
+  run claude_argv '"look at ~/x y"'
+  [ "$(tail -n1 "$SANDBOX/claude.argv")" = "look at ~/x y" ]
+}
+
+@test "claude drops -p/--print when resuming, keeps -r" {
+  stub_claude_recorder
+  claude_argv '-r -p hello' >/dev/null
+  grep -qx -- '-r' "$SANDBOX/claude.argv"
+  ! grep -qx -- '-p' "$SANDBOX/claude.argv"
+  ! grep -qxF -- '--print' "$SANDBOX/claude.argv"
+
+  # Not resuming: -p is the caller's own and stays.
+  claude_argv '-p hello' >/dev/null
+  grep -qx -- '-p' "$SANDBOX/claude.argv"
+}
+
+@test "claude propagates claude's exit status" {
+  cat > "$STUB_BIN/claude" <<'EOF'
+#!/bin/sh
+exit 3
+EOF
+  chmod +x "$STUB_BIN/claude"
+  run in_bash 'claude hi; printf %s "$?"'
+  [ "${lines[-1]}" = 3 ]
+}
+
+@test "zsh: claude is the same shared wrapper" {
+  command -v zsh >/dev/null 2>&1 || skip "zsh not installed"
+  run zsh -ic 'whence -w claude'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *function* ]]
+
+  cat > "$STUB_BIN/claude" <<EOF
+#!/bin/sh
+{ for a in "\$@"; do printf '%s\n' "\$a"; done; } > "$SANDBOX/claude.argv"
+exit 0
+EOF
+  chmod +x "$STUB_BIN/claude"
+  zsh -ic 'claude -y hi' >/dev/null 2>&1
+  # Each flag must arrive as its own argument: zsh does not word-split an
+  # unquoted parameter, so a string-built flag list would land as one.
+  grep -qx -- '--dangerously-skip-permissions' "$SANDBOX/claude.argv"
+  grep -qx -- '--remote-control' "$SANDBOX/claude.argv"
+  grep -qx -- '--enable-auto-mode' "$SANDBOX/claude.argv"
+  grep -qx -- 'hi' "$SANDBOX/claude.argv"
+}
+
 # --- OS-conditional file sourcing ----------------------------------------
 
 @test "per-OS file is sourced when DOTFILES_OS matches a file in os/" {
