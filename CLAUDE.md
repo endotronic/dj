@@ -72,6 +72,23 @@ done
 - **`~/.config/zsh/`** — zsh-only: `zstyle`, `compinit`, `setopt`, `eval "$(starship init zsh)"`.
 - **`~/.bashrc` / `~/.zshrc`** — tiny loaders: source shared layer then shell-specific init.
 
+A wrapper defined in the bash tree is **invisible to zsh** — the file simply
+isn't sourced, so the command falls through to the bare binary and the
+wrapper's rewrites silently never apply. That's a silent failure with no
+error to notice, so anything belonging to both shells goes in the shared
+layer; the split is about *syntax available*, not about which shell a
+function was first written in.
+
+The one POSIX-layer trap that bites: zsh does **not** word-split an unquoted
+parameter the way bash does. Accumulating a flag list into a string and
+expanding it unquoted (`command foo $flags`) works in bash and delivers
+*one* argument in zsh. Build the list in the positional parameters instead
+(`set -- --flag-a "$@"`), and rebuild a filtered argument list by counted
+rotation — `n=$#` then `shift`/`set -- "$@" "$x"`, which is POSIX's stand-in
+for the array splice. `tests/shell-init.bats` pins this against zsh
+directly; it skips where zsh isn't installed, so a bash-only host proves
+nothing about it.
+
 ### 2.5 Bootstrap: `install.sh` vs `Justfile`
 
 `install.sh` — POSIX sh, idempotent, for cold starts: detect pkg manager, install tools, clone bare repo, conflict-aware checkout, install pre-commit hook, optionally install age key, auto-initialize SOPS, apply secrets, offer shell consolidation, set up git identity/SSH/GPG. `Justfile` — daily ops post-bootstrap. Two entry points because bootstrap and daily concerns differ.
@@ -292,6 +309,24 @@ dj() { JUST_JUSTFILE="$HOME/.dotfiles/Justfile" just "$@"; }
 ```
 
 Always use `dj` not `just` — the Justfile is at `~/.dotfiles/Justfile`, not `$HOME`.
+
+**The Justfile sets `positional-arguments`.** Without it, `just` splices a
+recipe's arguments into the recipe's command line as re-quoted text, so the
+recipe's shell parses them a second time: a prompt passed as
+`just claude 'fix the `id` bug'` had `id` executed by the recipe, and a flag
+whose value contains a space arrived glued to the following word. With the
+setting, arguments reach `$1`/`$@` with their boundaries intact. Recipes
+arguing over words must therefore read `"$@"`, not `{{ARGS}}` — interpolating
+the latter reintroduces the exact problem the setting exists to prevent. It
+changes nothing about how `{{ARGS}}` renders, so every recipe that only
+forwards arguments is unaffected, verified recipe by recipe.
+
+It is a file-level setting, which has one failure mode worth knowing: a `just`
+old enough not to recognize it rejects the whole file with `unknown setting`
+rather than ignoring the line. The setting itself is old (just ≥ 1.27) and
+every install path here lands well above that — apt has no package, so
+`packages/scripts/just.sh` installs the current release from just.systems,
+and pacman/brew take their rolling/current native packages.
 
 ---
 
@@ -541,13 +576,25 @@ Two orthogonal rules:
 
 ## 8. Implementation status
 
-**Complete:** install.sh (POSIX, idempotent, --system-type, --on-conflict, --age-key, three-bucket conflict classification, auto sops-init, shell consolidation, git setup); Justfile (sync, upgrade, add, secret-add, secret-edit, apply-secrets, install-packages, postinstall, system-type, sops-init, doctor, config-diff, audit-config, test, setup, authorized-keys); authorized-keys.sh (per-machine SSH identity + shared `authorized_keys.d` trust, §5.3); dj-setup.sh (`dj setup [user@]host` -- ssh-agent bootstrap, curl-ensure, direct age-key push, forwarded `ssh -A -t` install.sh launch with this machine's own --private-repo filled in); dj-setup-root.sh (`dj setup-root host` -- §4.1a, connects as root, distro-aware useradd with `--skel /dev/null` + temporary per-user NOPASSWD sudoers drop-in for a new account (or reuses an existing one via `getent passwd`), direct key push, install.sh run as that user via `su - USER -c`); ssh-menu-register.sh (§4.1 step 16b -- offers to register a machine in `~/.ssh/config` under a `--system-type`-keyed section, called from both install.sh and dj-setup.sh; section titles keyed via `~/.config/dj/ssh-menu-sections.txt`); os-detect.sh; install-packages.sh (SKIP semantics, fallback scripts); run-postinstall.sh + packages/postinstall/<name>.sh (§2.8 hook mechanism, e.g. docker.sh); migrate.sh (§2.9 stale machine-state check/repair: git-refspec, dotfiles-origin-ssh, ssh-pubkey, ssh-pubkey-match, ssh-machine-identity, legacy-tmux-conf, tmux-version, bats-version, legacy-home-git, pending-packages, postinstall-hooks, agy-installed, claude-mcp-grafana, claude-statusline, sudo-nopasswd-tools; wired into `dj doctor` and `dj migrate`; `--quiet` is what `dj sync`/`dj upgrade` close with); sync-public.sh (§4.5 -- ff-only pull of `~/.dotfiles`, the warn-never-fail first step of `dj sync`/`dj upgrade`); packages/scripts/{sops,just,starship,bats}.sh; rebuild-secrets.sh (PRIVATE_DIR-based; re-derives a stale `.pub` beside a restored SSH key); secret-add.sh (encrypt + manifest update + stage); pre-commit-secrets.sh (guards .private/secrets/); sops-init.sh (auto-called from install.sh, writes to PRIVATE_DIR); shell-consolidate.sh (migrate or create ~/.config/{shell,bash,zsh}/, atomic conflict check); git-setup.sh (identity + SSH + GPG, idempotent); config-diff.sh; audit-config.sh; generic `--system-type` + personal package lists at `~/.config/dj/packages/{common,types/<type>,hosts/<host>}.txt` (private repo) seeded from `packages/template/{common,types/{desktop,server,vm}}.txt`; renames/{apt,pacman,brew}.txt; shell/{init,env,aliases,functions,secrets}.sh; shell/os/{linux,darwin,wsl}.sh; bash/{init,functions,completion,prompt}.sh; zsh/{init,functions,completion,prompt}.sh; bats coverage for all scripts (245 tests, ~20 skipped pending sops/age/zsh); claude-creds-snapshot.sh; install-claude.sh; `dj claude`; claude-local.sh (§10.6 -- `claude-local` alias, thin launcher for the shared LiteLLM proxy on ruby routing a self-hosted model and Anthropic's models, settings in `~/.config/claude-local/`); packages/scripts/{uv,mcp-grafana}.sh; grafana-mcp.sh (§10.7 -- user-scope grafana MCP server for Claude Code on every machine); packages/postinstall/nvidia-textfile-collector.sh (GPU power/temp/clocks/utilization via node_exporter's textfile collector; Grafana dashboard "NVIDIA GPU" in the Infrastructure folder); packages/postinstall/sudo-nopasswd-tools.sh (passwordless sudo for `wg show`, docker and zfs via a validated `/etc/sudoers.d` drop-in; deliberately in no postinstall list -- only the `sudo-nopasswd-tools` migration's explicit `dj migrate --fix` runs it, because docker/zfs access without a password is a real privilege grant); packages/scripts/code-oss.sh (VSCodium where there is no `code` package: VSCodium's signed apt repo on Debian/Ubuntu, the `vscodium` cask on macOS; Arch gets `code` from pacman) with the renames third-column binary override; packages/postinstall/open-remote-ssh.sh (Open Remote - SSH extension from Open VSX into code-oss/codium; for code-oss it also adds `enable-proposed-api` to `~/.vscode-oss/argv.json`, editing that JSONC only by creating it or inserting after the opening brace); packages/postinstall/sleep-policy.sh (laptop sleep policy via /etc drop-ins: lid close and `hypridle`'s 10m idle listener run suspend-then-hibernate with `HibernateDelaySec=50min` (hibernate 1h after going idle), systemd's suspend-then-hibernate low-battery alarm hibernates a sleeping machine at ~5%, UPower hibernates an awake one at 5%; N/A without a battery or a `resume=` kernel arg; listed only in the laptop's own `postinstall/hosts/<host>.txt`, the listener itself is the private `~/.config/hypr/hypridle.conf`); packages/postinstall/memory-textfile-collector.sh (physical RAM size -- online memory blocks + dmidecode-installed -- via the textfile collector, so dashboards can show firmware/kernel-reserved memory that MemTotal excludes); project skills (install-package, query-config, dispatch-just, edit-config); **public/private repo split** (public `~/.dotfiles/.git`, private bare `~/.config.git`, secrets at `~/.private/`).
+**Complete:** install.sh (POSIX, idempotent, --system-type, --on-conflict, --age-key, three-bucket conflict classification, auto sops-init, shell consolidation, git setup); Justfile (sync, upgrade, add, secret-add, secret-edit, apply-secrets, install-packages, postinstall, system-type, sops-init, doctor, config-diff, audit-config, test, setup, authorized-keys); authorized-keys.sh (per-machine SSH identity + shared `authorized_keys.d` trust, §5.3); dj-setup.sh (`dj setup [user@]host` -- ssh-agent bootstrap, curl-ensure, direct age-key push, forwarded `ssh -A -t` install.sh launch with this machine's own --private-repo filled in); dj-setup-root.sh (`dj setup-root host` -- §4.1a, connects as root, distro-aware useradd with `--skel /dev/null` + temporary per-user NOPASSWD sudoers drop-in for a new account (or reuses an existing one via `getent passwd`), direct key push, install.sh run as that user via `su - USER -c`); ssh-menu-register.sh (§4.1 step 16b -- offers to register a machine in `~/.ssh/config` under a `--system-type`-keyed section, called from both install.sh and dj-setup.sh; section titles keyed via `~/.config/dj/ssh-menu-sections.txt`); os-detect.sh; install-packages.sh (SKIP semantics, fallback scripts); run-postinstall.sh + packages/postinstall/<name>.sh (§2.8 hook mechanism, e.g. docker.sh); migrate.sh (§2.9 stale machine-state check/repair: git-refspec, dotfiles-origin-ssh, ssh-pubkey, ssh-pubkey-match, ssh-machine-identity, legacy-tmux-conf, tmux-version, bats-version, legacy-home-git, pending-packages, postinstall-hooks, agy-installed, claude-mcp-grafana, claude-statusline, sudo-nopasswd-tools; wired into `dj doctor` and `dj migrate`; `--quiet` is what `dj sync`/`dj upgrade` close with); sync-public.sh (§4.5 -- ff-only pull of `~/.dotfiles`, the warn-never-fail first step of `dj sync`/`dj upgrade`); packages/scripts/{sops,just,starship,bats}.sh; rebuild-secrets.sh (PRIVATE_DIR-based; re-derives a stale `.pub` beside a restored SSH key); secret-add.sh (encrypt + manifest update + stage); pre-commit-secrets.sh (guards .private/secrets/); sops-init.sh (auto-called from install.sh, writes to PRIVATE_DIR); shell-consolidate.sh (migrate or create ~/.config/{shell,bash,zsh}/, atomic conflict check); git-setup.sh (identity + SSH + GPG, idempotent); config-diff.sh; audit-config.sh; generic `--system-type` + personal package lists at `~/.config/dj/packages/{common,types/<type>,hosts/<host>}.txt` (private repo) seeded from `packages/template/{common,types/{desktop,server,vm}}.txt`; renames/{apt,pacman,brew}.txt; shell/{init,env,aliases,functions,secrets}.sh; shell/os/{linux,darwin,wsl}.sh; bash/{init,functions,completion,prompt}.sh; zsh/{init,functions,completion,prompt}.sh; bats coverage for all scripts (692 tests, 13 skipped: 5 need zsh, 4 need dpkg, 4 need a tool that can't be hidden from the test PATH); claude-creds-snapshot.sh; install-claude.sh; `dj claude`; claude-local.sh (§10.6 -- `claude-local` alias, thin launcher for the shared LiteLLM proxy on ruby routing a self-hosted model and Anthropic's models, settings in `~/.config/claude-local/`); packages/scripts/{uv,mcp-grafana}.sh; grafana-mcp.sh (§10.7 -- user-scope grafana MCP server for Claude Code on every machine); packages/postinstall/nvidia-textfile-collector.sh (GPU power/temp/clocks/utilization via node_exporter's textfile collector; Grafana dashboard "NVIDIA GPU" in the Infrastructure folder); packages/postinstall/sudo-nopasswd-tools.sh (passwordless sudo for `wg show`, docker and zfs via a validated `/etc/sudoers.d` drop-in; deliberately in no postinstall list -- only the `sudo-nopasswd-tools` migration's explicit `dj migrate --fix` runs it, because docker/zfs access without a password is a real privilege grant); packages/scripts/code-oss.sh (VSCodium where there is no `code` package: VSCodium's signed apt repo on Debian/Ubuntu, the `vscodium` cask on macOS; Arch gets `code` from pacman) with the renames third-column binary override; packages/postinstall/open-remote-ssh.sh (Open Remote - SSH extension from Open VSX into code-oss/codium; for code-oss it also adds `enable-proposed-api` to `~/.vscode-oss/argv.json`, editing that JSONC only by creating it or inserting after the opening brace); packages/postinstall/sleep-policy.sh (laptop sleep policy via /etc drop-ins: lid close and `hypridle`'s 10m idle listener run suspend-then-hibernate with `HibernateDelaySec=50min` (hibernate 1h after going idle), systemd's suspend-then-hibernate low-battery alarm hibernates a sleeping machine at ~5%, UPower hibernates an awake one at 5%; N/A without a battery or a `resume=` kernel arg; listed only in the laptop's own `postinstall/hosts/<host>.txt`, the listener itself is the private `~/.config/hypr/hypridle.conf`); packages/postinstall/memory-textfile-collector.sh (physical RAM size -- online memory blocks + dmidecode-installed -- via the textfile collector, so dashboards can show firmware/kernel-reserved memory that MemTotal excludes); project skills (install-package, query-config, dispatch-just, edit-config); **public/private repo split** (public `~/.dotfiles/.git`, private bare `~/.config.git`, secrets at `~/.private/`).
 
 **Outstanding (user task only):**
-- [ ] Push public repo: `cd ~/.dotfiles && git remote add origin https://github.com/endotronic/dotfiles.git && git push -u origin master`
-- [ ] Populate manifest: run `dj secret-add` for each secret in `~/.private/secrets/` to write `manifest.txt.enc`.
-- [ ] Stage `~/.config/*` files identified by `dj audit-config -q` via `dot add` (private bare repo).
-- [ ] Migrate package lists: the old `packages/{common,desktop,server}.txt` (now `packages/template/...`, seed-only) was this machine's live list. Create `~/.config/dj/packages/common.txt` (e.g. `cp ~/.dotfiles/packages/template/common.txt ~/.config/dj/packages/common.txt`, trim as desired, repeat for `types/{desktop,server}.txt` if applicable) and `dot add`/`commit`/`push` it — otherwise `dj install-packages` resolves an empty list.
+- [ ] Decide what to do with the four `~/.config/*` entries `dj audit-config -q`
+      still reports as untracked (re-run it for the current list). They are
+      not one kind of thing:
+      `~/.config/git/ignore` is the global gitignore — git reads it from
+      `$XDG_CONFIG_HOME/git/ignore` with no `core.excludesFile` set, so it's
+      load-bearing and unbacked; `dot add` it.
+      `~/.config/obsidian-headless/auth_token` and
+      `~/.config/reddit-chat-sync/config.toml` hold credentials in 0600
+      files, so they want `dj secret-add`, not `dot add` — plaintext under
+      `~/.config` is exactly what §5's pre-commit backstop exists to catch.
+      `~/.config/glow/glow.yml` is glow's own annotated template with every
+      value left at its default, which under §7's tracking rule is not
+      worth tracking at all — leave it, or keep it only if you'd want it on
+      a machine where glow isn't configured yet.
+      (`~/.config/dotfiles` and `~/.config/sops` stay untracked on purpose —
+      host-local state and age keys, §9 and §3.)
 
 ---
 
@@ -586,7 +633,9 @@ dj claude                               # interactive session
 dj claude install pv and add to common  # one-shot (claude -p)
 ```
 
-`dj claude` (a `Justfile` target) `cd`s into `~/.dotfiles/` then launches `claude` via `scripts/claude-local.sh` (§10.6) — i.e. through the shared LiteLLM proxy, defaulting to the self-hosted model, same as the `claude-local` alias. Requires `claude` on PATH, `~/.config/claude-local/env`, and `LITELLM_MASTER_KEY`. Plain `claude` remains the direct, unproxied launcher.
+`dj claude` (a `Justfile` target) `cd`s into `~/.dotfiles/` then launches `claude` via `scripts/claude-local.sh` (§10.6) — i.e. through the shared LiteLLM proxy, defaulting to the self-hosted model, same as the `claude-local` alias. Requires `claude` on PATH, `~/.config/claude-local/env`, and `LITELLM_MASTER_KEY`. Plain `claude` remains the direct, unproxied launcher — a wrapper defined in `~/.config/shell/functions.sh` (shared layer, so **both** shells get it; a bash-only copy silently did nothing under zsh) that enables Remote Control and auto-mode.
+
+**`dj claude` is the local-only one.** Remote Control is off by default — it mirrors the session to Anthropic's bridge so another device can watch, which defeats the point here — so pass `--remote-control` to opt in; that also re-enables the feature-flag service RC needs, which this path otherwise disables. The launcher additionally sets `DISABLE_TELEMETRY`, `DISABLE_ERROR_REPORTING` and `ENABLE_CLAUDEAI_MCP_SERVERS=0`, and never disables auto-update. An Anthropic login is still required: Claude Code checks for a credential at startup, before any request, so a machine with none exits `Not logged in` even though every request goes to the LAN proxy. Args reach `claude` as arguments — the recipe reads `"$@"` under the Justfile's `set positional-arguments`, because interpolating `{{ARGS}}` hands the recipe's own shell a line of text to re-parse, which expands `$VAR` and runs backticks inside a prompt.
 
 `dj opencode` (alias `dj o`) is the same thing for opencode: same cwd, args become a one-shot `opencode run`, `-y`/`--yolo` → `--auto`, `-r`/`--resume` → `--continue`. opencode picks up `CLAUDE.md` and `.claude/skills/` as fallbacks, so it gets the same project context.
 

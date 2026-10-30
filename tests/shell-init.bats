@@ -207,6 +207,14 @@ EOF
   [ "${lines[-1]}" = 3 ]
 }
 
+@test "claude leaves no scratch variables in the shell" {
+  # No `local` in the POSIX layer, so the wrapper clears its own scratch
+  # names -- and the exit status rides in $1 rather than a name that would
+  # have to outlive the unset.
+  run in_bash 'claude hi >/dev/null 2>&1; set | grep -c "^_claude_" || true'
+  [ "${lines[-1]}" = 0 ]
+}
+
 @test "zsh: claude is the same shared wrapper" {
   command -v zsh >/dev/null 2>&1 || skip "zsh not installed"
   run zsh -ic 'whence -w claude'
