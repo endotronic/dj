@@ -536,3 +536,70 @@ bin_column_setup() {
   DOTFILES_PACKAGES_DIR="$fake_pkgs" DOTFILES_DJ_PACKAGES_DIR="$fake_pkgs" run sh "$INSTALL_PKGS" --dry-run
   grep -qE "already installed:.*faketool" <<< "$output"
 }
+
+# --- NixOS: nix profile backend, SYSTEM marker ----------------------------
+
+# Steer os-detect to nix: a NixOS os-release plus a stub `nix`. apt is
+# stubbed too, to prove NixOS wins over it.
+nixos_env() {
+  printf 'ID=nixos\n' > "$SANDBOX/os-release"
+  export DOTFILES_OS_RELEASE_FILE="$SANDBOX/os-release"
+  stub_cmd nix
+  stub_cmd apt
+  stub_sudo_passthrough
+  stub_cmd apt-get
+}
+
+@test "nix: a missing tool goes into the user profile from nixpkgs, without sudo" {
+  fake_pkgs="$SANDBOX/fake-pkgs"
+  mkdir -p "$fake_pkgs/renames"
+  printf 'dotfiles-test-pkg-zzz\n' > "$fake_pkgs/common.txt"
+  printf 'dotfiles-test-pkg-zzz some-attr\n' > "$fake_pkgs/renames/nix.txt"
+  nixos_env
+  DOTFILES_PACKAGES_DIR="$fake_pkgs" DOTFILES_DJ_PACKAGES_DIR="$fake_pkgs" run sh "$INSTALL_PKGS"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "PKG=nix" ]]
+  grep -q "^nix .*profile add nixpkgs#some-attr$" "$SANDBOX/stub.log"
+  ! stub_called sudo
+  ! stub_called apt-get
+}
+
+@test "SYSTEM: neither installed nor reported missing, but listed as OS-provided" {
+  fake_pkgs="$SANDBOX/fake-pkgs"
+  mkdir -p "$fake_pkgs/renames"
+  printf 'dotfiles-test-daemon-zzz\n' > "$fake_pkgs/common.txt"
+  printf 'dotfiles-test-daemon-zzz SYSTEM\n' > "$fake_pkgs/renames/nix.txt"
+  nixos_env
+  DOTFILES_PACKAGES_DIR="$fake_pkgs" DOTFILES_DJ_PACKAGES_DIR="$fake_pkgs" run sh "$INSTALL_PKGS"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "provided by the OS config (SYSTEM): dotfiles-test-daemon-zzz" ]]
+  [[ "$output" =~ "to install: (none)" ]]
+  [[ "$output" != *"could not install"* ]]
+  ! stub_called nix
+}
+
+@test "nix: fallback scripts never run (they target /usr/local/bin)" {
+  fake_pkgs="$SANDBOX/fake-pkgs"
+  mkdir -p "$fake_pkgs/renames" "$fake_pkgs/scripts"
+  printf 'faketool\n' > "$fake_pkgs/common.txt"
+  printf 'faketool SKIP\n' > "$fake_pkgs/renames/nix.txt"
+  marker="$SANDBOX/faketool-installed"
+  printf '#!/bin/sh\ntouch "%s"\n' "$marker" > "$fake_pkgs/scripts/faketool.sh"
+  nixos_env
+  DOTFILES_PACKAGES_DIR="$fake_pkgs" DOTFILES_DJ_PACKAGES_DIR="$fake_pkgs" run sh "$INSTALL_PKGS"
+  [ "$status" -eq 0 ]
+  [ ! -f "$marker" ]
+  [[ "$output" =~ "could not install: faketool" ]]
+}
+
+@test "nix: a failed nix install warns and carries on with the next tool" {
+  fake_pkgs="$SANDBOX/fake-pkgs"
+  mkdir -p "$fake_pkgs/renames"
+  printf 'dotfiles-test-a-zzz\ndotfiles-test-b-zzz\n' > "$fake_pkgs/common.txt"
+  nixos_env
+  printf '#!/bin/sh\necho "nix $*" >> "%s/stub.log"\nexit 1\n' "$SANDBOX" > "$STUB_BIN/nix"
+  DOTFILES_PACKAGES_DIR="$fake_pkgs" DOTFILES_DJ_PACKAGES_DIR="$fake_pkgs" run sh "$INSTALL_PKGS"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "nix could not install dotfiles-test-a-zzz" ]]
+  grep -q "nixpkgs#dotfiles-test-b-zzz" "$SANDBOX/stub.log"
+}

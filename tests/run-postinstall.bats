@@ -62,6 +62,24 @@ teardown() {
   [ -f "$marker" ]
 }
 
+@test "NixOS: no hook runs, the flake owns system state" {
+  fake_lists="$SANDBOX/fake-postinstall"
+  fake_hooks="$SANDBOX/fake-hooks"
+  mkdir -p "$fake_lists" "$fake_hooks"
+  printf 'myhook\n' > "$fake_lists/common.txt"
+  marker="$SANDBOX/myhook-ran"
+  printf '#!/bin/sh\ntouch "%s"\n' "$marker" > "$fake_hooks/myhook.sh"
+  printf 'ID=nixos\n' > "$SANDBOX/os-release"
+  stub_cmd nix
+
+  DOTFILES_OS_RELEASE_FILE="$SANDBOX/os-release" \
+  DOTFILES_DJ_POSTINSTALL_DIR="$fake_lists" DOTFILES_POSTINSTALL_DIR="$fake_hooks" \
+    run sh "$RUN_POSTINSTALL"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "NixOS" ]]
+  [ ! -f "$marker" ]
+}
+
 @test "--dry-run reports what would run without running it" {
   fake_lists="$SANDBOX/fake-postinstall"
   fake_hooks="$SANDBOX/fake-hooks"

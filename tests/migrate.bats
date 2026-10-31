@@ -641,6 +641,14 @@ RP
   [[ "$output" == *"zfs-textfile-collector"* ]]
 }
 
+@test "postinstall-hooks: N/A on NixOS, even with an unresolved hook listed" {
+  printf '#!/bin/sh\nexit 1\n' > "$FAKE_ROOT/scripts/run-postinstall.sh"
+  printf 'ID=nixos\n' > "$SANDBOX/os-release"
+  DOTFILES_OS_RELEASE_FILE="$SANDBOX/os-release" run sh "$MIGRATE" --only postinstall-hooks
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"post-install hook"* ]]
+}
+
 @test "postinstall-hooks: ok when every listed hook resolves" {
   printf '#!/bin/sh\nexit 0\n' > "$FAKE_ROOT/scripts/run-postinstall.sh"
   chmod +x "$FAKE_ROOT/scripts/run-postinstall.sh"
@@ -997,6 +1005,25 @@ dropin_path() { printf '%s/dj-nopasswd-%s' "$DOTFILES_SUDOERS_DIR" "$(id -un)"; 
   run sh "$MIGRATE" --only sudo-nopasswd-tools
   [ "$status" -eq 0 ]
   [[ "$output" == *"ok"* ]]
+}
+
+@test "sudo-nopasswd-tools: ok under a blanket NOPASSWD: ALL, tags and all" {
+  sudo_tools_setup
+  stub_tool docker
+  export SUDO_LISTING="$SANDBOX/listing"
+  printf '    (ALL : ALL) NOPASSWD: SETENV: ALL\n' > "$SUDO_LISTING"
+  run sh "$MIGRATE" --only sudo-nopasswd-tools
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ok"* ]]
+}
+
+@test "sudo-nopasswd-tools: N/A on NixOS, where the flake holds sudo rules" {
+  sudo_tools_setup
+  stub_tool docker
+  printf 'ID=nixos\n' > "$SANDBOX/os-release"
+  DOTFILES_OS_RELEASE_FILE="$SANDBOX/os-release" run sh "$MIGRATE" --only sudo-nopasswd-tools
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"passwordless"* ]]
 }
 
 @test "sudo-nopasswd-tools: pending when only some installed tools are granted" {

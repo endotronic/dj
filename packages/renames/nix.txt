@@ -1,0 +1,40 @@
+# Per-line: <logical-binary> <nixpkgs-attribute|SKIP|SYSTEM> [binary]
+# Used on NixOS (DOTFILES_PKG=nix). An unlisted name is installed as the
+# nixpkgs attribute of the same name (nix profile add nixpkgs#<name>).
+#
+# SYSTEM: the NixOS configuration (the host's flake) provides it --
+# daemons, setuid helpers, kernel-facing tools. A user profile can hold
+# the binary but not the service, group or wrapper it needs, so dj
+# leaves those to the flake and neither installs nor reports them.
+#
+# There are no packages/scripts/ fallbacks on NixOS (they install to
+# /usr/local/bin), so anything not in nixpkgs is SKIP with its own
+# installer below, never a fallback script.
+
+nvim neovim
+gpg gnupg
+rg ripgrep
+npm nodejs
+python python3
+# `nix profile add nixpkgs#openssl` fails ("meta.outputsToInstall is not
+# a list of strings") though the attribute evaluates fine; naming the
+# output explicitly sidesteps it. `attr^output` works for any entry.
+openssl openssl^bin
+wl-copy wl-clipboard
+wg wireguard-tools
+code-oss vscodium codium
+
+# Daemon, group and socket: virtualisation.docker.enable in the flake.
+docker SYSTEM
+# NFS client mounts need the kernel side and mount.nfs wrapper:
+# boot.supportedFilesystems = [ "nfs" ] in the flake.
+mount.nfs SYSTEM
+# A service, not a command: services.prometheus.exporters.node in the
+# flake.
+prometheus-node-exporter SYSTEM
+
+# Vendor installers, as on every other manager: install.sh runs
+# scripts/install-claude.sh and scripts/install-antigravity.sh. Their
+# prebuilt binaries need programs.nix-ld.enable in the flake.
+claude SKIP
+agy SKIP

@@ -54,6 +54,32 @@ teardown() {
   [ "$output" = "apt" ]
 }
 
+@test "DOTFILES_PKG=nix on NixOS, even with apt also on PATH" {
+  case "$(sh -c '. "$OS_DETECT" && printf %s "$DOTFILES_OS"')" in
+    linux|wsl) ;;
+    *) skip "not linux/wsl" ;;
+  esac
+  stub_cmd nix
+  stub_cmd apt
+  printf 'ID=nixos\n' > "$SANDBOX/os-release"
+  DOTFILES_OS_RELEASE_FILE="$SANDBOX/os-release" \
+    run sh -c '. "$OS_DETECT" && printf %s/%s "$DOTFILES_PKG" "$DOTFILES_DISTRO"'
+  [ "$output" = "nix/nixos" ]
+}
+
+@test "DOTFILES_PKG ignores nix on PATH when the distro isn't NixOS" {
+  case "$(sh -c '. "$OS_DETECT" && printf %s "$DOTFILES_OS"')" in
+    linux|wsl) ;;
+    *) skip "not linux/wsl" ;;
+  esac
+  stub_cmd nix
+  stub_cmd apt
+  printf 'ID=debian\n' > "$SANDBOX/os-release"
+  DOTFILES_OS_RELEASE_FILE="$SANDBOX/os-release" \
+    run sh -c '. "$OS_DETECT" && printf %s "$DOTFILES_PKG"'
+  [ "$output" = "apt" ]
+}
+
 # --- persisted system-type ------------------------------------------------
 
 @test "DOTFILES_SYSTEM_TYPE empty when file is absent" {

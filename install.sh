@@ -265,15 +265,21 @@ case "$OS" in
   darwin)
     command -v brew >/dev/null 2>&1 && PKG=brew ;;
   linux|wsl)
-    if   command -v apt    >/dev/null 2>&1; then PKG=apt
+    # Same rule as scripts/os-detect.sh (this copy runs before the repo
+    # is cloned): NixOS by its os-release ID, never by `nix` on PATH.
+    _distro=$( [ -f /etc/os-release ] && . /etc/os-release 2>/dev/null && printf '%s' "${ID:-}")
+    if   [ "$_distro" = nixos ] && command -v nix >/dev/null 2>&1; then PKG=nix
+    elif command -v apt    >/dev/null 2>&1; then PKG=apt
     elif command -v pacman >/dev/null 2>&1; then PKG=pacman
-    fi ;;
+    fi
+    unset _distro ;;
 esac
 
 if [ -z "$PKG" ]; then
   cat >&2 <<EOF
 error: no supported package manager found.
-  Expected one of: apt (Debian/Ubuntu/WSL), pacman (Arch), brew (macOS).
+  Expected one of: apt (Debian/Ubuntu/WSL), pacman (Arch), brew (macOS),
+  nix (NixOS).
   Install one and re-run.
 EOF
   exit 1
@@ -346,6 +352,10 @@ install_one() {
               apt-get install -y "$pkg_actual" ;;
     pacman) sudo pacman -S --needed --noconfirm "$pkg_actual" ;;
     brew)   brew install "$pkg_actual" ;;
+    # Per-user profile, no sudo. The name is a nixpkgs attribute,
+    # resolved through the system's pinned registry entry.
+    nix)    nix --extra-experimental-features 'nix-command flakes' \
+              profile add "nixpkgs#$pkg_actual" ;;
   esac
 }
 

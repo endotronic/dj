@@ -24,6 +24,10 @@
 # script at packages/scripts/<logical-name>.sh and mark the tool SKIP
 # in the appropriate renames file. A renames line may add a third column
 # naming the binary to look for when it isn't the logical name.
+#
+# SYSTEM in place of a package name means the operating system's own
+# configuration provides the tool (a NixOS flake enabling a service, for
+# example), so it is neither installed nor reported missing here.
 
 set -eu
 
@@ -70,7 +74,7 @@ case "${DOTFILES_SYSTEM_TYPE:-}" in
 esac
 
 if [ -z "${DOTFILES_PKG:-}" ]; then
-  printf 'error: no supported package manager (apt|pacman|brew) on PATH\n' >&2
+  printf 'error: no supported package manager (apt|pacman|brew|nix) on PATH\n' >&2
   exit 1
 fi
 
@@ -158,6 +162,7 @@ present() { tool_present "$(resolve_bin "$1")"; }
 # skipped: logical names marked SKIP (may have packages/scripts/ fallbacks)
 missing=
 skipped=
+system=
 already=
 while IFS= read -r logical; do
   [ -z "$logical" ] && continue
@@ -165,6 +170,10 @@ while IFS= read -r logical; do
   actual=${mapped:-$logical}
   if [ "$actual" = SKIP ]; then
     skipped="$skipped $logical"
+    continue
+  fi
+  if [ "$actual" = SYSTEM ]; then
+    system="$system $logical"
     continue
   fi
   if present "$logical"; then
@@ -184,6 +193,7 @@ printf '[install-packages] OS=%s PKG=%s DISTRO=%s TYPE=%s\n' \
   "$DOTFILES_OS" "$DOTFILES_PKG" "${DOTFILES_DISTRO:-none}" "${DOTFILES_SYSTEM_TYPE:-none}"
 printf '[install-packages] already installed:%s\n' "${already:- (none)}"
 printf '[install-packages] skipped (SKIP):%s\n' "${skipped:- (none)}"
+[ -n "$system" ] && printf '[install-packages] provided by the OS config (SYSTEM):%s\n' "$system"
 printf '[install-packages] to install:%s\n'      "${_to_install_display:- (none)}"
 
 [ "$DRY_RUN" = 1 ] && { printf '[install-packages] --dry-run set; not installing\n'; exit 0; }
@@ -237,13 +247,33 @@ if [ -n "$missing" ]; then
         fi
       done
       ;;
+    nix)
+      # NixOS: user packages go into the per-user profile (no sudo, so
+      # this stays inside $HOME as §9 asks). Names are nixpkgs attributes;
+      # `nixpkgs` resolves through the registry entry NixOS pins to the
+      # system's own nixpkgs, so nothing new is downloaded to evaluate.
+      for _l in $missing; do
+        _a=$(resolve_name "$_l"); _a=${_a:-$_l}
+        if nix --extra-experimental-features 'nix-command flakes' \
+            profile add "nixpkgs#$_a"; then
+          :
+        else
+          printf '[install-packages] WARNING: nix could not install %s (nixpkgs#%s)\n' \
+            "$_l" "$_a" >&2
+        fi
+      done
+      ;;
   esac
 fi
 
 # Fallback: for any tool still absent (including SKIP items), run
-# packages/scripts/<logical>.sh if present.
+# packages/scripts/<logical>.sh if present. Not on NixOS: those scripts
+# drop prebuilt binaries into /usr/local/bin, which NixOS keeps off PATH
+# (and many such binaries can't run there). Map the tool to a nixpkgs
+# attribute in renames/nix.txt instead.
 for _l in $missing $skipped; do
   present "$_l" && continue
+  [ "$DOTFILES_PKG" = nix ] && continue
   _script="$scripts_dir/${_l}.sh"
   [ -f "$_script" ] || continue
   printf '[install-packages] running fallback script for %s\n' "$_l"

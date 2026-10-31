@@ -114,6 +114,17 @@ is_manual() {
   return 1
 }
 
+# NixOS builds /etc, units, users and sudo rules from the host's flake,
+# so migrations whose repair is a post-install hook's /etc edit are
+# not-applicable there: the flake is the fix. Same os-release rule as
+# scripts/os-detect.sh, which this script doesn't source (it would
+# re-derive DOTFILES_SYSTEM_TYPE under callers that set it).
+on_nixos() {
+  _osr=${DOTFILES_OS_RELEASE_FILE:-/etc/os-release}
+  [ -f "$_osr" ] || return 1
+  [ "$(. "$_osr" 2>/dev/null; printf '%s' "${ID:-}")" = nixos ]
+}
+
 ssh_fp() {
   ssh-keygen -lf "$1" 2>/dev/null | awk '{print $2}'
 }
@@ -543,6 +554,7 @@ fix_pending_packages() {
 
 check_postinstall_hooks() {
   [ -f "$REPO_ROOT/scripts/run-postinstall.sh" ] || return 2
+  on_nixos && return 2
   sh "$REPO_ROOT/scripts/run-postinstall.sh" --dry-run >/dev/null 2>&1 || return 1
   return 0
 }
@@ -749,11 +761,15 @@ sudo_nopasswd_entries() {
 
 check_sudo_nopasswd_tools() {
   [ -f "$(sudo_nopasswd_hook)" ] || return 2
+  on_nixos && return 2
   # Empty means the rule doesn't apply here (no such tools, not Linux, no
   # sudo/visudo/sudoers.d, or root), which is not-applicable, not pending.
   _specs=$(sh "$(sudo_nopasswd_hook)" --specs)
   [ -n "$_specs" ] || return 2
   _have=$(sudo_nopasswd_entries)
+  # A blanket NOPASSWD: ALL already covers every spec (other tags such
+  # as NixOS's `SETENV:` may sit between the two).
+  printf '%s\n' "$_have" | grep -Eq '^([A-Z_]+: *)*ALL$' && return 0
   printf '%s\n' "$_specs" | while IFS= read -r _s; do
     printf '%s\n' "$_have" | grep -Fxq -- "$_s" || exit 1
   done

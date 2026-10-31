@@ -1,6 +1,6 @@
 # dotfiles
 
-Personal dotfiles, secrets, and bootstrap tooling. Targets: **Linux** (apt/pacman, including Omarchy), **macOS** (brew), **WSL**. One command bootstraps a fresh machine; this file is the design doc, operating manual, and Claude working norms.
+Personal dotfiles, secrets, and bootstrap tooling. Targets: **Linux** (apt/pacman, including Omarchy), **NixOS** (nix, §2.10), **macOS** (brew), **WSL**. One command bootstraps a fresh machine; this file is the design doc, operating manual, and Claude working norms.
 
 ---
 
@@ -128,7 +128,7 @@ install from the templates directly; never edit them when the goal is
 personal lists.
 
 - **Type governs software, not config.** All tracked configs deploy uniformly.
-- **Renames format:** `<logical> <package|SKIP> [binary]`. The optional third column names the binary `install-packages` looks for when it differs from the logical name on that manager -- one logical name for "the same tool, packaged differently" instead of two names of which one is permanently missing (and warned about) on every OS. Example: `code-oss code` on pacman (package `code` ships `code-oss`), `code-oss SKIP codium` on apt/brew (`packages/scripts/code-oss.sh` installs VSCodium).
+- **Renames format:** `<logical> <package|SKIP|SYSTEM> [binary]`. `SYSTEM` means the OS's own configuration provides the tool (on NixOS, the host's flake: daemons, groups, setuid wrappers), so it's neither installed nor reported missing (§2.10). The optional third column names the binary `install-packages` looks for when it differs from the logical name on that manager -- one logical name for "the same tool, packaged differently" instead of two names of which one is permanently missing (and warned about) on every OS. Example: `code-oss code` on pacman (package `code` ships `code-oss`), `code-oss SKIP codium` on apt/brew (`packages/scripts/code-oss.sh` installs VSCodium).
 - **Choice persists** at `~/.config/dotfiles/system-type`. Never auto-detect from `$DISPLAY`.
 - Shell init must guard type-specific binaries: `command -v zoxide >/dev/null 2>&1 && eval "$(zoxide init bash)"`.
 - Adding a package: use `dj install-package` (or the `install-package`
@@ -226,6 +226,37 @@ whenever `doctor` next happens to run.
 - Covered by `tests/migrate.bats`, same rule as every other
   `scripts/` script (§9).
 
+
+### 2.10 NixOS: the flake owns the system, dj owns `$HOME`
+
+On NixOS the whole system — packages everyone needs, services, users,
+groups, sudo rules, `/etc` — is built from the host's flake (a separate
+repo per host group, e.g. `servers-config/ruby-config`), and rebuilt from
+it on every `nixos-rebuild switch`. dj keeps doing exactly what it does
+inside `$HOME` (dotfiles, secrets, `authorized_keys`, migrations); the
+parts of dj that reach outside `$HOME` step aside:
+
+- **Packages** (`DOTFILES_PKG=nix`): `install-packages.sh` installs the
+  personal lists into the user's own profile with
+  `nix profile add nixpkgs#<attr>` — no sudo. `nixpkgs` resolves through
+  the registry entry NixOS pins to the system's nixpkgs, so versions
+  match the flake's. `renames/nix.txt` maps logical names to attributes;
+  an unlisted name is tried as the attribute of the same name.
+- **`SYSTEM` entries**: tools that need a daemon, group or kernel support
+  (docker, `mount.nfs`, node_exporter) are marked `SYSTEM` in `nix.txt`
+  and declared in the flake instead. The flake comment names the dj
+  entry it stands in for.
+- **No fallback scripts**: `packages/scripts/*.sh` install prebuilt
+  binaries to `/usr/local/bin`, which NixOS keeps off PATH. A tool that
+  isn't in nixpkgs gets a vendor installer like `claude`/`agy` (SKIP),
+  whose glibc binaries run through `programs.nix-ld` in the flake.
+- **No post-install hooks**: `run-postinstall.sh` exits with a note, and
+  the `postinstall-hooks` and `sudo-nopasswd-tools` migrations are N/A.
+  A hook's `/etc` edits would be undone by the next switch (or never
+  apply, with `users.mutableUsers = false`); the equivalent NixOS option
+  goes in the flake.
+- **Not supported there**: `dj setup-root` (it runs `useradd`, which an
+  immutable-users NixOS rejects) — the flake declares the account.
 
 ---
 
@@ -368,7 +399,7 @@ curl -fsSL https://raw.githubusercontent.com/<you>/dotfiles/main/install.sh \
 ```
 
 `install.sh` steps:
-1. Detect OS + pkg manager (abort if none of apt/pacman/brew).
+1. Detect OS + pkg manager (abort if none of apt/pacman/brew/nix).
 2. Bootstrap git if missing.
 3. Persist `--system-type` (any identifier — just a lookup key for `~/.config/dj/packages/types/<type>.txt`, see §2.7) and, separately, `--theme` (a 6-digit hex color) to `~/.config/dotfiles/tmux-theme-color` — both host-local state, never tracked.
 4. Clone the public tooling repo to `~/.dotfiles/` (or use in place).
@@ -548,7 +579,7 @@ GPG is deliberately *not* treated this way — it identifies the person, not the
 ## 6. OS, shell, and host conditionalization
 
 - **OS detection**: centralized in `os-detect.sh` and `shell/init.sh`. Names: `darwin`, `linux`, `wsl`.
-- **Pkg manager**: `apt | pacman | brew` (preference order). Exported as `DOTFILES_PKG`.
+- **Pkg manager**: `nix` on NixOS (by os-release `ID`, never by `nix` on PATH), else `apt | pacman | brew` (preference order). Exported as `DOTFILES_PKG`.
 - **Distro**: reads `ID` from `/etc/os-release` (e.g. `ubuntu`, `debian`, `arch`). Exported as `DOTFILES_DISTRO`. Used to resolve renames via `renames/$DISTRO.txt` before falling back to `renames/$PKG.txt`.
 - **System type**: read from `~/.config/dotfiles/system-type`; exported as `DOTFILES_SYSTEM_TYPE`. Any identifier — a lookup key for `~/.config/dj/packages/types/<type>.txt`, not an enum (§2.7).
 - **Shell detection**: implicit via `.bashrc`/`.zshrc`. Never branch on `$SHELL` inside `shell/*`.
@@ -605,7 +636,7 @@ Two orthogonal rules:
 - **Idempotence over cleverness** — every script safe to re-run; `install.sh` must converge.
 - **Never write plaintext secrets to disk** — only `rebuild-secrets.sh` (to declared `dst`) and sops temp file.
 - **One home for OS/pkg detection** — `os-detect.sh` and `shell/init.sh`. If they disagree, fix the script.
-- **Fallback installers** — when a tool is absent from apt/pacman/brew, mark it `SKIP` in the renames file and add `packages/scripts/<name>.sh`. Must be POSIX sh, idempotent, install to `/usr/local/bin` via `sudo`. `install-packages.sh` runs matching scripts automatically.
+- **Fallback installers** — when a tool is absent from apt/pacman/brew, mark it `SKIP` in the renames file and add `packages/scripts/<name>.sh`. Must be POSIX sh, idempotent, install to `/usr/local/bin` via `sudo`. `install-packages.sh` runs matching scripts automatically — except on NixOS, where they never run (§2.10).
 - **Multi-user safety** — nothing outside `$HOME` except via the package manager, or via a post-install hook (§2.8) — the sanctioned, opt-in place for narrow `/etc/` writes (e.g. `/etc/fstab`) and other system-level mutations a package install can't express. No ad hoc `/etc/`, `/usr/local/etc/`, `~root/` writes outside those two mechanisms.
 - **Use override hooks** — before replacing upstream files, run `dj config-diff`; only stage actual divergence.
 - **Invoke the `omarchy` Skill** for any change under `~/.config/{hypr,waybar,walker,alacritty,kitty,ghostty,mako,omarchy}` on Omarchy hosts (detect: `/etc/os-release` + presence of `~/.local/share/omarchy/`).

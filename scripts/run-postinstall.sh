@@ -51,6 +51,15 @@ done
 
 : "${DRY_RUN:=0}"
 
+# NixOS regenerates /etc, units, users and groups from the host's flake
+# on every switch, so a hook's sudo edits would be undone (or never
+# applied, under users.mutableUsers = false). The flake is where that
+# state belongs there; nothing here runs.
+if [ "${DOTFILES_PKG:-}" = nix ]; then
+  printf '[run-postinstall] NixOS: system state comes from the flake; no hooks run\n'
+  exit 0
+fi
+
 case "${DOTFILES_SYSTEM_TYPE:-}" in
   '') ;;
   *[!A-Za-z0-9_-]*)
