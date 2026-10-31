@@ -642,10 +642,13 @@ Two orthogonal rules:
       `~/.config/git/ignore` is the global gitignore — git reads it from
       `$XDG_CONFIG_HOME/git/ignore` with no `core.excludesFile` set, so it's
       load-bearing and unbacked; `dot add` it.
-      `~/.config/obsidian-headless/auth_token` and
-      `~/.config/reddit-chat-sync/config.toml` hold credentials in 0600
-      files, so they want `dj secret-add`, not `dot add` — plaintext under
+      `~/.config/reddit-chat-sync/config.toml` holds credentials in a 0600
+      file, so it wants `dj secret-add`, not `dot add` — plaintext under
       `~/.config` is exactly what §5's pre-commit backstop exists to catch.
+      (`~/.config/obsidian-headless`'s `auth_token` and
+      `sync/<vault>/config.json` are already SOPS secrets; audit-config
+      still lists the directory because `state.db` beside them is runtime
+      state, which stays untracked.)
       `~/.config/glow/glow.yml` is glow's own annotated template with every
       value left at its default, which under §7's tracking rule is not
       worth tracking at all — leave it, or keep it only if you'd want it on
