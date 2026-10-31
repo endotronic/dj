@@ -243,8 +243,17 @@ doing exactly what it does inside `$HOME` (dotfiles, secrets,
   (the bare repo is `~/.config.git`), and dj always names it
   `path:~/.config/nixos` anyway, so it's evaluated as a **path flake**:
   exactly that directory is copied into `/nix/store`, which every local
-  user can read. **Never put secrets in it**, and keep secrets-manifest
-  destinations out of it.
+  user can read. **Never put plaintext secrets in it**, and keep
+  secrets-manifest destinations out of it.
+- **System secrets are sops-nix, not dj's manifest.** dj's manifest lands
+  every entry on every machine, in `$HOME`; a per-host system secret (SSH
+  host keys first: `modules/host-keys.nix`) needs the opposite. It lives
+  SOPS-encrypted beside the host, `hosts/<host>/secrets.yaml` (rules in
+  `~/.config/nixos/.sops.yaml`, same age recipient as `~/.private`), and
+  sops-nix decrypts it on that host during activation — with dj's age key
+  at `~/.config/sops/age/keys.txt`, so the age key stays the only
+  hand-carried credential. Host keys this way mean a host rebuilt from the
+  flake keeps its SSH identity.
 - **Applying it** is the `nixos-flake-applied` migration (§2.9): the
   check evaluates this host's `system.build.toplevel` (no build, ~5 s and
   ~600 MB on a small VM) and compares it with `/run/current-system`; the
@@ -259,7 +268,11 @@ doing exactly what it does inside `$HOME` (dotfiles, secrets,
   Bumping nixpkgs (`nix flake update`) is never automatic.
 - **Fresh installs** (nixos-anywhere/disko from the official ISO) still
   need the flake copied onto the installer; any dj machine has it at
-  `~/.config/nixos`.
+  `~/.config/nixos`. A host with sops-nix secrets also needs the age key at
+  `/home/kevin/.config/sops/age/keys.txt` *before* first boot
+  (nixos-anywhere `--extra-files`); without it decryption fails and
+  `sshd-keygen` generates fresh host keys instead, so sshd still starts but
+  under a new identity.
 
 - **Packages** (`DOTFILES_PKG=nix`): `install-packages.sh` installs the
   personal lists into the user's own profile with
