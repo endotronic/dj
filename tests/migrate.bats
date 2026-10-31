@@ -904,6 +904,99 @@ export PATH="/home/kevin/.local/bin:$PATH"'
   [ "$(cat "$HOME/.zshrc")" = "$(printf 'a\n\nexport PATH="/opt/x:$PATH"\n\nb')" ]
 }
 
+# --- nixos-flake-applied ----------------------------------------------------
+#
+# A stub `nix` answers the two evaluations the check makes: the list of
+# nixosConfigurations (NIX_HOSTS) and this host's system path (NIX_WANT,
+# or an evaluation error when NIX_EVAL_FAIL=1). /run/current-system is a
+# sandbox symlink.
+
+nixos_flake_setup() {
+  printf 'ID=nixos\n' > "$SANDBOX/os-release"
+  export DOTFILES_OS_RELEASE_FILE="$SANDBOX/os-release"
+  export DOTFILES_NIXOS_FLAKE="$HOME/.config/nixos"
+  mkdir -p "$DOTFILES_NIXOS_FLAKE" "$SANDBOX/store/sys-a" "$SANDBOX/store/sys-b"
+  printf '{ }\n' > "$DOTFILES_NIXOS_FLAKE/flake.nix"
+  ln -sfn "$SANDBOX/store/sys-a" "$SANDBOX/current-system"
+  export DOTFILES_CURRENT_SYSTEM="$SANDBOX/current-system"
+  export NIX_HOSTS='["nixhost","other"]' NIX_WANT="$SANDBOX/store/sys-a"
+  printf '#!/bin/sh\necho nixhost\n' > "$STUB_BIN/hostname"
+  cat > "$STUB_BIN/nix" <<'STUB'
+#!/bin/sh
+echo "nix $*" >> "$SANDBOX/stub.log"
+case "$*" in
+  *--apply*) printf '%s' "$NIX_HOSTS" ;;
+  *outPath*) [ "${NIX_EVAL_FAIL:-0}" = 1 ] && exit 1; printf '%s' "$NIX_WANT" ;;
+esac
+STUB
+  stub_sudo_passthrough
+  stub_cmd nixos-rebuild
+  chmod +x "$STUB_BIN/hostname" "$STUB_BIN/nix"
+}
+
+@test "nixos-flake-applied: N/A (silent) off NixOS" {
+  nixos_flake_setup
+  printf 'ID=debian\n' > "$SANDBOX/os-release"
+  run sh "$MIGRATE" --only nixos-flake-applied
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"NixOS system"* ]]
+}
+
+@test "nixos-flake-applied: N/A without ~/.config/nixos/flake.nix" {
+  nixos_flake_setup
+  rm "$DOTFILES_NIXOS_FLAKE/flake.nix"
+  run sh "$MIGRATE" --only nixos-flake-applied
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"NixOS system"* ]]
+}
+
+@test "nixos-flake-applied: N/A when the flake doesn't describe this host" {
+  nixos_flake_setup
+  export NIX_HOSTS='["other"]'
+  run sh "$MIGRATE" --only nixos-flake-applied
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"NixOS system"* ]]
+}
+
+@test "nixos-flake-applied: ok when the running system is the flake's" {
+  nixos_flake_setup
+  run sh "$MIGRATE" --only nixos-flake-applied
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ok"*"NixOS system"* ]]
+  # Evaluated as a path flake, without touching flake.lock.
+  grep -q 'eval --no-write-lock-file --raw path:.*/.config/nixos#nixosConfigurations.nixhost.config.system.build.toplevel.outPath' "$SANDBOX/stub.log"
+}
+
+@test "nixos-flake-applied: pending when the flake builds a different system" {
+  nixos_flake_setup
+  export NIX_WANT="$SANDBOX/store/sys-b"
+  run sh "$MIGRATE" --only nixos-flake-applied
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dj migrate --fix --only nixos-flake-applied"* ]]
+  ! stub_called nixos-rebuild
+}
+
+@test "nixos-flake-applied: pending when the flake fails to evaluate" {
+  nixos_flake_setup
+  export NIX_EVAL_FAIL=1
+  run sh "$MIGRATE" --only nixos-flake-applied
+  [ "$status" -eq 1 ]
+}
+
+@test "nixos-flake-applied: --fix switches to this host's flake output" {
+  nixos_flake_setup
+  export NIX_WANT="$SANDBOX/store/sys-b"
+  run sh "$MIGRATE" --fix --only nixos-flake-applied
+  grep -q "^nixos-rebuild switch --flake path:.*/.config/nixos#nixhost$" "$SANDBOX/stub.log"
+}
+
+@test "nixos-flake-applied: --fix does nothing when already applied" {
+  nixos_flake_setup
+  run sh "$MIGRATE" --fix --only nixos-flake-applied
+  [ "$status" -eq 0 ]
+  ! stub_called nixos-rebuild
+}
+
 # --- sudo-nopasswd-tools ----------------------------------------------------
 #
 # The sandbox only PREPENDS $STUB_BIN to PATH, so the host's own wg / docker

@@ -79,7 +79,7 @@ backup_dir() {
 MIGRATIONS='git-refspec dotfiles-origin-ssh ssh-pubkey ssh-pubkey-match
             ssh-machine-identity legacy-home-git legacy-tmux-conf tmux-version bats-version
             pending-packages postinstall-hooks
-            agy-installed agy-shell-rc claude-mcp-grafana claude-statusline
+            nixos-flake-applied agy-installed agy-shell-rc claude-mcp-grafana claude-statusline
             sudo-nopasswd-tools'
 
 # Migrations that are detected but never auto-applied.
@@ -98,6 +98,7 @@ migration_desc() {
     bats-version)         echo "bats is new enough to run the whole test suite (>= 1.5)" ;;
     pending-packages)     echo "every package in the active lists is installed" ;;
     postinstall-hooks)    echo "every listed post-install hook has a script" ;;
+    nixos-flake-applied)  echo "the running NixOS system is what ~/.config/nixos builds for this host" ;;
     agy-installed)        echo "agy (antigravity) is installed, as the package list asks" ;;
     agy-shell-rc)         echo "no Antigravity installer PATH edits in shell rc files" ;;
     claude-mcp-grafana)   echo "Claude Code has the grafana MCP server registered at user scope" ;;
@@ -568,6 +569,49 @@ fix_postinstall_hooks() {
   log "from ~/.config/dj/postinstall/ and commit with dot."
 }
 
+# ---------- nixos-flake-applied ----------
+#
+# On NixOS the system is whatever ~/.config/nixos (private repo, travels
+# with `dj sync`) builds for this hostname. A pull that changes it leaves
+# the machine running the old generation until someone runs
+# nixos-rebuild, and nothing complains. The check evaluates the flake
+# (no build) and compares its system path with /run/current-system, so
+# it's a predicate on live state, not a stamp. Auto-fixable: local, and
+# the previous generation stays one `nixos-rebuild switch --rollback`
+# (or a boot-menu entry) away.
+#
+# `path:` keeps Nix from looking for a .git above the directory: the
+# flake is exactly that directory, nothing else in $HOME.
+
+nixos_flake_dir() { printf '%s' "${DOTFILES_NIXOS_FLAKE:-$HOME/.config/nixos}"; }
+nixos_host() { hostname -s 2>/dev/null || uname -n; }
+nixos_nix() { nix --extra-experimental-features 'nix-command flakes' "$@"; }
+
+check_nixos_flake_applied() {
+  on_nixos || return 2
+  command -v nix >/dev/null 2>&1 || return 2
+  _fd=$(nixos_flake_dir)
+  [ -f "$_fd/flake.nix" ] || return 2
+  _host=$(nixos_host)
+  # A host the flake doesn't describe is managed some other way.
+  nixos_nix eval --no-write-lock-file --json "path:$_fd#nixosConfigurations" \
+      --apply builtins.attrNames 2>/dev/null | tr -d '[]"' | tr ',' '\n' \
+    | grep -Fxq -- "$_host" || return 2
+  # An evaluation error is pending too: the fix shows the error.
+  _want=$(nixos_nix eval --no-write-lock-file --raw \
+    "path:$_fd#nixosConfigurations.$_host.config.system.build.toplevel.outPath" \
+    2>/dev/null) || return 1
+  _have=$(readlink -f "${DOTFILES_CURRENT_SYSTEM:-/run/current-system}" 2>/dev/null || true)
+  [ -n "$_want" ] && [ "$_want" = "$_have" ]
+}
+
+fix_nixos_flake_applied() {
+  _fd=$(nixos_flake_dir)
+  _host=$(nixos_host)
+  log "nixos-rebuild switch --flake path:$_fd#$_host"
+  sudo nixos-rebuild switch --flake "path:$_fd#$_host"
+}
+
 # ---------- agy-installed ----------
 #
 # agy is SKIP in every renames file and has no packages/scripts/agy.sh
@@ -799,6 +843,7 @@ run_check() {
     bats-version)         check_bats_version ;;
     pending-packages)     check_pending_packages ;;
     postinstall-hooks)    check_postinstall_hooks ;;
+    nixos-flake-applied)  check_nixos_flake_applied ;;
     agy-installed)        check_agy_installed ;;
     agy-shell-rc)         check_agy_shell_rc ;;
     claude-mcp-grafana)   check_claude_mcp_grafana ;;
@@ -821,6 +866,7 @@ run_fix() {
     bats-version)         fix_bats_version ;;
     pending-packages)     fix_pending_packages ;;
     postinstall-hooks)    fix_postinstall_hooks ;;
+    nixos-flake-applied)  fix_nixos_flake_applied ;;
     agy-installed)        fix_agy_installed ;;
     agy-shell-rc)         fix_agy_shell_rc ;;
     claude-mcp-grafana)   fix_claude_mcp_grafana ;;

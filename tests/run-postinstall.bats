@@ -80,6 +80,32 @@ teardown() {
   [ ! -f "$marker" ]
 }
 
+@test "NixOS: applies the flake through the nixos-flake-applied migration" {
+  printf 'ID=nixos\n' > "$SANDBOX/os-release"
+  stub_cmd nix
+  fake_root="$SANDBOX/fake-root"
+  mkdir -p "$fake_root/scripts"
+  cp "$RUN_POSTINSTALL" "$DOTFILES_REPO_ROOT/scripts/os-detect.sh" "$fake_root/scripts/"
+  printf '#!/bin/sh\necho "migrate $*" >> "%s/stub.log"\n' "$SANDBOX" > "$fake_root/scripts/migrate.sh"
+
+  DOTFILES_OS_RELEASE_FILE="$SANDBOX/os-release" run sh "$fake_root/scripts/run-postinstall.sh"
+  [ "$status" -eq 0 ]
+  grep -q "^migrate --fix --only nixos-flake-applied$" "$SANDBOX/stub.log"
+}
+
+@test "NixOS: --dry-run applies nothing" {
+  printf 'ID=nixos\n' > "$SANDBOX/os-release"
+  stub_cmd nix
+  fake_root="$SANDBOX/fake-root"
+  mkdir -p "$fake_root/scripts"
+  cp "$RUN_POSTINSTALL" "$DOTFILES_REPO_ROOT/scripts/os-detect.sh" "$fake_root/scripts/"
+  printf '#!/bin/sh\necho "migrate $*" >> "%s/stub.log"\n' "$SANDBOX" > "$fake_root/scripts/migrate.sh"
+
+  DOTFILES_OS_RELEASE_FILE="$SANDBOX/os-release" run sh "$fake_root/scripts/run-postinstall.sh" --dry-run
+  [ "$status" -eq 0 ]
+  ! grep -q "^migrate" "$SANDBOX/stub.log" 2>/dev/null
+}
+
 @test "--dry-run reports what would run without running it" {
   fake_lists="$SANDBOX/fake-postinstall"
   fake_hooks="$SANDBOX/fake-hooks"

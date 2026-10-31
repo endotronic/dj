@@ -53,11 +53,15 @@ done
 
 # NixOS regenerates /etc, units, users and groups from the host's flake
 # on every switch, so a hook's sudo edits would be undone (or never
-# applied, under users.mutableUsers = false). The flake is where that
-# state belongs there; nothing here runs.
+# applied, under users.mutableUsers = false). Applying the flake is the
+# post-install step there instead: the nixos-flake-applied migration
+# switches to ~/.config/nixos's system for this host when the running
+# one differs (and does nothing when it matches, or when the flake
+# doesn't describe this host).
 if [ "${DOTFILES_PKG:-}" = nix ]; then
   printf '[run-postinstall] NixOS: system state comes from the flake; no hooks run\n'
-  exit 0
+  [ "$DRY_RUN" = 1 ] && exit 0
+  exec sh "$script_dir/migrate.sh" --fix --only nixos-flake-applied
 fi
 
 case "${DOTFILES_SYSTEM_TYPE:-}" in
