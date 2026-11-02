@@ -1,0 +1,1030 @@
+#!/usr/bin/env bats
+#
+# Tests for install.sh. Two repos get bootstrapped:
+#   ~/.dotfiles/    public tooling repo -- normal `git clone` (or used
+#                   in place when install.sh already lives in one)
+#   ~/.config.git/  private bare repo, work-tree $HOME -- personal
+#                   config + secrets, optionally cloned from
+#                   --private-repo, else initialized empty
+#
+# The big-ticket coverage on the private-repo side is conflict
+# detection: identical files aren't conflicts, differing files are,
+# and the three --on-conflict modes (backup / keep / abort) leave the
+# right end state.
+
+load test_helper
+
+setup() {
+  sandbox_setup
+  stub_dir_setup
+  stub_sudo_passthrough          # in case the script ever needs sudo
+  export INSTALL="$DOTFILES_REPO_ROOT/install.sh"
+}
+
+teardown() {
+  sandbox_teardown
+}
+
+# Stage a minimal "our repo" checkout at $HOME/.dotfiles so install.sh
+# uses it in place (no clone needed). Use whenever the test cares
+# about the private-repo flow but not about how the public tooling
+# repo got there.
+stage_fake_dotfiles_checkout() {
+  mkdir -p "$HOME/.dotfiles/scripts"
+  cp "$DOTFILES_REPO_ROOT/install.sh"           "$HOME/.dotfiles/install.sh"
+  cp "$DOTFILES_REPO_ROOT/scripts/os-detect.sh" "$HOME/.dotfiles/scripts/os-detect.sh"
+}
+
+# Build a fake "our repo" (public-tooling shape: install.sh +
+# scripts/os-detect.sh at the toplevel) at $1, with a marker file
+# whose content is $2, committed so it's clonable.
+_make_fake_repo_dir() {
+  local where=$1 marker=$2
+  mkdir -p "$where/scripts"
+  cp "$DOTFILES_REPO_ROOT/install.sh"           "$where/install.sh"
+  cp "$DOTFILES_REPO_ROOT/scripts/os-detect.sh" "$where/scripts/os-detect.sh"
+  printf '%s\n' "$marker" > "$where/MARKER"
+  ( cd "$where" \
+      && git init -q \
+      && git config user.email t@t \
+      && git config user.name t \
+      && git config commit.gpgsign false \
+      && git add -A \
+      && git commit -q -m init )
+}
+
+# --- argument validation --------------------------------------------------
+
+@test "--help exits 0 and prints usage" {
+  run sh "$INSTALL" --help
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ Usage ]]
+  [[ "$output" =~ "--system-type" ]]
+  [[ "$output" =~ "--on-conflict" ]]
+  [[ "$output" =~ "--age-key" ]]
+  [[ "$output" =~ "--sops" ]]
+  [[ "$output" =~ "--module" ]]
+  [[ "$output" =~ "--private-repo" ]]
+}
+
+@test "--help does not crash when SUDO_USER is unset" {
+  # Regression: the --sops help text mentioned $SUDO_USER unescaped
+  # inside an unquoted heredoc, so `set -u` treated it as an unbound
+  # variable and aborted the whole script -- on any machine not
+  # invoked via sudo, i.e. almost always.
+  unset SUDO_USER
+  run sh "$INSTALL" --help
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ '$SUDO_USER' ]]
+}
+
+@test "--system-type with invalid characters exits 2" {
+  run sh "$INSTALL" --system-type 'not a type'
+  [ "$status" -eq 2 ]
+  [[ "$output" =~ "--system-type must contain only" ]]
+}
+
+@test "invalid --on-conflict exits 2" {
+  run sh "$INSTALL" --on-conflict bogus
+  [ "$status" -eq 2 ]
+  [[ "$output" =~ "--on-conflict must be" ]]
+}
+
+@test "unknown argument exits 2" {
+  run sh "$INSTALL" --not-a-flag
+  [ "$status" -eq 2 ]
+  [[ "$output" =~ "unknown argument" ]]
+}
+
+# --- public repo: existing checkout vs. fresh clone -----------------------
+
+@test "existing ~/.dotfiles checkout is used in place (no clone)" {
+  stage_fake_dotfiles_checkout
+
+  run sh "$INSTALL" --on-conflict backup --remove-source no
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "using existing checkout at $HOME/.dotfiles" ]]
+}
+
+@test "no existing ~/.dotfiles: --repo local dir gets cloned there" {
+  fake=$SANDBOX/src-public-repo
+  _make_fake_repo_dir "$fake" "marker content"
+
+  run sh "$INSTALL" --repo "$fake" --on-conflict backup --remove-source no
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "cloning $fake into $HOME/.dotfiles" ]]
+  [ -f "$HOME/.dotfiles/MARKER" ]
+  grep -q "marker content" "$HOME/.dotfiles/MARKER"
+}
+
+@test "existing git checkout (not self) is updated to match its origin's latest" {
+  origin=$SANDBOX/origin-repo
+  _make_fake_repo_dir "$origin" "v1"
+  git clone -q "$origin" "$HOME/.dotfiles"
+
+  # Origin moves on after the clone -- as if a fix landed upstream
+  # between this machine's first bootstrap and today's re-run.
+  printf 'v2\n' > "$origin/MARKER"
+  git -C "$origin" commit -q -am v2
+
+  run sh "$INSTALL" --on-conflict backup --remove-source no
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "updating existing checkout at $HOME/.dotfiles" ]]
+  grep -q "^v2$" "$HOME/.dotfiles/MARKER"
+}
+
+@test "existing git checkout with local edits: those edits are overwritten, not kept" {
+  origin=$SANDBOX/origin-repo
+  _make_fake_repo_dir "$origin" "v1"
+  git clone -q "$origin" "$HOME/.dotfiles"
+
+  # Local drift in the checkout (e.g. a stray edit from a previous,
+  # interrupted run) must not survive -- the checkout should converge
+  # to what's tracked, not preserve whatever happens to be sitting there.
+  printf 'locally modified, uncommitted\n' > "$HOME/.dotfiles/MARKER"
+
+  run sh "$INSTALL" --on-conflict backup --remove-source no
+  [ "$status" -eq 0 ]
+  grep -q "^v1$" "$HOME/.dotfiles/MARKER"
+}
+
+@test "install.sh running from within its own checkout is left as-is (no fetch)" {
+  _make_fake_repo_dir "$HOME/.dotfiles" "self marker"
+
+  run sh "$HOME/.dotfiles/install.sh" --on-conflict backup --remove-source no
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "using existing checkout at $HOME/.dotfiles (running from within it)" ]]
+  if [[ "$output" =~ "updating existing checkout" ]]; then
+    printf 'unexpected fetch/update of the self-referential checkout\n%s\n' "$output" >&2
+    false
+  fi
+  grep -q "self marker" "$HOME/.dotfiles/MARKER"
+}
+
+# --- private repo: empty-init fallback and cloning -------------------------
+
+@test "no --private-repo: initializes an empty bare private repo" {
+  stage_fake_dotfiles_checkout
+
+  run sh "$INSTALL" --on-conflict backup
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "initializing empty private repo" ]]
+  [ -d "$HOME/.config.git" ]
+  run dot rev-parse --verify -q HEAD
+  [ "$status" -ne 0 ]
+}
+
+@test "--private-repo clones a local repo and checks it out" {
+  stage_fake_dotfiles_checkout
+  make_src_repo
+  add_to_repo .bashrc "# private tracked"
+  publish_repo
+
+  run sh "$INSTALL" --private-repo "$SRC_REPO" --on-conflict backup
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "cloned private repo" ]]
+  [ -f "$HOME/.bashrc" ]
+  grep -q "private tracked" "$HOME/.bashrc"
+}
+
+@test "--private-repo: sets an origin/* fetch refspec on the bare clone" {
+  # `git clone --bare` writes no remote.origin.fetch, so origin/master
+  # never exists and `dot status` can never answer "what's unpushed?".
+  # dj sync keeps working either way, which is why the gap went
+  # unnoticed for so long -- install.sh must close it up front.
+  stage_fake_dotfiles_checkout
+  make_src_repo
+  add_to_repo .bashrc "# private tracked"
+  publish_repo
+
+  run sh "$INSTALL" --private-repo "$SRC_REPO" --on-conflict backup
+  [ "$status" -eq 0 ]
+  [ "$(dot config --get remote.origin.fetch)" = '+refs/heads/*:refs/remotes/origin/*' ]
+  run dot rev-parse --verify refs/remotes/origin/master
+  [ "$status" -eq 0 ]
+}
+
+@test "--private-repo: sets upstream tracking so dot status reports ahead/behind" {
+  stage_fake_dotfiles_checkout
+  make_src_repo
+  add_to_repo .bashrc "# private tracked"
+  publish_repo
+
+  run sh "$INSTALL" --private-repo "$SRC_REPO" --on-conflict backup
+  [ "$status" -eq 0 ]
+  [ "$(dot config --get branch.master.remote)" = origin ]
+  [ "$(dot config --get branch.master.merge)" = refs/heads/master ]
+  run dot rev-parse --abbrev-ref 'master@{upstream}'
+  [ "$status" -eq 0 ]
+  [ "$output" = origin/master ]
+}
+
+@test "no --private-repo: empty init gets no refspec (there is no origin)" {
+  stage_fake_dotfiles_checkout
+
+  run sh "$INSTALL" --on-conflict backup
+  [ "$status" -eq 0 ]
+  run dot config --get remote.origin.fetch
+  [ "$status" -ne 0 ]
+}
+
+@test "--private-repo with unreachable source is fatal, not a silent empty-init" {
+  # Regression: this used to warn and fall back to an empty private
+  # repo, which in real use left secrets/tmux/SSH/GPG all unrestored
+  # with the warning easy to miss in the scroll of install output.
+  # An explicit --private-repo that fails to clone must abort instead.
+  stage_fake_dotfiles_checkout
+
+  run sh "$INSTALL" --private-repo "$SANDBOX/does-not-exist.git" --on-conflict backup
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "error: --private-repo was given but the clone failed" ]]
+  [ ! -d "$HOME/.config.git" ]
+}
+
+@test "DOTFILES_ACCEPT_NEW_HOSTS threads accept-new into the private-repo clone's SSH transport" {
+  stage_fake_dotfiles_checkout
+  stub_cmd ssh
+
+  DOTFILES_ACCEPT_NEW_HOSTS=1 run sh "$INSTALL" --private-repo "git@fakehost:alice/dotfiles.git" --on-conflict backup
+  [ "$status" -eq 1 ]
+  grep -q "StrictHostKeyChecking=accept-new" "$SANDBOX/stub.log"
+}
+
+@test "without DOTFILES_ACCEPT_NEW_HOSTS the private-repo clone's SSH transport is unmodified" {
+  stage_fake_dotfiles_checkout
+  stub_cmd ssh
+
+  run sh "$INSTALL" --private-repo "git@fakehost:alice/dotfiles.git" --on-conflict backup
+  [ "$status" -eq 1 ]
+  stub_called ssh
+  ! grep -q "StrictHostKeyChecking=accept-new" "$SANDBOX/stub.log"
+}
+
+@test "--private-repo http(s) URL in non-interactive shell is fatal, not a silent empty-init" {
+  stage_fake_dotfiles_checkout
+
+  run sh "$INSTALL" --private-repo "https://example.invalid/u/private.git" --on-conflict backup
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "credentials can't be collected" ]]
+  [ ! -d "$HOME/.config.git" ]
+}
+
+@test "existing private repo is used in place (no re-clone)" {
+  stage_fake_dotfiles_checkout
+  make_src_repo
+  add_to_repo .bashrc "# private tracked"
+  publish_repo
+
+  sh "$INSTALL" --private-repo "$SRC_REPO" --on-conflict backup >/dev/null
+  run sh "$INSTALL" --private-repo "$SRC_REPO" --on-conflict backup
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "using existing private repo at $HOME/.config.git" ]]
+}
+
+# --- fresh checkout into empty $HOME (private repo) -----------------------
+
+@test "fresh install checks out tracked private-repo files into HOME" {
+  stage_fake_dotfiles_checkout
+  make_src_repo
+  add_to_repo .bashrc "# tracked bashrc"
+  add_to_repo .config/foo.toml "key = 1"
+  publish_repo
+
+  run sh "$INSTALL" --private-repo "$SRC_REPO" --on-conflict backup
+  [ "$status" -eq 0 ]
+  [ -d "$HOME/.config.git" ]
+  [ -f "$HOME/.bashrc" ]
+  [ -f "$HOME/.config/foo.toml" ]
+  grep -q "tracked bashrc" "$HOME/.bashrc"
+}
+
+@test "fresh install reports 'no conflicts' when HOME is empty" {
+  stage_fake_dotfiles_checkout
+  make_src_repo
+  add_to_repo .bashrc "# tracked"
+  publish_repo
+  run sh "$INSTALL" --private-repo "$SRC_REPO" --on-conflict abort
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "no conflicts" ]]
+}
+
+# --- conflict detection ----------------------------------------------------
+
+@test "identical-content files are NOT conflicts" {
+  stage_fake_dotfiles_checkout
+  make_src_repo
+  add_to_repo .bashrc "# same on both sides"
+  publish_repo
+  # Pre-populate $HOME with the EXACT same content.
+  printf '%s\n' "# same on both sides" > "$HOME/.bashrc"
+
+  run sh "$INSTALL" --private-repo "$SRC_REPO" --on-conflict abort
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "no conflicts" ]]
+  # File unchanged.
+  grep -q "same on both sides" "$HOME/.bashrc"
+}
+
+@test "differing files ARE conflicts" {
+  stage_fake_dotfiles_checkout
+  make_src_repo
+  add_to_repo .bashrc "# tracked version"
+  publish_repo
+  printf '%s\n' "# DIFFERENT user version" > "$HOME/.bashrc"
+
+  run sh "$INSTALL" --private-repo "$SRC_REPO" --on-conflict abort
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ ".bashrc" ]]
+}
+
+@test "symlinks in HOME are skipped (not flagged as conflicts)" {
+  stage_fake_dotfiles_checkout
+  make_src_repo
+  add_to_repo .bashrc "# tracked"
+  publish_repo
+  # User has a symlink at .bashrc pointing elsewhere.
+  printf 'other\n' > "$HOME/.other-bashrc"
+  ln -s "$HOME/.other-bashrc" "$HOME/.bashrc"
+
+  run sh "$INSTALL" --private-repo "$SRC_REPO" --on-conflict abort
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "no conflicts" ]]
+}
+
+# --- --on-conflict backup -------------------------------------------------
+
+@test "--on-conflict backup moves originals and writes tracked versions" {
+  stage_fake_dotfiles_checkout
+  make_src_repo
+  add_to_repo .bashrc "# tracked"
+  publish_repo
+  printf '%s\n' "# user" > "$HOME/.bashrc"
+
+  run sh "$INSTALL" --private-repo "$SRC_REPO" --on-conflict backup
+  [ "$status" -eq 0 ]
+  grep -q "^# tracked" "$HOME/.bashrc"
+  # The user version is preserved in the backup tree.
+  found=$(find "$HOME/.dotfiles-backup" -name .bashrc -type f | head -1)
+  [ -n "$found" ]
+  grep -q "^# user" "$found"
+}
+
+# --- --on-conflict keep ---------------------------------------------------
+
+@test "--on-conflict keep preserves user version; backup has user copy too" {
+  stage_fake_dotfiles_checkout
+  make_src_repo
+  add_to_repo .bashrc "# tracked"
+  publish_repo
+  printf '%s\n' "# user" > "$HOME/.bashrc"
+
+  run sh "$INSTALL" --private-repo "$SRC_REPO" --on-conflict keep
+  [ "$status" -eq 0 ]
+  # User version still in place.
+  grep -q "^# user" "$HOME/.bashrc"
+  # Backup also has the user version (the moved-aside copy).
+  found=$(find "$HOME/.dotfiles-backup" -name .bashrc -type f | head -1)
+  [ -n "$found" ]
+  grep -q "^# user" "$found"
+}
+
+@test "--on-conflict keep leaves the file as modified per dot status" {
+  stage_fake_dotfiles_checkout
+  make_src_repo
+  add_to_repo .bashrc "# tracked"
+  publish_repo
+  printf '%s\n' "# user" > "$HOME/.bashrc"
+
+  run sh "$INSTALL" --private-repo "$SRC_REPO" --on-conflict keep
+  [ "$status" -eq 0 ]
+  # `dot status` should report .bashrc as modified.
+  run dot status --porcelain
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ ^[[:space:]]?M[[:space:]].bashrc ]] || \
+    [[ "$output" =~ M\ .bashrc ]]
+}
+
+# --- --on-conflict abort --------------------------------------------------
+
+@test "--on-conflict abort exits 1 and leaves HOME untouched" {
+  stage_fake_dotfiles_checkout
+  make_src_repo
+  add_to_repo .bashrc "# tracked"
+  publish_repo
+  printf '%s\n' "# user" > "$HOME/.bashrc"
+
+  run sh "$INSTALL" --private-repo "$SRC_REPO" --on-conflict abort
+  [ "$status" -eq 1 ]
+  grep -q "^# user" "$HOME/.bashrc"
+  [ ! -d "$HOME/.dotfiles-backup" ]
+}
+
+# --- legacy ~/.tmux.conf* cleanup -------------------------------------------
+
+@test "pre-existing ~/.tmux.conf* is backed up when tmux.conf is tracked" {
+  stage_fake_dotfiles_checkout
+  make_src_repo
+  add_to_repo .config/tmux/tmux.conf "# tracked tmux config"
+  publish_repo
+  printf '%s\n' "# legacy hand-written config" > "$HOME/.tmux.conf"
+  printf '%s\n' "# legacy template" > "$HOME/.tmux.conf.template"
+
+  run sh "$INSTALL" --private-repo "$SRC_REPO" --on-conflict backup
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "moving legacy .tmux.conf" ]]
+  [ ! -e "$HOME/.tmux.conf" ]
+  [ ! -e "$HOME/.tmux.conf.template" ]
+  [ -f "$HOME/.config/tmux/tmux.conf" ]
+  grep -q "tracked tmux config" "$HOME/.config/tmux/tmux.conf"
+  found=$(find "$HOME/.dotfiles-backup" -name ".tmux.conf" -type f | head -1)
+  [ -n "$found" ]
+  grep -q "legacy hand-written config" "$found"
+  found_template=$(find "$HOME/.dotfiles-backup" -name ".tmux.conf.template" -type f | head -1)
+  [ -n "$found_template" ]
+  grep -q "legacy template" "$found_template"
+}
+
+@test "no legacy ~/.tmux.conf*: nothing to back up, no-op" {
+  stage_fake_dotfiles_checkout
+  make_src_repo
+  add_to_repo .config/tmux/tmux.conf "# tracked tmux config"
+  publish_repo
+
+  run sh "$INSTALL" --private-repo "$SRC_REPO" --on-conflict backup
+  [ "$status" -eq 0 ]
+  [[ ! "$output" =~ "moving legacy" ]]
+  [ -f "$HOME/.config/tmux/tmux.conf" ]
+}
+
+# --- non-interactive guard -------------------------------------------------
+
+@test "--on-conflict ask refuses to act when non-interactive and conflicts exist" {
+  stage_fake_dotfiles_checkout
+  make_src_repo
+  add_to_repo .bashrc "# tracked"
+  publish_repo
+  printf '%s\n' "# user" > "$HOME/.bashrc"
+
+  # `run` gives no controlling TTY, so this exercises the
+  # non-interactive guard.
+  run sh "$INSTALL" --private-repo "$SRC_REPO" --on-conflict ask
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "non-interactive" ]]
+  # HOME unchanged.
+  grep -q "^# user" "$HOME/.bashrc"
+}
+
+# --- system-type persistence ---------------------------------------------
+
+@test "--system-type desktop writes the tier file" {
+  stage_fake_dotfiles_checkout
+  make_src_repo
+  add_to_repo .bashrc "# tracked"
+  publish_repo
+
+  run sh "$INSTALL" --private-repo "$SRC_REPO" --system-type desktop --on-conflict backup
+  [ "$status" -eq 0 ]
+  [ -f "$XDG_CONFIG_HOME/dotfiles/system-type" ]
+  [ "$(cat "$XDG_CONFIG_HOME/dotfiles/system-type")" = "desktop" ]
+}
+
+@test "re-running without --system-type preserves the previous tier" {
+  stage_fake_dotfiles_checkout
+  make_src_repo
+  add_to_repo .bashrc "# tracked"
+  publish_repo
+
+  sh "$INSTALL" --private-repo "$SRC_REPO" --system-type server --on-conflict backup >/dev/null
+  # Re-run without the flag.
+  run sh "$INSTALL" --private-repo "$SRC_REPO" --on-conflict backup
+  [ "$status" -eq 0 ]
+  [ "$(cat "$XDG_CONFIG_HOME/dotfiles/system-type")" = "server" ]
+}
+
+# --- personal package list seeding ----------------------------------------
+
+@test "fresh install seeds ~/.config/dj/packages/common.txt from the template (non-interactive)" {
+  stage_fake_dotfiles_checkout
+  mkdir -p "$HOME/.dotfiles/packages/template"
+  printf '# template\nfoo\nbar\n' > "$HOME/.dotfiles/packages/template/common.txt"
+  make_src_repo
+  add_to_repo .bashrc "# tracked"
+  publish_repo
+
+  run sh "$INSTALL" --private-repo "$SRC_REPO" --on-conflict backup
+  [ "$status" -eq 0 ]
+  [ -f "$HOME/.config/dj/packages/common.txt" ]
+  grep -qx foo "$HOME/.config/dj/packages/common.txt"
+  grep -qx bar "$HOME/.config/dj/packages/common.txt"
+}
+
+@test "re-running install does not overwrite an existing personal package list" {
+  stage_fake_dotfiles_checkout
+  mkdir -p "$HOME/.dotfiles/packages/template"
+  printf 'foo\n' > "$HOME/.dotfiles/packages/template/common.txt"
+  make_src_repo
+  add_to_repo .bashrc "# tracked"
+  publish_repo
+
+  sh "$INSTALL" --private-repo "$SRC_REPO" --on-conflict backup >/dev/null
+  printf 'my-own-list\n' > "$HOME/.config/dj/packages/common.txt"
+
+  run sh "$INSTALL" --private-repo "$SRC_REPO" --on-conflict backup
+  [ "$status" -eq 0 ]
+  [ "$(cat "$HOME/.config/dj/packages/common.txt")" = "my-own-list" ]
+}
+
+# --- auto-detection of public-repo source (when --repo not given) ---------
+
+@test "auto-detect: install.sh inside its own clone uses that clone as default" {
+  fake=$SANDBOX/fake-our-repo
+  _make_fake_repo_dir "$fake" "fake marker"
+
+  run sh "$fake/install.sh" --on-conflict backup --remove-source no
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "auto-detected source repo: $fake" ]]
+  [[ "$output" =~ "REPO=$fake" ]]
+  [ -f "$HOME/.dotfiles/MARKER" ]
+  grep -q "fake marker" "$HOME/.dotfiles/MARKER"
+}
+
+@test "auto-detect: --repo takes priority over auto-detection" {
+  fake=$SANDBOX/fake-our-repo
+  _make_fake_repo_dir "$fake" "fake marker"
+  other=$SANDBOX/other-repo
+  _make_fake_repo_dir "$other" "OTHER marker"
+
+  run sh "$fake/install.sh" --repo "$other" \
+    --on-conflict backup --remove-source no
+  [ "$status" -eq 0 ]
+  # Should NOT auto-detect, REPO is the --repo path.
+  if [[ "$output" =~ "auto-detected source repo" ]]; then
+    printf 'unexpected auto-detect when --repo was explicit\n%s\n' "$output" >&2
+    false
+  fi
+  [[ "$output" =~ "REPO=$other" ]]
+  grep -q "OTHER marker" "$HOME/.dotfiles/MARKER"
+}
+
+@test "auto-detect: script outside any git repo falls back to default URL" {
+  # Place install.sh in a location not under any git dir.
+  outside=$SANDBOX/free-standing
+  mkdir -p "$outside/scripts"
+  cp "$DOTFILES_REPO_ROOT/install.sh"           "$outside/install.sh"
+  cp "$DOTFILES_REPO_ROOT/scripts/os-detect.sh" "$outside/scripts/os-detect.sh"
+  # NO git init -- this dir is not a repo.
+
+  # Have to give DOTFILES_REPO_URL so the fallback resolves to
+  # something cloneable for the test.
+  fake=$SANDBOX/clonable
+  _make_fake_repo_dir "$fake" "clonable marker"
+  export DOTFILES_REPO_URL=$fake
+
+  run sh "$outside/install.sh" --on-conflict backup --remove-source no
+  [ "$status" -eq 0 ]
+  if [[ "$output" =~ "auto-detected source repo" ]]; then
+    printf 'unexpected auto-detect from a non-git dir\n%s\n' "$output" >&2
+    false
+  fi
+  [[ "$output" =~ "REPO=$fake" ]]
+  grep -q "clonable marker" "$HOME/.dotfiles/MARKER"
+}
+
+@test "auto-detect: rejects a git repo that does not look like ours" {
+  # Git repo containing install.sh but missing scripts/os-detect.sh --
+  # shouldn't be picked up as "our repo".
+  random=$SANDBOX/unrelated-project
+  mkdir -p "$random"
+  cp "$DOTFILES_REPO_ROOT/install.sh" "$random/install.sh"
+  ( cd "$random" \
+      && git init -q \
+      && git config user.email t@t \
+      && git config user.name t \
+      && git config commit.gpgsign false \
+      && git add -A \
+      && git commit -q -m init )
+
+  fake=$SANDBOX/clonable
+  _make_fake_repo_dir "$fake" "clonable marker"
+  export DOTFILES_REPO_URL=$fake
+
+  run sh "$random/install.sh" --on-conflict backup --remove-source no
+  [ "$status" -eq 0 ]
+  if [[ "$output" =~ "auto-detected source repo" ]]; then
+    printf 'falsely auto-detected a non-our repo\n%s\n' "$output" >&2
+    false
+  fi
+  [[ "$output" =~ "REPO=$fake" ]]
+}
+
+# --- local --repo + --remove-source (public repo) -------------------------
+
+@test "invalid --remove-source exits 2" {
+  run sh "$INSTALL" --remove-source bogus
+  [ "$status" -eq 2 ]
+  [[ "$output" =~ "--remove-source must be" ]]
+}
+
+@test "--remove-source no leaves the local source clone intact" {
+  fake=$SANDBOX/src-public-repo
+  _make_fake_repo_dir "$fake" "marker"
+  run sh "$INSTALL" --repo "$fake" --on-conflict backup --remove-source no
+  [ "$status" -eq 0 ]
+  [ -d "$fake" ]
+}
+
+@test "--remove-source yes deletes the local source clone after install" {
+  fake=$SANDBOX/src-public-repo
+  _make_fake_repo_dir "$fake" "marker"
+  run sh "$INSTALL" --repo "$fake" --on-conflict backup --remove-source yes
+  [ "$status" -eq 0 ]
+  [ ! -d "$fake" ]
+  [[ "$output" =~ "removed $fake" ]]
+}
+
+@test "--remove-source yes from inside the source clone doesn't break the shell's cwd" {
+  # Regression: removing the source clone while the invoking shell's
+  # cwd was inside it left the shell unable to getcwd() -- every
+  # subsequent command (sh, git, ...) failed with
+  # "getcwd() failed: No such file or directory" /
+  # "fatal: Unable to read current working directory".
+  # Fix: cd the *real* shell (not a subshell) out to $HOME first.
+  fake=$SANDBOX/src-public-repo
+  _make_fake_repo_dir "$fake" "marker"
+
+  run sh -c "cd '$fake' && sh '$INSTALL' --repo '$fake' --on-conflict backup --remove-source yes"
+  [ "$status" -eq 0 ]
+  [ ! -d "$fake" ]
+  [[ "$output" =~ "removed $fake" ]]
+  if [[ "$output" =~ "getcwd" ]] || [[ "$output" =~ "current working directory" ]]; then
+    printf 'cwd corruption surfaced after source-clone removal:\n%s\n' "$output" >&2
+    false
+  fi
+}
+
+@test "non-interactive default keeps the source clone and prints a hint" {
+  fake=$SANDBOX/src-public-repo
+  _make_fake_repo_dir "$fake" "marker"
+  run sh "$INSTALL" --repo "$fake" --on-conflict backup
+  [ "$status" -eq 0 ]
+  [ -d "$fake" ]
+  [[ "$output" =~ "non-interactive" ]]
+  [[ "$output" =~ "rm -rf $fake" ]]
+}
+
+@test "local source with origin: cloned public repo's origin gets rewired" {
+  fake=$SANDBOX/src-public-repo
+  _make_fake_repo_dir "$fake" "marker"
+  ( cd "$fake" && git remote add origin https://github.com/u/r.git )
+  run sh "$INSTALL" --repo "$fake" --on-conflict backup --remove-source no
+  [ "$status" -eq 0 ]
+  run git -C "$HOME/.dotfiles" remote get-url origin
+  [ "$status" -eq 0 ]
+  [ "$output" = "https://github.com/u/r.git" ]
+}
+
+@test "remote --repo URL with existing checkout: --remove-source is a no-op" {
+  stage_fake_dotfiles_checkout
+  run sh "$INSTALL" --repo "https://example.invalid/u/r.git" \
+    --on-conflict backup --remove-source ask
+  [ "$status" -eq 0 ]
+  if [[ "$output" =~ "source clone at" ]]; then
+    printf 'unexpected source-clone cleanup chatter:\n%s\n' "$output" >&2
+    false
+  fi
+}
+
+# --- idempotency ---------------------------------------------------------
+
+@test "re-running install on an already-installed machine is safe" {
+  stage_fake_dotfiles_checkout
+  make_src_repo
+  add_to_repo .bashrc "# tracked"
+  publish_repo
+
+  sh "$INSTALL" --private-repo "$SRC_REPO" --on-conflict backup >/dev/null
+  # Second run: nothing changed, should be no conflicts.
+  run sh "$INSTALL" --private-repo "$SRC_REPO" --on-conflict abort
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "no conflicts" ]]
+}
+
+@test "re-run leaves all tracked files present (identical-files regression)" {
+  # Regression: on re-run, identical files were removed then `dot checkout`
+  # (no args) did not restore them because git treats no-arg checkout as a
+  # branch switch (no-op when already current), not a work-tree restore.
+  # Fix: use `( cd "$HOME" && dot checkout HEAD -- . )` which always restores
+  # missing files regardless of cwd.
+  stage_fake_dotfiles_checkout
+  make_src_repo
+  add_to_repo .bashrc "# bashrc"
+  add_to_repo .config/shell/aliases.sh "# aliases"
+  publish_repo
+
+  sh "$INSTALL" --private-repo "$SRC_REPO" --on-conflict backup >/dev/null
+  [ -f "$HOME/.bashrc" ]
+  [ -f "$HOME/.config/shell/aliases.sh" ]
+
+  # Second run with all files identical — they must still be present afterward.
+  run sh "$INSTALL" --private-repo "$SRC_REPO" --on-conflict abort
+  [ "$status" -eq 0 ]
+  [ -f "$HOME/.bashrc" ]
+  [ -f "$HOME/.config/shell/aliases.sh" ]
+  grep -q "# bashrc" "$HOME/.bashrc"
+}
+
+# --- --age-key flag ----------------------------------------------------------
+
+# --- --git-key flag -------------------------------------------------------
+
+@test "--git-key installs the git-host key to ~/.ssh/id_githost with mode 0600" {
+  stage_fake_dotfiles_checkout
+  key="$SANDBOX/deploy_key"
+  printf 'FAKE-DEPLOY-KEY\n' > "$key"
+
+  run sh "$INSTALL" --on-conflict backup --git-key "$key"
+  [ "$status" -eq 0 ]
+  grep -q FAKE-DEPLOY-KEY "$HOME/.ssh/id_githost"
+  [ "$(stat -c '%a' "$HOME/.ssh/id_githost")" = "600" ]
+  [ "$(stat -c '%a' "$HOME/.ssh")" = "700" ]
+}
+
+@test "--git-key with unreadable path warns and install still succeeds" {
+  stage_fake_dotfiles_checkout
+
+  run sh "$INSTALL" --on-conflict backup --git-key "$SANDBOX/nope"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "--git-key path not readable" ]]
+  [ ! -f "$HOME/.ssh/id_githost" ]
+}
+
+@test "an installed deploy key is used as the private-repo clone's SSH identity" {
+  stage_fake_dotfiles_checkout
+  stub_cmd ssh
+  key="$SANDBOX/deploy_key"
+  printf 'FAKE-DEPLOY-KEY\n' > "$key"
+
+  run sh "$INSTALL" --private-repo "git@fakehost:alice/dotfiles.git" \
+    --git-key "$key" --on-conflict backup
+  [ "$status" -eq 1 ]
+  grep -q -- "-i $HOME/.ssh/id_githost" "$SANDBOX/stub.log"
+  grep -q "IdentitiesOnly=yes" "$SANDBOX/stub.log"
+}
+
+@test "without a deploy key the clone's SSH identity is left to ssh's defaults" {
+  stage_fake_dotfiles_checkout
+  stub_cmd ssh
+
+  run sh "$INSTALL" --private-repo "git@fakehost:alice/dotfiles.git" --on-conflict backup
+  [ "$status" -eq 1 ]
+  stub_called ssh
+  ! grep -q "IdentitiesOnly=yes" "$SANDBOX/stub.log"
+}
+
+@test "--age-key installs key to XDG_CONFIG_HOME/sops/age/keys.txt" {
+  stage_fake_dotfiles_checkout
+
+  key_file="$SANDBOX/keys.txt"
+  printf '# created: 2024-01-01\nAGE-SECRET-KEY-1FAKE\n' > "$key_file"
+
+  run sh "$INSTALL" --on-conflict backup --age-key "$key_file"
+  [ "$status" -eq 0 ]
+  [ -f "$XDG_CONFIG_HOME/sops/age/keys.txt" ]
+  grep -q "AGE-SECRET-KEY-1FAKE" "$XDG_CONFIG_HOME/sops/age/keys.txt"
+  [[ "$output" =~ "installed age key from" ]]
+}
+
+@test "--age-key result file has mode 0600" {
+  stage_fake_dotfiles_checkout
+
+  key_file="$SANDBOX/keys.txt"
+  printf 'AGE-SECRET-KEY-1FAKE\n' > "$key_file"
+
+  sh "$INSTALL" --on-conflict backup --age-key "$key_file" >/dev/null
+  perms=$(stat -c '%a' "$XDG_CONFIG_HOME/sops/age/keys.txt")
+  [ "$perms" = "600" ]
+}
+
+@test "--age-key with unreadable path warns and install still succeeds" {
+  stage_fake_dotfiles_checkout
+
+  run sh "$INSTALL" --on-conflict backup \
+    --age-key "$SANDBOX/nonexistent-keys.txt"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "warn:" ]]
+  [ ! -f "$XDG_CONFIG_HOME/sops/age/keys.txt" ]
+}
+
+@test "--age-key does not overwrite an existing key" {
+  stage_fake_dotfiles_checkout
+
+  mkdir -p "$XDG_CONFIG_HOME/sops/age"
+  printf 'AGE-SECRET-KEY-1EXISTING\n' > "$XDG_CONFIG_HOME/sops/age/keys.txt"
+  chmod 0600 "$XDG_CONFIG_HOME/sops/age/keys.txt"
+
+  new_key="$SANDBOX/new-keys.txt"
+  printf 'AGE-SECRET-KEY-1NEW\n' > "$new_key"
+
+  run sh "$INSTALL" --on-conflict backup --age-key "$new_key"
+  [ "$status" -eq 0 ]
+  grep -q "AGE-SECRET-KEY-1EXISTING" "$XDG_CONFIG_HOME/sops/age/keys.txt"
+}
+
+@test "--age-key and --sops together exits 2" {
+  run sh "$INSTALL" --age-key "$SANDBOX/keys.txt" --sops host:path
+  [ "$status" -eq 2 ]
+  [[ "$output" =~ "mutually exclusive" ]]
+}
+
+# --- --sops flag ---------------------------------------------------------
+
+@test "--sops fetches the age key via scp" {
+  stage_fake_dotfiles_checkout
+  stub_scp_copies
+
+  remote_key="$SANDBOX/remote-keys.txt"
+  printf 'AGE-SECRET-KEY-1REMOTE\n' > "$remote_key"
+
+  run sh "$INSTALL" --on-conflict backup --sops "oldhost:$remote_key"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "fetching age key via scp from oldhost:$remote_key -- you may be prompted" ]]
+  [[ "$output" =~ "fetched age key via scp from oldhost:$remote_key" ]]
+  [ -f "$XDG_CONFIG_HOME/sops/age/keys.txt" ]
+  grep -q "AGE-SECRET-KEY-1REMOTE" "$XDG_CONFIG_HOME/sops/age/keys.txt"
+  perms=$(stat -c '%a' "$XDG_CONFIG_HOME/sops/age/keys.txt")
+  [ "$perms" = "600" ]
+  stub_called scp
+}
+
+@test "--sops with a bare host (no ':') assumes ~/.config/sops/age/keys.txt" {
+  stage_fake_dotfiles_checkout
+  stub_scp_fails
+  unset SUDO_USER
+
+  run sh "$INSTALL" --on-conflict backup --sops "oldhost"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "warn: scp from oldhost:~/.config/sops/age/keys.txt failed" ]]
+}
+
+@test "--sops with a bare host under sudo defaults to \$SUDO_USER, not root" {
+  stage_fake_dotfiles_checkout
+  stub_scp_fails
+  export SUDO_USER=alice
+
+  run sh "$INSTALL" --on-conflict backup --sops "oldhost"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "warn: scp from alice@oldhost:~/.config/sops/age/keys.txt failed" ]]
+}
+
+@test "--sops with a bare host when \$SUDO_USER is root itself is left alone" {
+  stage_fake_dotfiles_checkout
+  stub_scp_fails
+  export SUDO_USER=root
+
+  run sh "$INSTALL" --on-conflict backup --sops "oldhost"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "warn: scp from oldhost:~/.config/sops/age/keys.txt failed" ]]
+}
+
+@test "--sops with an explicit path still gets \$SUDO_USER prepended" {
+  stage_fake_dotfiles_checkout
+  stub_scp_fails
+  export SUDO_USER=alice
+
+  run sh "$INSTALL" --on-conflict backup --sops "oldhost:/custom/path/keys.txt"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "warn: scp from alice@oldhost:/custom/path/keys.txt failed" ]]
+}
+
+@test "--sops with an explicit user is never overridden by \$SUDO_USER" {
+  stage_fake_dotfiles_checkout
+  stub_scp_fails
+  export SUDO_USER=someoneelse
+
+  run sh "$INSTALL" --on-conflict backup --sops "alice@oldhost"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "warn: scp from alice@oldhost:~/.config/sops/age/keys.txt failed" ]]
+}
+
+@test "--sops with a bare user@host (no ':') assumes ~/.config/sops/age/keys.txt" {
+  stage_fake_dotfiles_checkout
+  stub_scp_fails
+
+  run sh "$INSTALL" --on-conflict backup --sops "alice@oldhost"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "warn: scp from alice@oldhost:~/.config/sops/age/keys.txt failed" ]]
+}
+
+@test "--sops with an explicit path is left untouched" {
+  stage_fake_dotfiles_checkout
+  stub_scp_fails
+
+  run sh "$INSTALL" --on-conflict backup --sops "oldhost:/custom/path/keys.txt"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "warn: scp from oldhost:/custom/path/keys.txt failed" ]]
+}
+
+@test "DOTFILES_ACCEPT_NEW_HOSTS threads accept-new into the --sops scp fetch" {
+  stage_fake_dotfiles_checkout
+  stub_cmd scp
+
+  DOTFILES_ACCEPT_NEW_HOSTS=1 run sh "$INSTALL" --on-conflict backup --sops "oldhost:~/keys.txt"
+  [ "$status" -eq 0 ]
+  grep -q "StrictHostKeyChecking=accept-new" "$SANDBOX/stub.log"
+}
+
+@test "--sops with failing scp warns and install still succeeds" {
+  stage_fake_dotfiles_checkout
+  stub_scp_fails
+
+  run sh "$INSTALL" --on-conflict backup --sops "oldhost:~/keys.txt"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "warn: scp from oldhost:~/keys.txt failed" ]]
+  [ ! -f "$XDG_CONFIG_HOME/sops/age/keys.txt" ]
+}
+
+@test "--sops does not overwrite an existing key" {
+  stage_fake_dotfiles_checkout
+  stub_scp_copies
+
+  mkdir -p "$XDG_CONFIG_HOME/sops/age"
+  printf 'AGE-SECRET-KEY-1EXISTING\n' > "$XDG_CONFIG_HOME/sops/age/keys.txt"
+  chmod 0600 "$XDG_CONFIG_HOME/sops/age/keys.txt"
+  remote_key="$SANDBOX/remote-keys.txt"
+  printf 'AGE-SECRET-KEY-1REMOTE\n' > "$remote_key"
+
+  run sh "$INSTALL" --on-conflict backup --sops "$remote_key"
+  [ "$status" -eq 0 ]
+  grep -q "AGE-SECRET-KEY-1EXISTING" "$XDG_CONFIG_HOME/sops/age/keys.txt"
+  # Existing key short-circuits before scp is ever invoked.
+  ! stub_called scp
+}
+
+# --- re-run tests (existing) -------------------------------------------------
+
+@test "re-run works when invoked from a subdirectory of HOME" {
+  # Regression: `dot checkout HEAD -- .` resolves '.' relative to cwd.
+  # When invoked from e.g. ~/dotfiles, no tracked files live there, so git
+  # errors with "pathspec '.' did not match any file(s) known to git".
+  # Fix: wrap in ( cd "$HOME" && ... ) so '.' always means the work-tree root.
+  stage_fake_dotfiles_checkout
+  make_src_repo
+  add_to_repo .bashrc "# bashrc"
+  publish_repo
+
+  sh "$INSTALL" --private-repo "$SRC_REPO" --on-conflict backup >/dev/null
+
+  # Run install from a subdirectory of HOME, not from HOME itself.
+  subdir="$HOME/some-project"
+  mkdir -p "$subdir"
+  run sh -c "cd '$subdir' && sh '$INSTALL' --private-repo '$SRC_REPO' --on-conflict abort"
+  [ "$status" -eq 0 ]
+  [ -f "$HOME/.bashrc" ]
+}
+
+# --- --module -------------------------------------------------------------
+
+@test "--module rejects a malformed name" {
+  run sh "$INSTALL" --module 'Bad_Name'
+  [ "$status" -eq 2 ]
+  [[ "$output" =~ "--module names are lowercase" ]]
+}
+
+@test "--module records the module in modules.txt" {
+  stage_fake_dotfiles_checkout
+  mkdir -p "$HOME/.dotfiles/scripts/lib" "$HOME/.dotfiles/modules/demo"
+  cp "$DOTFILES_REPO_ROOT/scripts/module.sh" "$HOME/.dotfiles/scripts/"
+  cp "$DOTFILES_REPO_ROOT/scripts/lib/modules.sh" "$HOME/.dotfiles/scripts/lib/"
+  echo "A demo module" > "$HOME/.dotfiles/modules/demo/MODULE"
+
+  run sh "$INSTALL" --module demo --on-conflict backup
+  [ "$status" -eq 0 ]
+  grep -qx demo "$XDG_CONFIG_HOME/dj/modules.txt"
+}
+
+@test "--module: an enabled module's post-secrets and finish hooks run" {
+  stage_fake_dotfiles_checkout
+  mkdir -p "$HOME/.dotfiles/scripts/lib" "$HOME/.dotfiles/modules/demo/hooks"
+  cp "$DOTFILES_REPO_ROOT/scripts/module.sh" "$HOME/.dotfiles/scripts/"
+  cp "$DOTFILES_REPO_ROOT/scripts/lib/modules.sh" "$HOME/.dotfiles/scripts/lib/"
+  echo "A demo module" > "$HOME/.dotfiles/modules/demo/MODULE"
+  printf '#!/bin/sh\necho DEMO-POST-SECRETS\n' > "$HOME/.dotfiles/modules/demo/hooks/post-secrets.sh"
+  printf '#!/bin/sh\necho DEMO-FINISH\n' > "$HOME/.dotfiles/modules/demo/hooks/finish.sh"
+
+  run sh "$INSTALL" --module demo --on-conflict backup
+  [ "$status" -eq 0 ]
+  [[ "$output" == *DEMO-POST-SECRETS*DEMO-FINISH* ]]
+}
+
+@test "without --module, no module hook runs" {
+  stage_fake_dotfiles_checkout
+  mkdir -p "$HOME/.dotfiles/scripts/lib" "$HOME/.dotfiles/modules/demo/hooks"
+  cp "$DOTFILES_REPO_ROOT/scripts/module.sh" "$HOME/.dotfiles/scripts/"
+  cp "$DOTFILES_REPO_ROOT/scripts/lib/modules.sh" "$HOME/.dotfiles/scripts/lib/"
+  echo "A demo module" > "$HOME/.dotfiles/modules/demo/MODULE"
+  printf '#!/bin/sh\necho DEMO-FINISH\n' > "$HOME/.dotfiles/modules/demo/hooks/finish.sh"
+
+  run sh "$INSTALL" --on-conflict backup
+  [ "$status" -eq 0 ]
+  [[ "$output" != *DEMO-FINISH* ]]
+}

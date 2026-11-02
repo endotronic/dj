@@ -9,9 +9,9 @@ dot add ~/.config/dj/modules.txt && dot commit -m 'dj: enable claude'
 ```
 
 `modules.txt` lives in your private repo, so a module enabled once is
-enabled on every machine after `dj sync`. During a bootstrap, before the
-private repo exists, `install.sh --module NAME` (or a flag that implies
-one) enables it for that run.
+enabled on every machine after `dj sync`. On a fresh machine,
+`install.sh --module NAME` enables it for the bootstrap itself and records
+it in `modules.txt`.
 
 A module is a directory here:
 
@@ -28,7 +28,6 @@ Bootstrap phases, in the order install.sh runs them:
 
 | phase | when | typical use |
 |---|---|---|
-| `pre-clone` | after the public repo is in place, before the private clone | put a credential the clone needs where ssh will find it |
 | `post-secrets` | after secrets are applied | register something that needs a secret |
 | `finish` | last, before the summary | interactive extras |
 
