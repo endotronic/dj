@@ -60,6 +60,7 @@ REMOVE_SOURCE=ask
 AGE_KEY_SRC=
 SOPS_KEY_SRC=
 GIT_KEY_SRC=
+THEME_COLOR=
 MODULES=
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -79,6 +80,8 @@ while [ $# -gt 0 ]; do
     --git-key=*)   GIT_KEY_SRC=${1#*=} ;;
     --sops)           shift; SOPS_KEY_SRC=${1:-} ;;
     --sops=*)         SOPS_KEY_SRC=${1#*=} ;;
+    --theme)          shift; THEME_COLOR=${1:-} ;;
+    --theme=*)        THEME_COLOR=${1#*=} ;;
     --module)         shift; MODULES="$MODULES ${1:-}" ;;
     --module=*)       MODULES="$MODULES ${1#*=}" ;;
     -h|--help)
@@ -171,6 +174,11 @@ Options:
         Takes effect for this run straight away and is added to
         ~/.config/dj/modules.txt, so later dj runs (and, once
         committed, your other machines) have it too.
+  --theme COLOR
+        (tmux-theme module, which this enables) 6-digit hex color, e.g.
+        #2596be, persisted to ~/.config/dotfiles/tmux-theme-color as
+        this machine's accent color. Host-local, like --system-type:
+        never tracked.
   -h, --help
         Show this help.
 EOF
@@ -235,6 +243,16 @@ esac
 case "$SOPS_KEY_SRC" in
   ''|*:*) ;;
   *) SOPS_KEY_SRC="$SOPS_KEY_SRC:~/.config/sops/age/keys.txt" ;;
+esac
+
+case "$THEME_COLOR" in
+  '') ;;
+  '#'[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F])
+    MODULES="$MODULES tmux-theme" ;;
+  *)
+    printf 'error: --theme must be a 6-digit hex color like #2596be (got: %s)\n' \
+      "$THEME_COLOR" >&2
+    exit 2 ;;
 esac
 
 for _m in $MODULES; do
@@ -370,6 +388,15 @@ if [ -n "$SYSTEM_TYPE" ]; then
   mkdir -p "$(dirname "$TIER_FILE")"
   printf '%s\n' "$SYSTEM_TYPE" > "$TIER_FILE"
   log "persisted system-type=$SYSTEM_TYPE"
+fi
+
+# ---------- 3b. Persist the tmux theme color (host-local, not tracked) ----
+
+if [ -n "$THEME_COLOR" ]; then
+  THEME_FILE=${XDG_CONFIG_HOME:-$HOME/.config}/dotfiles/tmux-theme-color
+  mkdir -p "$(dirname "$THEME_FILE")"
+  printf '%s\n' "$THEME_COLOR" > "$THEME_FILE"
+  log "persisted tmux theme color=$THEME_COLOR"
 fi
 
 # ---------- 4. Public tooling repo (~/.dotfiles/) ----------

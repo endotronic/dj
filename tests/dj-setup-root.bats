@@ -557,3 +557,18 @@ EOF
   # The value must appear as its own line, not merged/truncated.
   printf '%s\n' "$output" | grep -qx 'srv#2'
 }
+
+# ---------- tmux-theme module: --theme picked when omitted ---------------
+
+@test "generates a theme when omitted (falls back to random since claude is stubbed off)" {
+  export DJ_MODULES=tmux-theme
+  default_stubs
+  private_repo_with_remote
+  dotfiles_repo_with_origin git@github.com:someuser/somerepo.git
+
+  run sh "$SETUP" testhost --system-type server < /dev/null
+  [ "$status" -eq 0 ]
+  remote_cmd=$(final_remote_cmd)
+  [[ "$remote_cmd" =~ --theme.*\#[0-9a-f]{6} ]]
+}
+

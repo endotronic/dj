@@ -582,3 +582,103 @@ EOF
   # The value must appear as its own line, not merged/truncated.
   printf '%s\n' "$output" | grep -qx 'srv#2'
 }
+
+# ---------- tmux-theme module: --theme picked when omitted ---------------
+
+@test "generates --theme via claude when omitted and claude returns a valid hex color" {
+  export DJ_MODULES=tmux-theme
+  default_stubs ""
+  private_repo_with_remote
+  dotfiles_repo_with_origin git@github.com:someuser/somerepo.git
+  cat > "$STUB_BIN/claude" <<'EOF'
+#!/bin/sh
+printf 'Sure! #ff0000 seems fitting.\n'
+EOF
+  chmod +x "$STUB_BIN/claude"
+
+  run sh "$SETUP" testhost --system-type server < /dev/null
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "generated tmux theme color for testhost via claude: #ff0000" ]]
+  remote_cmd=$(remote_cmd_from_ssh_call)
+  [[ "$remote_cmd" == *"'--theme' '#ff0000'"* ]]
+}
+
+@test "falls back to a random --theme when claude produces no valid hex color" {
+  export DJ_MODULES=tmux-theme
+  default_stubs ""
+  private_repo_with_remote
+  dotfiles_repo_with_origin git@github.com:someuser/somerepo.git
+  cat > "$STUB_BIN/claude" <<'EOF'
+#!/bin/sh
+printf 'I cannot help with that.\n'
+EOF
+  chmod +x "$STUB_BIN/claude"
+
+  run sh "$SETUP" testhost --system-type server < /dev/null
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "no theme from claude; generated a random one for testhost:" ]]
+  remote_cmd=$(remote_cmd_from_ssh_call)
+  [[ "$remote_cmd" =~ \'--theme\'\ \'#[0-9a-f]{6}\' ]]
+}
+
+@test "falls back to a random --theme when claude isn't on PATH at all" {
+  export DJ_MODULES=tmux-theme
+  default_stubs ""
+  private_repo_with_remote
+  dotfiles_repo_with_origin git@github.com:someuser/somerepo.git
+  unstub_cmd claude
+  # Same PATH-restriction technique as the timeout-unavailable test
+  # below: unstub_cmd alone isn't enough since PATH still falls
+  # through to the real system `claude` further down.
+  for u in git awk basename sed grep head od tr date mktemp rm dirname sh; do
+    ln -sf "$(command -v "$u")" "$STUB_BIN/$u"
+  done
+
+  PATH="$STUB_BIN" run /bin/sh "$SETUP" testhost --system-type server < /dev/null
+  [ "$status" -eq 0 ]
+  remote_cmd=$(remote_cmd_from_ssh_call)
+  [[ "$remote_cmd" =~ \'--theme\'\ \'#[0-9a-f]{6}\' ]]
+}
+
+@test "claude is never invoked when --theme is already supplied" {
+  export DJ_MODULES=tmux-theme
+  default_stubs ""
+  private_repo_with_remote
+  dotfiles_repo_with_origin git@github.com:someuser/somerepo.git
+  stub_cmd claude
+
+  run sh "$SETUP" testhost --system-type server --theme '#2596be' < /dev/null
+  [ "$status" -eq 0 ]
+  ! stub_called claude
+}
+
+@test "claude is never invoked, and theme still falls back to random, when timeout is unavailable" {
+  export DJ_MODULES=tmux-theme
+  default_stubs ""
+  private_repo_with_remote
+  dotfiles_repo_with_origin git@github.com:someuser/somerepo.git
+  stub_cmd claude
+  # unstub_cmd alone isn't enough -- PATH still falls through to the
+  # real system `timeout` further down. Restrict PATH to $STUB_BIN
+  # (which never had a `timeout` stub) instead, symlinking in the
+  # other real utilities dj-setup.sh still needs.
+  for u in git awk basename sed grep head od tr date mktemp rm dirname sh; do
+    ln -sf "$(command -v "$u")" "$STUB_BIN/$u"
+  done
+
+  PATH="$STUB_BIN" run /bin/sh "$SETUP" testhost --system-type server < /dev/null
+  [ "$status" -eq 0 ]
+  ! stub_called claude
+  remote_cmd=$(remote_cmd_from_ssh_call)
+  [[ "$remote_cmd" =~ \'--theme\'\ \'#[0-9a-f]{6}\' ]]
+}
+
+
+@test "no --theme is added when the tmux-theme module is off" {
+  default_stubs ""
+  private_repo_with_remote
+  dotfiles_repo_with_origin git@github.com:someuser/somerepo.git
+  run sh "$SETUP" testhost --system-type server < /dev/null
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"theme"* ]]
+}

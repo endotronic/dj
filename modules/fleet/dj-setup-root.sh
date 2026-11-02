@@ -129,6 +129,26 @@ if [ "$_has_system_type" -eq 0 ]; then
   esac
 fi
 
+# ---------- 0b. tmux-theme module: pick --theme if omitted ----------------
+#
+# With the tmux-theme module enabled here, a target without an explicit
+# --theme gets one picked for its name (claude, else random) so every
+# machine has its own accent color.
+
+_fleet_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+_theme_pick="$_fleet_dir/../tmux-theme/theme-for-host.sh"
+if [ -f "$_theme_pick" ] && sh "$_fleet_dir/../../scripts/module.sh" enabled tmux-theme; then
+  _has_theme=0
+  for _arg in "$@"; do
+    case "$_arg" in
+      --theme|--theme=*) _has_theme=1 ;;
+    esac
+  done
+  if [ "$_has_theme" -eq 0 ]; then
+    set -- "$@" --theme "$(sh "$_theme_pick" "$HOSTSPEC")"
+  fi
+fi
+
 # Single-quote a value for safe embedding in a reconstructed shell
 # command line -- see dj-setup.sh for the same helper and rationale.
 q() {

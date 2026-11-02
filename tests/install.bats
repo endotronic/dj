@@ -64,6 +64,7 @@ _make_fake_repo_dir() {
   [[ "$output" =~ "--age-key" ]]
   [[ "$output" =~ "--sops" ]]
   [[ "$output" =~ "--module" ]]
+  [[ "$output" =~ "--theme" ]]
   [[ "$output" =~ "--private-repo" ]]
 }
 
@@ -472,6 +473,40 @@ _make_fake_repo_dir() {
   [[ "$output" =~ "non-interactive" ]]
   # HOME unchanged.
   grep -q "^# user" "$HOME/.bashrc"
+}
+
+# --- theme color persistence ----------------------------------------------
+
+@test "--theme writes the tmux-theme-color file" {
+  stage_fake_dotfiles_checkout
+  make_src_repo
+  add_to_repo .bashrc "# tracked"
+  publish_repo
+
+  run sh "$INSTALL" --private-repo "$SRC_REPO" --theme '#2596be' --on-conflict backup
+  [ "$status" -eq 0 ]
+  [ -f "$XDG_CONFIG_HOME/dotfiles/tmux-theme-color" ]
+  [ "$(cat "$XDG_CONFIG_HOME/dotfiles/tmux-theme-color")" = "#2596be" ]
+}
+
+@test "--theme with invalid color exits 2" {
+  run sh "$INSTALL" --theme 'not-a-color'
+  [ "$status" -eq 2 ]
+  [[ "$output" =~ "--theme must be a 6-digit hex color" ]]
+}
+
+@test "--theme rejects a short hex color" {
+  run sh "$INSTALL" --theme '#fff'
+  [ "$status" -eq 2 ]
+  [[ "$output" =~ "--theme must be a 6-digit hex color" ]]
+}
+
+@test "omitting --theme leaves tmux-theme-color untouched" {
+  stage_fake_dotfiles_checkout
+
+  run sh "$INSTALL" --on-conflict backup
+  [ "$status" -eq 0 ]
+  [ ! -f "$XDG_CONFIG_HOME/dotfiles/tmux-theme-color" ]
 }
 
 # --- system-type persistence ---------------------------------------------
