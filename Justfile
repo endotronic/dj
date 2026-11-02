@@ -210,3 +210,6 @@ migrate *ARGS:
 # First run without a private repo: scaffold your config, stage it (--remote URL, --commit).
 init *ARGS:
     sh "{{SCRIPTS}}/init.sh" "$@"
+
+# Opt-in modules (dj module list). Each module's recipes refuse to run until it's enabled.
+import 'modules/claude/claude.just'
