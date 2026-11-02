@@ -595,3 +595,32 @@ STUB
   [[ "$output" == "git-refspec "* ]]
   [[ "$output" != *"10-git-refspec"* ]]
 }
+@test "postinstall-hooks: MANUAL when a listed hook has no script" {
+  cat > "$FAKE_ROOT/scripts/run-postinstall.sh" <<'RP'
+#!/bin/sh
+echo "[run-postinstall] WARNING: no hook script for zfs-textfile-collector" >&2
+exit 1
+RP
+  chmod +x "$FAKE_ROOT/scripts/run-postinstall.sh"
+  run sh "$MIGRATE" --fix --only postinstall-hooks
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"MANUAL"* ]]
+  [[ "$output" == *"zfs-textfile-collector"* ]]
+}
+
+@test "postinstall-hooks: N/A on NixOS, even with an unresolved hook listed" {
+  printf '#!/bin/sh\nexit 1\n' > "$FAKE_ROOT/scripts/run-postinstall.sh"
+  printf 'ID=nixos\n' > "$SANDBOX/os-release"
+  DOTFILES_OS_RELEASE_FILE="$SANDBOX/os-release" run sh "$MIGRATE" --only postinstall-hooks
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"post-install hook"* ]]
+}
+
+@test "postinstall-hooks: ok when every listed hook resolves" {
+  printf '#!/bin/sh\nexit 0\n' > "$FAKE_ROOT/scripts/run-postinstall.sh"
+  chmod +x "$FAKE_ROOT/scripts/run-postinstall.sh"
+  run sh "$MIGRATE" --only postinstall-hooks
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ok"* ]]
+}
+
