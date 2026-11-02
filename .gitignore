@@ -1,0 +1,6 @@
+# Per-user agent context, linked in from the private repo (never tracked here).
+CLAUDE.local.md
+AGENTS.local.md
+
+# Machine-local Claude Code permissions.
+.claude/settings.local.json
