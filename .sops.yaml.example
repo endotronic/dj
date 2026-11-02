@@ -1,0 +1,26 @@
+# Example .sops.yaml. The real .sops.yaml is created on first setup
+# by scripts/sops-init.sh and SHOULD be committed -- it lists which
+# age public keys can decrypt what, and public keys are public info.
+
+# Single-key setup (one age key shared across all your machines --
+# transport ~/.config/sops/age/keys.txt out-of-band to each new
+# machine):
+creation_rules:
+  - path_regex: secrets/.*\.enc$
+    age: age1example_replace_with_your_real_public_key
+
+# Per-machine-key setup (multiple recipients, comma-separated; any
+# one of these private keys can decrypt). Adding a new machine:
+#
+#   1. On the new machine, run scripts/sops-init.sh to generate its key.
+#   2. Append the new public key to the `age:` list below.
+#   3. From any machine with an existing key, re-encrypt:
+#        find secrets -name '*.enc' -exec sops updatekeys {} \;
+#   4. Commit the updated .sops.yaml and re-encrypted .enc files.
+#
+# creation_rules:
+#   - path_regex: secrets/.*\.enc$
+#     age: >-
+#       age1machine_a_public_key,
+#       age1machine_b_public_key,
+#       age1machine_c_public_key
