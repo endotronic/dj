@@ -1,0 +1,317 @@
+#!/bin/sh
+# Bootstrap a brand-new machine over SSH from this one, using this
+# machine's own SSH identity via agent forwarding to solve the
+# chicken-and-egg problem of install.sh needing SSH access to clone
+# the private repo before it has restored any SSH key of its own.
+#
+# Usage: dj-setup.sh [user@]hostname [extra install.sh args...]
+#   dj setup yolo
+#   dj setup alice@yolo --system-type server
+#
+# What it does:
+#   1. Ensures a reachable ssh-agent with this machine's shared
+#      identity (~/.ssh/id_ed25519) loaded, starting one if needed.
+#   2. Resolves this machine's own private-repo remote URL (from
+#      ~/.config.git) so the target doesn't need it spelled out by
+#      hand, then pushes this machine's own age key to a temp path on
+#      the target via a plain scp (one fewer round trip and prompt
+#      than making the target dial back out via --sops); the temp
+#      copy is removed after install.sh finishes, success or failure.
+#   3. Resolves the raw install.sh URL from ~/.dotfiles' own origin
+#      remote + current branch, so a fork just works without editing
+#      this script.
+#   4. Runs install.sh on the target via `ssh -A -t`: the forwarded
+#      agent covers the private-repo clone (the age key was already
+#      pushed directly in step 2, so no --sops round trip is needed
+#      for that part).
+#
+# This whole run is one deliberate, explicitly-initiated bootstrap, so
+# every never-before-seen host it touches -- the target itself, and,
+# on the target, install.sh's own private-repo clone -- skips the
+# interactive host-key confirmation prompt via
+# StrictHostKeyChecking=accept-new (a *changed* host key is still
+# rejected, same as always; only *new* ones are auto-trusted).
+#
+# Any extra arguments (--system-type, --on-conflict, ...) are
+# passed through to the remote install.sh unchanged and safely
+# re-quoted -- naively string-joining them would let something like
+# get truncated as a comment by the remote shell.
+#
+# The target is brand-new and trusts none of our keys yet, so every
+# connection to it -- the two scp key pushes and the final ssh -A -t --
+# would otherwise prompt for its login password on its own. They're
+# multiplexed over one OpenSSH ControlMaster connection instead (see
+# the comment above SSH_MUX below), so that password is only ever
+# typed once per run.
+
+set -eu
+
+DOTFILES_DIR=${DOTFILES_DIR:-$HOME/.dotfiles}
+DOT_DIR=${DOT_DIR:-$HOME/.config.git}
+SSH_KEY=$HOME/.ssh/id_ed25519
+
+log() { printf '[dj-setup] %s\n' "$*"; }
+
+if [ $# -lt 1 ]; then
+  printf 'usage: dj-setup.sh [user@]hostname [extra install.sh args...]\n' >&2
+  exit 2
+fi
+
+HOSTSPEC=$1
+shift
+
+# Split once up front -- reused below both to seed ssh-menu-register.sh's
+# defaults (step 5) and, if bare, to derive $SUDO_USER-style guesses
+# nowhere else in this script actually needs.
+case "$HOSTSPEC" in
+  *@*) TARGET_USER=${HOSTSPEC%%@*}; TARGET_HOST=${HOSTSPEC#*@} ;;
+  *)   TARGET_USER=; TARGET_HOST=$HOSTSPEC ;;
+esac
+
+if [ ! -r "$SSH_KEY" ]; then
+  printf 'error: no SSH key at %s -- nothing to forward\n' "$SSH_KEY" >&2
+  exit 1
+fi
+
+# ---------- 0. Prompt for --system-type if the caller didn't pass one ------
+#
+# install.sh silently defaults to a common-only install when
+# --system-type is omitted, which is easy to do by accident here and
+# not what you want for a real machine. If it's missing, ask -- listing
+# this machine's own known types (from ~/.config/dj/packages/types/)
+# as a hint -- rather than silently propagating the omission. A blank
+# answer (including non-interactive stdin, which reads as EOF/empty)
+# keeps the common-only default.
+
+_has_system_type=0
+for _arg in "$@"; do
+  case "$_arg" in
+    --system-type|--system-type=*) _has_system_type=1 ;;
+  esac
+done
+
+if [ "$_has_system_type" -eq 0 ]; then
+  TYPES_DIR=${XDG_CONFIG_HOME:-$HOME/.config}/dj/packages/types
+  _have_known_types=0
+  if [ -d "$TYPES_DIR" ]; then
+    for _f in "$TYPES_DIR"/*.txt; do
+      [ -e "$_f" ] || continue
+      if [ "$_have_known_types" -eq 0 ]; then
+        printf '[dj-setup] known system types:\n' >&2
+        _have_known_types=1
+      fi
+      printf '  - %s\n' "$(basename "$_f" .txt)" >&2
+    done
+  fi
+  printf '[dj-setup] system type for %s [blank = common-only]: ' "$HOSTSPEC" >&2
+  read -r _system_type_answer || _system_type_answer=
+  case "$_system_type_answer" in
+    '') ;;
+    *[!A-Za-z0-9_-]*)
+      printf 'error: system type must contain only letters, digits, _ and - (got: %s)\n' \
+        "$_system_type_answer" >&2
+      exit 2
+      ;;
+    *)
+      set -- "$@" --system-type "$_system_type_answer"
+      ;;
+  esac
+fi
+
+# Resolved --system-type value, whichever of the two paths above
+# supplied it (passed in by the caller, or just answered interactively)
+# -- needed again in step 5 to pick the right ~/.ssh/config section for
+# the target, since ssh-menu-register.sh runs *here*, on this machine,
+# and so can't fall back to reading the target's own persisted
+# system-type the way install.sh's own call to it does.
+RESOLVED_TYPE=
+_prev_arg=
+for _arg in "$@"; do
+  case "$_prev_arg" in
+    --system-type) RESOLVED_TYPE=$_arg ;;
+  esac
+  case "$_arg" in
+    --system-type=*) RESOLVED_TYPE=${_arg#*=} ;;
+  esac
+  _prev_arg=$_arg
+done
+unset _prev_arg _arg
+
+# Single-quote a value for safe embedding in a reconstructed shell
+# command line: close the quote, emit an escaped literal quote, reopen.
+q() {
+  printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+}
+
+# This whole run is one deliberate, explicitly-initiated bootstrap, so
+# skip the interactive "authenticity of host ... can't be established"
+# yes/no prompt for every never-before-seen host it touches: the
+# target itself (below) and, on the target, self-hosted (Gitea-style)
+# private-repo hosts (via DOTFILES_ACCEPT_NEW_HOSTS, exported into the
+# remote command further down). StrictHostKeyChecking=accept-new, not
+# =no: a *changed* host key is still rejected, same as always -- only
+# *new* ones are auto-trusted.
+SSH_ACCEPT_NEW="-o StrictHostKeyChecking=accept-new"
+
+# ---------- 0c. Multiplex all connections to the target over one auth ------
+#
+# Steps 2b, 2c, and 4 below each open a *separate* connection to the
+# same target -- and since the whole point of this script is bridging
+# the chicken-and-egg gap where the target doesn't trust any key of
+# ours yet, each one falls back to a password prompt on its own: three
+# prompts for what is, from the user's side, one bootstrap action.
+# OpenSSH's own connection multiplexing (ControlMaster) fixes this
+# without this script ever touching the password itself (unlike e.g.
+# piping it through sshpass, which would have to capture it) -- ssh
+# still owns the prompt end to end on the real tty; only the
+# already-authenticated *connection* gets reused by the later
+# scp/ssh calls, which see the transport as already open and skip
+# auth entirely. Whichever call runs first (2b's scp) is the one that
+# actually authenticates and becomes the backgrounded control master;
+# 2c and step 4 just ride it.
+#
+# The control socket lives under a fresh mktemp -d (mode 0700, owned
+# by this user) so no other local user on a shared machine can ride
+# the multiplexed session -- the same trust boundary the ssh-agent
+# below already relies on. Explicitly torn down on exit (trap, every
+# path) rather than left to ControlPersist's idle timeout, so nothing
+# lingers past this one invocation; ControlPersist is still set as a
+# safety net in case the trap itself never runs (e.g. kill -9).
+CTL_DIR=$(mktemp -d "${TMPDIR:-/tmp}/dj-setup-ctl.XXXXXX")
+CTL_PATH="$CTL_DIR/control"
+SSH_MUX="-o ControlMaster=auto -o ControlPath=$CTL_PATH -o ControlPersist=10m"
+SSH_OPTS="$SSH_ACCEPT_NEW $SSH_MUX"
+cleanup_mux() {
+  ssh -o ControlPath="$CTL_PATH" -O exit "$HOSTSPEC" >/dev/null 2>&1 || true
+  rm -rf "$CTL_DIR"
+}
+trap cleanup_mux EXIT
+
+# ---------- 1. Ensure a reachable ssh-agent with the shared key loaded -----
+
+rc=0
+ssh-add -l >/dev/null 2>&1 || rc=$?
+if [ "$rc" -eq 2 ]; then
+  log "no reachable ssh-agent; starting one"
+  eval "$(ssh-agent -s)" >/dev/null
+fi
+
+FPR=$(ssh-keygen -lf "$SSH_KEY" 2>/dev/null | awk '{print $2}')
+if [ -z "$FPR" ] || ! ssh-add -l 2>/dev/null | grep -qF "$FPR"; then
+  ssh-add "$SSH_KEY"
+fi
+
+# ---------- 2. This machine's own private-repo remote ----------------------
+
+PRIVATE_REMOTE_NAME=$(git --git-dir="$DOT_DIR" remote 2>/dev/null | head -n1)
+if [ -z "$PRIVATE_REMOTE_NAME" ]; then
+  printf 'error: %s has no remote configured -- wire one up first (dot remote add ...)\n' "$DOT_DIR" >&2
+  exit 1
+fi
+PRIVATE_REPO_URL=$(git --git-dir="$DOT_DIR" remote get-url "$PRIVATE_REMOTE_NAME")
+
+# ---------- 2b. Push this machine's age key to a temp path on the target ---
+#
+# install.sh also supports --sops [user@]host to have the *target*
+# scp the key back from here -- but since we're already about to have
+# a live, authenticated connection to the target (that's how step 4's
+# ssh -A -t works at all), pushing it there ourselves up front is one
+# fewer round trip and one fewer credential prompt than making the
+# target dial back out to us. The temp copy is removed after
+# install.sh runs, success or failure, by the trailing cleanup in the
+# remote command built below.
+
+AGE_KEY_LOCAL=${XDG_CONFIG_HOME:-$HOME/.config}/sops/age/keys.txt
+if [ ! -r "$AGE_KEY_LOCAL" ]; then
+  printf 'error: no age key at %s -- nothing to push for secrets decryption\n' "$AGE_KEY_LOCAL" >&2
+  exit 1
+fi
+REMOTE_TMP_KEY="/tmp/dj-setup-agekey-$$"
+scp -q $SSH_OPTS "$AGE_KEY_LOCAL" "$HOSTSPEC:$REMOTE_TMP_KEY"
+
+# ---------- 2c. Push the git-host deploy key the same way ------------------
+#
+# The target's very first private-repo clone happens before the
+# tracked ~/.ssh/config (which points ssh at this key for that host)
+# has been checked out, so the key has to arrive out of band exactly
+# like the age key does. Optional: without one, the clone falls back
+# to whatever the forwarded agent offers.
+
+GIT_KEY_LOCAL=$HOME/.ssh/id_githost
+REMOTE_TMP_GITKEY=
+if [ -r "$GIT_KEY_LOCAL" ]; then
+  REMOTE_TMP_GITKEY="/tmp/dj-setup-gitkey-$$"
+  scp -q $SSH_OPTS "$GIT_KEY_LOCAL" "$HOSTSPEC:$REMOTE_TMP_GITKEY"
+else
+  log "no deploy key at $GIT_KEY_LOCAL; the target's clone will rely on the forwarded agent"
+fi
+
+# ---------- 3. Raw install.sh URL, derived from ~/.dotfiles' own origin ----
+
+ORIGIN=$(git -C "$DOTFILES_DIR" remote get-url origin 2>/dev/null || true)
+BRANCH=$(git -C "$DOTFILES_DIR" branch --show-current 2>/dev/null || true)
+BRANCH=${BRANCH:-master}
+case "$ORIGIN" in
+  git@github.com:*)     REPO_PATH=${ORIGIN#git@github.com:} ;;
+  https://github.com/*) REPO_PATH=${ORIGIN#https://github.com/} ;;
+  *)                    REPO_PATH= ;;
+esac
+REPO_PATH=${REPO_PATH%.git}
+if [ -n "$REPO_PATH" ]; then
+  RAW_INSTALL_URL="https://raw.githubusercontent.com/$REPO_PATH/$BRANCH/install.sh"
+else
+  RAW_INSTALL_URL=${DOTFILES_REPO_RAW_URL:-https://raw.githubusercontent.com/endotronic/dj/main/install.sh}
+fi
+
+# ---------- 4. Build the remote command and run it over a forwarded agent --
+
+# install.sh is fetched via curl, but a genuinely fresh machine may not
+# have it yet -- install it first via whatever package manager is
+# present, same env vars as install.sh's own apt path (avoids
+# needrestart's interactive dialog on Debian/Ubuntu).
+ENSURE_CURL='command -v curl >/dev/null 2>&1 || \
+{ command -v apt-get >/dev/null 2>&1 && { sudo apt-get update || true; } && sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y curl; } || \
+{ command -v pacman >/dev/null 2>&1 && sudo pacman -Sy --noconfirm curl; } || \
+{ command -v brew >/dev/null 2>&1 && brew install curl; } || \
+{ printf "error: curl is missing and no known package manager was found\n" >&2; exit 1; }'
+
+MAIN_CMD="$ENSURE_CURL && curl -fsSL $(q "$RAW_INSTALL_URL") | sh -s -- --private-repo $(q "$PRIVATE_REPO_URL") --age-key $(q "$REMOTE_TMP_KEY")"
+[ -n "$REMOTE_TMP_GITKEY" ] \
+  && MAIN_CMD="$MAIN_CMD --git-key $(q "$REMOTE_TMP_GITKEY")"
+for arg in "$@"; do
+  MAIN_CMD="$MAIN_CMD $(q "$arg")"
+done
+
+# Clean up both pushed keys afterward regardless of outcome, while
+# preserving install.sh's own exit status rather than masking it with
+# the cleanup command's.
+CLEANUP="rc=\$?"
+for _tmp in "$REMOTE_TMP_KEY" ${REMOTE_TMP_GITKEY:+"$REMOTE_TMP_GITKEY"}; do
+  CLEANUP="$CLEANUP; shred -u $(q "$_tmp") 2>/dev/null || rm -f $(q "$_tmp")"
+done
+CLEANUP="$CLEANUP; exit \$rc"
+# DOTFILES_ACCEPT_NEW_HOSTS: see the comment above SSH_ACCEPT_NEW --
+# this is what makes install.sh apply the same accept-new treatment to
+# its own private-repo clone, connecting out from the target.
+REMOTE_CMD="export DOTFILES_ACCEPT_NEW_HOSTS=1; { $MAIN_CMD; }; $CLEANUP"
+
+log "bootstrapping $HOSTSPEC (private-repo=$PRIVATE_REPO_URL)"
+ssh -A -t $SSH_OPTS "$HOSTSPEC" "$REMOTE_CMD"
+
+# ---------- 5. Offer to register the target in this machine's ~/.ssh/config -
+#
+# The target's own install.sh already offered to register *itself* --
+# but that only writes to the target's own ~/.ssh/config, which is
+# only useful there. What actually needs to change to make the target
+# reachable by name elsewhere is *this* machine's
+# ~/.ssh/config (and every other machine's, via a subsequent `dj
+# sync`) -- and this machine is the one that already knows how to
+# reach it (the same $HOSTSPEC used above), so ask here too rather
+# than leaving it to be typed in by hand later.
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd) || SCRIPT_DIR=$DOTFILES_DIR/scripts
+if [ -x "$SCRIPT_DIR/ssh-menu-register.sh" ]; then
+  sh "$SCRIPT_DIR/ssh-menu-register.sh" \
+    --type "$RESOLVED_TYPE" --hostname "$TARGET_HOST" ${TARGET_USER:+--user "$TARGET_USER"} \
+    || log "warn: ssh-menu-register.sh reported problems; see above"
+fi
