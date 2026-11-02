@@ -6,6 +6,8 @@
 # Pass -y or --yolo (anywhere in args) to add --auto. -r/--resume maps
 # to opencode's --continue; -c/--continue and -s/--session pass through.
 # Any of those skips `run` (resume implies an interactive session).
+# $DJ_OPENCODE_LAUNCHER or ~/.config/dj/opencode/launcher, when executable,
+# runs in place of opencode with the same arguments.
 alias o := opencode
 
 opencode *ARGS:
@@ -33,10 +35,14 @@ opencode *ARGS:
         *)                      set -- "$@" "$arg" ;;
       esac
     done
+    # Your own launcher, if you have one, runs in place of opencode (to
+    # export the one secret your opencode.json reads, say).
+    launcher=${DJ_OPENCODE_LAUNCHER:-{{DJ_DIR}}/opencode/launcher}
+    [ -x "$launcher" ] || launcher=opencode
     cd "{{justfile_directory()}}"
     if [ "$resuming" -eq 1 ] || [ "$#" -eq 0 ]; then
-      exec opencode "$@" ${auto_flag:+"$auto_flag"}
+      exec "$launcher" "$@" ${auto_flag:+"$auto_flag"}
     else
       # A bare prompt: all the words, joined by single spaces, as one argument.
-      exec opencode run ${auto_flag:+"$auto_flag"} "$*"
+      exec "$launcher" run ${auto_flag:+"$auto_flag"} "$*"
     fi

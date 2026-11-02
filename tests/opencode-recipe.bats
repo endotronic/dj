@@ -15,6 +15,9 @@ for a in "\$@"; do printf 'A=%s\n' "\$a"; done > "$SANDBOX/opencode.args"
 exit \${OPENCODE_STUB_STATUS:-0}
 EOF
   chmod +x "$STUB_BIN/opencode"
+  # A launcher of the user's own: the same recorder, plus a marker line.
+  { echo '#!/bin/sh'; echo 'echo launcher-ran'; tail -n +2 "$STUB_BIN/opencode"; } > "$SANDBOX/oc-launcher"
+  chmod +x "$SANDBOX/oc-launcher"
 
   for u in just sh cat printf grep sed rm mkdir ls awk tr dirname; do
     p=$(command -v "$u" 2>/dev/null) && ln -sf "$p" "$STUB_BIN/$u"
@@ -89,4 +92,12 @@ got() { grep -qxF "A=$1" "$SANDBOX/opencode.args"; }
   [ "$status" -eq 2 ]
   [[ "$output" == *"dj module enable opencode"* ]]
   [ ! -e "$SANDBOX/opencode.args" ]
+}
+
+@test "opencode: a launcher of your own runs in place of opencode" {
+  DJ_OPENCODE_LAUNCHER="$SANDBOX/oc-launcher" run $JUST opencode hi
+  [ "$status" -eq 0 ]
+  [[ "$output" == *launcher-ran* ]]
+  got run
+  got hi
 }
