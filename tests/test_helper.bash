@@ -32,6 +32,9 @@ sandbox_setup() {
   # from the same (unset) baseline; tests that care export it
   # explicitly.
   unset SUDO_USER
+  # Same for DOTFILES_SKIP_SECRETS: an agent session that runs the suite
+  # may have it set, which would change what shell/secrets.sh does.
+  unset DOTFILES_SKIP_SECRETS
 }
 
 sandbox_teardown() {
@@ -158,4 +161,18 @@ publish_repo() {
 # Wrap `dot` for use in assertions: operates on the sandboxed bare repo.
 dot() {
   git --git-dir="$HOME/.config.git" --work-tree="$HOME" "$@"
+}
+
+# --- shell-layer staging --------------------------------------------------
+
+# Generate the shell layer a fresh machine gets (shell-consolidate.sh in
+# create mode) into the sandbox $HOME, plus scripts/os-detect.sh, which
+# init.sh sources. After this you can do:
+#   bash -ic '...'
+# and have a self-contained interactive-shell init under test.
+install_shell_layer() {
+  git init -q --bare "$HOME/.config.git"
+  mkdir -p "$HOME/.dotfiles/scripts"
+  cp "$DOTFILES_REPO_ROOT/scripts/os-detect.sh" "$HOME/.dotfiles/scripts/"
+  DOT_DIR="$HOME/.config.git" sh "$DOTFILES_REPO_ROOT/scripts/shell-consolidate.sh" --yes >/dev/null
 }
