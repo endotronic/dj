@@ -303,3 +303,18 @@ EOF
   [ "$status" -eq 0 ]
   [[ "$output" =~ "no docker-compose plugin found" ]]
 }
+
+# --- the user's own hooks ---------------------------------------------------
+
+@test "a hook script beside the lists is used, and wins over the repo's" {
+  lists="$SANDBOX/lists"; repo_hooks="$SANDBOX/repo-hooks"
+  mkdir -p "$lists" "$repo_hooks"
+  printf 'myhook\n' > "$lists/common.txt"
+  printf '#!/bin/sh\necho repo-hook\n' > "$repo_hooks/myhook.sh"
+  printf '#!/bin/sh\necho user-hook\n' > "$lists/myhook.sh"
+  DOTFILES_DJ_POSTINSTALL_DIR="$lists" DOTFILES_POSTINSTALL_DIR="$repo_hooks" \
+    run sh "$RUN_POSTINSTALL"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *user-hook* ]]
+  [[ "$output" != *repo-hook* ]]
+}

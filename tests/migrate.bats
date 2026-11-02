@@ -624,3 +624,23 @@ RP
   [[ "$output" == *"ok"* ]]
 }
 
+
+@test "migrate: a user migration in ~/.config/dj/migrations runs after the core ones" {
+  mkdir -p "$HOME/.config/dj/migrations"
+  cat > "$HOME/.config/dj/migrations/50-my-thing.sh" <<'MIG'
+#!/bin/sh
+. "${DJ_MIGRATION_LIB:?}"
+desc() { echo "my thing is set up"; }
+check() { [ -f "$HOME/my-thing" ] || return 1; }
+fix() { touch "$HOME/my-thing"; }
+migration_main "$@"
+MIG
+  run sh "$MIGRATE" --list
+  [[ "${lines[-1]}" == "my-thing "*"auto"*"my thing is set up" ]]
+  run sh "$MIGRATE" --only my-thing
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"MIGR    my thing is set up"* ]]
+  run sh "$MIGRATE" --fix --only my-thing
+  [ "$status" -eq 0 ]
+  [ -f "$HOME/my-thing" ]
+}

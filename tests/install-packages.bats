@@ -616,3 +616,38 @@ nixos_env() {
   [[ "$output" =~ "nix could not install dotfiles-test-a-zzz" ]]
   grep -q "nixpkgs#dotfiles-test-b-zzz" "$SANDBOX/stub.log"
 }
+
+# --- the user's own renames and fallback scripts ---------------------------
+
+@test "user renames beside the lists win over this repo's" {
+  repo_pkgs="$SANDBOX/repo-pkgs"; user_pkgs="$SANDBOX/user-pkgs"
+  mkdir -p "$repo_pkgs/renames" "$user_pkgs/renames"
+  printf 'dotfiles-test-pkg-zzz\n' > "$user_pkgs/common.txt"
+  # Written for every manager, so the test holds on whichever this host has.
+  for m in apt pacman brew; do
+    printf 'dotfiles-test-pkg-zzz repo-name\n' > "$repo_pkgs/renames/$m.txt"
+    printf 'dotfiles-test-pkg-zzz user-name\n' > "$user_pkgs/renames/$m.txt"
+  done
+  stub_cmd pacman
+  DOTFILES_PACKAGES_DIR="$repo_pkgs" DOTFILES_DJ_PACKAGES_DIR="$user_pkgs" \
+    run sh "$INSTALL_PKGS" --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "to install: user-name" ]]
+}
+
+@test "a user fallback script runs for a SKIP tool the repo has no script for" {
+  repo_pkgs="$SANDBOX/repo-pkgs"; user_pkgs="$SANDBOX/user-pkgs"
+  mkdir -p "$repo_pkgs/renames" "$user_pkgs/renames" "$user_pkgs/scripts"
+  printf 'faketool\n' > "$user_pkgs/common.txt"
+  for m in apt pacman brew; do
+    printf 'faketool SKIP\n' > "$user_pkgs/renames/$m.txt"
+  done
+  marker="$SANDBOX/faketool-installed"
+  printf '#!/bin/sh\ntouch "%s"\n' "$marker" > "$user_pkgs/scripts/faketool.sh"
+  stub_cmd pacman
+  stub_sudo_passthrough
+  DOTFILES_PACKAGES_DIR="$repo_pkgs" DOTFILES_DJ_PACKAGES_DIR="$user_pkgs" \
+    run sh "$INSTALL_PKGS"
+  [ "$status" -eq 0 ]
+  [ -f "$marker" ]
+}

@@ -6,8 +6,9 @@
 #                hosts/<hostname>.txt} -- which hooks to run on this
 #                machine. Private, travels via `dj sync`.
 #                DOTFILES_DJ_POSTINSTALL_DIR overrides the root (tests).
-#   - mechanism: packages/postinstall/<name>.sh in the public tooling
-#                repo -- the actual idempotent hook scripts. They may
+#   - mechanism: packages/postinstall/<name>.sh in this repo, or
+#                <name>.sh beside the lists for a hook only you use (that
+#                one wins) -- the actual idempotent hook scripts. They may
 #                use sudo for narrow, explicit system-level changes
 #                (enabling a service, group membership, an /etc/fstab
 #                entry, ...) that a plain package-manager install
@@ -99,7 +100,9 @@ printf '[run-postinstall] OS=%s TYPE=%s\n' "$DOTFILES_OS" "${DOTFILES_SYSTEM_TYP
 rc=0
 while IFS= read -r name; do
   [ -z "$name" ] && continue
-  hook="$hooks_dir/$name.sh"
+  # The user's own hook, beside the lists, wins over this repo's.
+  hook="$lists_dir/$name.sh"
+  [ -f "$hook" ] || hook="$hooks_dir/$name.sh"
   if [ ! -f "$hook" ]; then
     printf '[run-postinstall] WARNING: no hook script for %s (expected %s)\n' "$name" "$hook" >&2
     rc=1

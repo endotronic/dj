@@ -71,9 +71,13 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-# Every migration script, in run order, one path per line.
+# The user's own migrations, beside their package and hook lists.
+USER_MIGRATIONS=${DOTFILES_DJ_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/dj}/migrations
+
+# Every migration script, in run order, one path per line: this repo's,
+# then the user's.
 migration_files() {
-  for _f in "$DJ_ROOT"/migrations/*.sh; do
+  for _f in "$DJ_ROOT"/migrations/*.sh "$USER_MIGRATIONS"/*.sh; do
     [ -f "$_f" ] && printf '%s\n' "$_f"
   done
   return 0

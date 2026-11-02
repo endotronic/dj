@@ -10,10 +10,12 @@
 #                repo's packages/template/ only seeds these on a
 #                fresh machine (see install.sh) -- it is never read
 #                here.
-#   - mechanism: packages/{renames,scripts}/ in the public tooling
-#                repo -- shared, OS-specific name mappings and
-#                fallback installers. DOTFILES_PACKAGES_DIR overrides
-#                this root (useful in tests).
+#   - mechanism: packages/{renames,scripts}/ in this repo -- shared,
+#                OS-specific name mappings and fallback installers.
+#                DOTFILES_PACKAGES_DIR overrides this root (useful in
+#                tests). The lists root may carry its own renames/ and
+#                scripts/ beside the lists, for tools only you use;
+#                those win over this repo's.
 #
 # Resolves logical names through renames/<pkg-mgr>.txt and installs
 # only what's missing. The active type comes from DOTFILES_SYSTEM_TYPE
@@ -83,14 +85,17 @@ lists_dir=${DOTFILES_DJ_PACKAGES_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/dj/packa
 # Shared install mechanism (renames + fallback scripts) -- public repo.
 packages_dir=${DOTFILES_PACKAGES_DIR:-$repo_root/packages}
 scripts_dir=$packages_dir/scripts
-pkg_renames=$packages_dir/renames/$DOTFILES_PKG.txt
-# Distro-specific renames take priority over pkg-manager renames (e.g. ubuntu > apt).
+# Renames, highest priority first: the user's distro file, the user's
+# pkg-manager file, then this repo's distro and pkg-manager files
+# (e.g. ubuntu > apt). Missing files are simply skipped.
+user_distro_renames=
 distro_renames=
 if [ -n "${DOTFILES_DISTRO:-}" ]; then
-  _dr="$packages_dir/renames/$DOTFILES_DISTRO.txt"
-  [ -f "$_dr" ] && distro_renames=$_dr
-  unset _dr
+  user_distro_renames=$lists_dir/renames/$DOTFILES_DISTRO.txt
+  distro_renames=$packages_dir/renames/$DOTFILES_DISTRO.txt
 fi
+user_pkg_renames=$lists_dir/renames/$DOTFILES_PKG.txt
+pkg_renames=$packages_dir/renames/$DOTFILES_PKG.txt
 
 active_list=$(mktemp)
 trap 'rm -f "$active_list"' EXIT INT TERM
@@ -107,14 +112,7 @@ read_pkglist "$lists_dir/common.txt"
 [ -n "$_hostname" ] && read_pkglist "$lists_dir/hosts/$_hostname.txt"
 
 resolve_name() {
-  _rn=
-  if [ -n "${distro_renames:-}" ]; then
-    _rn=$(awk -v want="$1" '$1 == want { print $2; exit }' "$distro_renames")
-  fi
-  if [ -z "$_rn" ] && [ -f "$pkg_renames" ]; then
-    _rn=$(awk -v want="$1" '$1 == want { print $2; exit }' "$pkg_renames")
-  fi
-  printf '%s' "$_rn"
+  renames_line "$1" | awk '{ print $2 }'
 }
 
 # Some packages (nfs-common, e.g. its mount.nfs/showmount/...) only
@@ -143,7 +141,8 @@ tool_present() {
 # one logical name for "the same tool, packaged differently" instead of two
 # names of which one is permanently absent (and warned about) on every OS.
 renames_line() {
-  for _f in "${distro_renames:-}" "$pkg_renames"; do
+  for _f in "$user_distro_renames" "$user_pkg_renames" \
+            "$distro_renames" "$pkg_renames"; do
     [ -n "$_f" ] && [ -f "$_f" ] || continue
     _ln=$(awk -v want="$1" '$1 == want { print; exit }' "$_f")
     if [ -n "$_ln" ]; then printf '%s' "$_ln"; return 0; fi
@@ -274,7 +273,8 @@ fi
 # renames/nix.txt instead.
 for _l in $missing $skipped; do
   present "$_l" && continue
-  _script="$scripts_dir/${_l}.sh"
+  _script="$lists_dir/scripts/${_l}.sh"
+  [ -f "$_script" ] || _script="$scripts_dir/${_l}.sh"
   [ -f "$_script" ] || continue
   if [ "$DOTFILES_PKG" = nix ] && ! grep -q '^# dj-installer: nix-ok' "$_script"; then
     continue
