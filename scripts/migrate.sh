@@ -74,10 +74,22 @@ done
 # The user's own migrations, beside their package and hook lists.
 USER_MIGRATIONS=${DOTFILES_DJ_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/dj}/migrations
 
-# Every migration script, in run order, one path per line: this repo's,
-# then the user's.
+DJ_LIB_DIR=$script_dir/lib
+. "$DJ_LIB_DIR/modules.sh"
+
+# Every migration script, in run order, one path per line: this repo's
+# core, then each enabled module's (a disabled module's migrations don't
+# exist as far as this machine is concerned), then the user's.
 migration_files() {
-  for _f in "$DJ_ROOT"/migrations/*.sh "$USER_MIGRATIONS"/*.sh; do
+  for _f in "$DJ_ROOT"/migrations/*.sh; do
+    [ -f "$_f" ] && printf '%s\n' "$_f"
+  done
+  for _m in $(dj_enabled_modules); do
+    for _f in "$DJ_MODULES_DIR/$_m"/migrations/*.sh; do
+      [ -f "$_f" ] && printf '%s\n' "$_f"
+    done
+  done
+  for _f in "$USER_MIGRATIONS"/*.sh; do
     [ -f "$_f" ] && printf '%s\n' "$_f"
   done
   return 0

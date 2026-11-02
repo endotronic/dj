@@ -35,6 +35,8 @@ sandbox_setup() {
   # Same for DOTFILES_SKIP_SECRETS: an agent session that runs the suite
   # may have it set, which would change what shell/secrets.sh does.
   unset DOTFILES_SKIP_SECRETS
+  # And modules enabled by the ambient environment.
+  unset DJ_MODULES
 }
 
 sandbox_teardown() {
