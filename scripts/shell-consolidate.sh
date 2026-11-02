@@ -187,7 +187,7 @@ _dotfiles_prepend_path() {
   case ":$PATH:" in *":$1:"*) ;; *) PATH="$1:$PATH" ;; esac
 }
 _dotfiles_prepend_path "$HOME/.local/bin"
-_dotfiles_prepend_path "$HOME/.dotfiles/scripts"
+_dotfiles_prepend_path "$HOME/.dotfiles/bin"   # dj
 unset -f _dotfiles_prepend_path 2>/dev/null || true
 export PATH
 
@@ -231,11 +231,6 @@ alias dot-add='dot_add'
 mkcd() {
   [ $# -eq 1 ] || { printf 'usage: mkcd <dir>\n' >&2; return 2; }
   mkdir -p -- "$1" && cd -- "$1"
-}
-
-# `dj [args...]`: run `just` against the dotfiles Justfile from anywhere.
-dj() {
-  JUST_JUSTFILE="$HOME/.dotfiles/Justfile" just "$@"
 }
 FUNCTIONS_SH
 cat > "$shell_dir/secrets.sh" << 'SECRETS_SH'

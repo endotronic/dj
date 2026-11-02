@@ -1,0 +1,22 @@
+#!/bin/sh
+# dj: run a recipe from this repo's Justfile, from any directory.
+#
+# The shell layer puts this directory on PATH. Symlinking this file
+# elsewhere (e.g. ~/.local/bin/dj) works too: the link is resolved to
+# find the Justfile next to it.
+
+self=$0
+while [ -L "$self" ]; do
+  _t=$(readlink "$self")
+  case "$_t" in
+    /*) self=$_t ;;
+    *)  self=$(dirname "$self")/$_t ;;
+  esac
+done
+DJ_HOME=$(CDPATH= cd -- "$(dirname -- "$self")/.." && pwd)
+
+command -v just >/dev/null 2>&1 || {
+  echo "dj: 'just' is not installed (install.sh installs it; or see https://just.systems)" >&2
+  exit 127
+}
+exec just --justfile "$DJ_HOME/Justfile" "$@"

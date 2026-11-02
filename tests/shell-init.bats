@@ -64,10 +64,10 @@ in_bash() {
 
 # --- PATH manipulation -----------------------------------------------------
 
-@test "sourcing prepends \$HOME/.dotfiles/scripts and \$HOME/.local/bin to PATH" {
+@test "sourcing prepends \$HOME/.dotfiles/bin and \$HOME/.local/bin to PATH" {
   run in_bash 'case ":$PATH:" in
-    *":$HOME/.dotfiles/scripts:"*"$HOME/.local/bin:"*) echo ok ;;
-    *":$HOME/.local/bin:"*"$HOME/.dotfiles/scripts:"*) echo ok ;;
+    *":$HOME/.dotfiles/bin:"*"$HOME/.local/bin:"*) echo ok ;;
+    *":$HOME/.local/bin:"*"$HOME/.dotfiles/bin:"*) echo ok ;;
     *) echo "PATH=$PATH" ;;
   esac'
   [ "$output" = "ok" ]
@@ -75,7 +75,7 @@ in_bash() {
 
 @test "PATH prepend is idempotent across re-sourcing" {
   run in_bash 'source ~/.bashrc; source ~/.bashrc; \
-    n_scripts=$(echo "$PATH" | tr : "\n" | grep -cx "$HOME/.dotfiles/scripts" || true); \
+    n_scripts=$(echo "$PATH" | tr : "\n" | grep -cx "$HOME/.dotfiles/bin" || true); \
     n_local=$(echo "$PATH" | tr : "\n" | grep -cx "$HOME/.local/bin" || true); \
     printf "%s|%s" "$n_scripts" "$n_local"'
   [ "$output" = "1|1" ]
