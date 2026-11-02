@@ -1,0 +1,56 @@
+# Per-line: <logical-binary> <apt-package-name>
+# Use SKIP as the second column to omit a tool on this manager.
+# SKIP items with a matching packages/scripts/<name>.sh get that script
+# run as a fallback installer.
+
+nvim neovim
+gpg gnupg
+rg ripgrep
+fd fd-find
+docker docker.io
+# Debian/Ubuntu dropped the bare `python` package years ago;
+# python-is-python3 is what now provides the /usr/bin/python symlink.
+python python-is-python3
+mount.nfs nfs-common
+# The package is wl-clipboard but it ships wl-copy/wl-paste, and the
+# installed-check is `command -v <logical>`, so list the binary name.
+wl-copy wl-clipboard
+# docker-compose-v2 is the Compose v2 plugin in Debian 12+/Ubuntu 22.04+
+# repos. It often only installs into a cli-plugins dir, not onto PATH,
+# so `command -v docker-compose` may report "missing" even when it's
+# present -- harmless (the apt install itself is idempotent) and
+# self-healed by packages/postinstall/docker-compose.sh, which
+# symlinks the plugin onto PATH if needed.
+docker-compose docker-compose-v2
+# Not in Debian/Ubuntu apt repos; installed via packages/scripts/sops.sh.
+sops SKIP
+# Not in Debian/Ubuntu apt repos; installed via packages/scripts/just.sh.
+just SKIP
+# Not in Debian/Ubuntu apt repos; installed via packages/scripts/starship.sh.
+starship SKIP
+# Claude Code is not in apt; packages/scripts/claude.sh runs the vendor installer.
+claude SKIP
+# Not in Debian/Ubuntu apt repos; installed via packages/scripts/opencode.sh.
+opencode SKIP
+# Not in Debian/Ubuntu apt repos (only Debian sid has it); installed
+# via packages/scripts/glow.sh.
+glow SKIP
+# Debian/Ubuntu apt only ships a stale version (needed to compile
+# nvim-treesitter parsers); installed via packages/scripts/tree-sitter.sh.
+tree-sitter SKIP
+# apt is stuck at bats 1.2.1, which predates
+# `bats_require_minimum_version` (bats 1.5) -- the affected test files
+# abort in setup_file and are silently never run. Upstream build via
+# packages/scripts/bats.sh instead.
+bats SKIP
+# Not in Ubuntu 24.04 apt repos; installed via packages/scripts/uv.sh.
+uv SKIP
+# Not in Ubuntu's apt repos (Debian has it; see debian.txt); on other
+# apt machines installed via packages/scripts/diffnav.sh.
+diffnav SKIP
+# WireGuard CLI: binary is wg, package is wireguard-tools
+wg wireguard-tools
+# VSCodium (the Open VSX build of VS Code) stands in for Arch's code-oss.
+# Debian/Ubuntu don't carry it, so packages/scripts/code-oss.sh adds
+# VSCodium's own apt repo. Third column: its binary is codium, not code-oss.
+code-oss SKIP codium

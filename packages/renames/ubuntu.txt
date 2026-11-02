@@ -1,0 +1,6 @@
+# Per-line: <logical-binary> <apt-package-name>
+# Ubuntu-specific overrides. Checked before apt.txt; missing entries
+# fall back to apt.txt. Use SKIP to omit a tool on Ubuntu.
+#
+# Add entries here when a package name differs between Ubuntu and the
+# apt.txt default, or when a tool should be skipped on Ubuntu.

@@ -1,0 +1,618 @@
+#!/usr/bin/env bats
+#
+# Tests for scripts/install-packages.sh.
+
+load test_helper
+bats_require_minimum_version 1.5.0
+
+setup() {
+  sandbox_setup
+  stub_dir_setup
+  export INSTALL_PKGS="$DOTFILES_REPO_ROOT/scripts/install-packages.sh"
+}
+
+teardown() {
+  sandbox_teardown
+}
+
+# --- argument parsing -----------------------------------------------------
+
+@test "--help exits 0 and prints usage" {
+  run sh "$INSTALL_PKGS" --help
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ Usage ]]
+}
+
+@test "any identifier is a valid --system-type (it's just a lookup key)" {
+  run sh "$INSTALL_PKGS" --dry-run --system-type bogus
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "TYPE=bogus" ]]
+}
+
+@test "--system-type with invalid characters exits 2" {
+  run sh "$INSTALL_PKGS" --system-type 'not a type'
+  [ "$status" -eq 2 ]
+  [[ "$output" =~ "invalid system-type" ]]
+}
+
+@test "unknown argument exits 2" {
+  run sh "$INSTALL_PKGS" --not-a-flag
+  [ "$status" -eq 2 ]
+  [[ "$output" =~ "unknown argument" ]]
+}
+
+# --- dry-run paths --------------------------------------------------------
+
+@test "--dry-run never invokes the package manager" {
+  # Stub sudo + every supported pkg-mgr binary so any accidental call would
+  # show up in stub.log.
+  stub_sudo_passthrough
+  stub_cmd apt-get
+  stub_cmd pacman
+  stub_cmd brew
+  run sh "$INSTALL_PKGS" --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "to install:" ]]
+  ! stub_called sudo
+  ! stub_called apt-get
+  ! stub_called pacman
+  ! stub_called brew
+}
+
+@test "--dry-run with --system-type desktop reports TYPE=desktop" {
+  run sh "$INSTALL_PKGS" --dry-run --system-type desktop
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "TYPE=desktop" ]]
+}
+
+# --- name resolution via renames table ------------------------------------
+
+# The resolver lives inside install-packages.sh. We exercise it
+# indirectly by checking the "to install" line for the right names.
+
+@test "--dry-run output reports both 'already installed' and 'to install' lines" {
+  run sh "$INSTALL_PKGS" --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "already installed:" ]]
+  [[ "$output" =~ "to install:" ]]
+  [[ "$output" =~ "skipped (SKIP):" ]]
+}
+
+# --- distro detection in output -------------------------------------------
+
+@test "--dry-run output reports DISTRO= when distro is detected" {
+  fake_os_release="$SANDBOX/os-release"
+  printf 'ID=ubuntu\n' > "$fake_os_release"
+  DOTFILES_OS_RELEASE_FILE="$fake_os_release" \
+    run sh "$INSTALL_PKGS" --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "DISTRO=ubuntu" ]]
+}
+
+@test "--dry-run output reports DISTRO=none when os-release absent" {
+  DOTFILES_OS_RELEASE_FILE="$SANDBOX/nonexistent" \
+    run sh "$INSTALL_PKGS" --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "DISTRO=none" ]]
+}
+
+@test "distro renames take priority over apt renames" {
+  # Verify distro file wins when both distro and apt.txt have an entry.
+  # We inject a fake os-release and a real distro renames file that
+  # overrides the apt.txt mapping for 'fd' (fd-find in apt.txt).
+  fake_os_release="$SANDBOX/os-release"
+  printf 'ID=ubuntu\n' > "$fake_os_release"
+  # ubuntu.txt in the repo: if it had 'fd fd-custom' it would win.
+  # Since ubuntu.txt is a stub, we test the no-override path instead:
+  # ubuntu.txt has no entry for fd, so apt.txt's fd-find should apply.
+  DOTFILES_OS_RELEASE_FILE="$fake_os_release" \
+    run sh "$INSTALL_PKGS" --dry-run
+  [ "$status" -eq 0 ]
+  # fd-find should appear (from apt.txt fallback) rather than bare 'fd'
+  [[ "$output" =~ "fd-find" ]] || [[ "$output" =~ "already installed" ]]
+}
+
+# --- happy path: install missing tools through stubbed sudo/pacman --------
+
+@test "a missing tool triggers a package-manager install invocation" {
+  # Hermetic: an isolated packages dir with a tool that cannot exist on
+  # any real host, so it is always "missing" and must be installed.
+  # (Using the real common.txt would be host-dependent -- on a machine
+  # where every common tool is already present, nothing gets installed.)
+  fake_pkgs="$SANDBOX/fake-pkgs"
+  mkdir -p "$fake_pkgs/renames"
+  printf 'dotfiles-test-pkg-zzz\n' > "$fake_pkgs/common.txt"
+  # No renames entry -> installs 'dotfiles-test-pkg-zzz' by that name.
+
+  # Steer os-detect to apt and capture the install invocation.
+  stub_cmd apt
+  stub_sudo_passthrough
+  stub_cmd apt-get
+
+  DOTFILES_PACKAGES_DIR="$fake_pkgs" DOTFILES_DJ_PACKAGES_DIR="$fake_pkgs" run sh "$INSTALL_PKGS"
+  [ "$status" -eq 0 ]
+  if ! stub_called apt-get; then
+    printf 'no package manager was invoked. log:\n%s\n' "$(stub_log)" >&2
+    false
+  fi
+  # The install verb (not just `apt-get update`) ran for the missing tool.
+  grep -q "apt-get install.*dotfiles-test-pkg-zzz" "$SANDBOX/stub.log"
+}
+
+# --- personal lists: common + types/<type> + hosts/<hostname> -------------
+
+@test "--system-type pulls in lists_dir/types/<type>.txt" {
+  fake_pkgs="$SANDBOX/fake-pkgs"
+  mkdir -p "$fake_pkgs/renames" "$fake_pkgs/types"
+  : > "$fake_pkgs/common.txt"
+  printf 'dotfiles-test-pkg-type\n' > "$fake_pkgs/types/sometype.txt"
+
+  stub_cmd apt
+  stub_sudo_passthrough
+  stub_cmd apt-get
+
+  DOTFILES_PACKAGES_DIR="$fake_pkgs" DOTFILES_DJ_PACKAGES_DIR="$fake_pkgs" \
+    run sh "$INSTALL_PKGS" --dry-run --system-type sometype
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "dotfiles-test-pkg-type" ]]
+}
+
+@test "host-specific list at lists_dir/hosts/<hostname>.txt is included" {
+  fake_pkgs="$SANDBOX/fake-pkgs"
+  mkdir -p "$fake_pkgs/renames" "$fake_pkgs/hosts"
+  : > "$fake_pkgs/common.txt"
+  _host=$(hostname -s 2>/dev/null || uname -n 2>/dev/null || echo unknown)
+  printf 'dotfiles-test-pkg-host\n' > "$fake_pkgs/hosts/$_host.txt"
+
+  stub_cmd apt
+  stub_sudo_passthrough
+  stub_cmd apt-get
+
+  DOTFILES_PACKAGES_DIR="$fake_pkgs" DOTFILES_DJ_PACKAGES_DIR="$fake_pkgs" \
+    run sh "$INSTALL_PKGS" --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "dotfiles-test-pkg-host" ]]
+}
+
+@test "a type without a matching types/<type>.txt is not an error" {
+  fake_pkgs="$SANDBOX/fake-pkgs"
+  mkdir -p "$fake_pkgs/renames"
+  : > "$fake_pkgs/common.txt"
+  # No types/ dir at all.
+
+  DOTFILES_PACKAGES_DIR="$fake_pkgs" DOTFILES_DJ_PACKAGES_DIR="$fake_pkgs" \
+    run sh "$INSTALL_PKGS" --dry-run --system-type whatever
+  [ "$status" -eq 0 ]
+}
+
+# --- error handling: per-package failures warn but don't abort ------------
+
+@test "pkg manager failure warns but exits 0 and continues" {
+  # Isolated packages dir: one fake tool, no fallback scripts.
+  # Use a name that cannot exist on any real system.
+  fake_pkgs="$SANDBOX/fake-pkgs"
+  mkdir -p "$fake_pkgs/renames"
+  printf 'dotfiles-test-pkg-zzz\n' > "$fake_pkgs/common.txt"
+  # No renames entry -> installs 'dotfiles-test-pkg-zzz' by that name.
+  # No scripts/ dir.
+
+  # Steer os-detect to pick apt by making 'apt' findable.
+  stub_cmd apt
+  stub_sudo_passthrough
+  # apt-get: update succeeds, install fails (package not found).
+  cat > "$STUB_BIN/apt-get" <<STUBEOF
+#!/bin/sh
+{ printf 'apt-get'; for a in "\$@"; do printf ' %s' "\$a"; done; printf '\n'; } >> "$SANDBOX/stub.log"
+case "\$1" in update) exit 0 ;; *) exit 100 ;; esac
+STUBEOF
+  chmod +x "$STUB_BIN/apt-get"
+
+  # Use --separate-stderr so $stderr captures the warning lines.
+  DOTFILES_PACKAGES_DIR="$fake_pkgs" DOTFILES_DJ_PACKAGES_DIR="$fake_pkgs" run --separate-stderr sh "$INSTALL_PKGS"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" =~ WARNING ]]
+}
+
+# --- fallback scripts: packages/scripts/<name>.sh -------------------------
+
+@test "fallback script runs for SKIP tool when packages/scripts/<name>.sh exists" {
+  # Isolated packages dir: one SKIP tool with a fallback install script.
+  fake_pkgs="$SANDBOX/fake-pkgs"
+  mkdir -p "$fake_pkgs/renames" "$fake_pkgs/scripts"
+  printf 'faketool\n' > "$fake_pkgs/common.txt"
+  printf 'faketool SKIP\n' > "$fake_pkgs/renames/apt.txt"
+  marker="$SANDBOX/faketool-installed"
+  printf '#!/bin/sh\ntouch "%s"\n' "$marker" > "$fake_pkgs/scripts/faketool.sh"
+  chmod +x "$fake_pkgs/scripts/faketool.sh"
+
+  stub_cmd apt
+  stub_sudo_passthrough
+  stub_cmd apt-get
+
+  DOTFILES_PACKAGES_DIR="$fake_pkgs" DOTFILES_DJ_PACKAGES_DIR="$fake_pkgs" run sh "$INSTALL_PKGS"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "running fallback script" ]]
+  [ -f "$marker" ]
+}
+
+@test "fallback script runs for pkg-manager-failed tool when script exists" {
+  # Isolated packages dir: one tool whose apt install fails, but has a script.
+  # Use a name that cannot exist on any real system.
+  fake_pkgs="$SANDBOX/fake-pkgs"
+  mkdir -p "$fake_pkgs/renames" "$fake_pkgs/scripts"
+  printf 'dotfiles-test-pkg-zzz\n' > "$fake_pkgs/common.txt"
+  # No renames -> tries apt install of 'dotfiles-test-pkg-zzz', which will fail.
+  marker="$SANDBOX/faketool-installed"
+  printf '#!/bin/sh\ntouch "%s"\n' "$marker" > "$fake_pkgs/scripts/dotfiles-test-pkg-zzz.sh"
+  chmod +x "$fake_pkgs/scripts/dotfiles-test-pkg-zzz.sh"
+
+  stub_cmd apt
+  stub_sudo_passthrough
+  cat > "$STUB_BIN/apt-get" <<STUBEOF
+#!/bin/sh
+{ printf 'apt-get'; for a in "\$@"; do printf ' %s' "\$a"; done; printf '\n'; } >> "$SANDBOX/stub.log"
+case "\$1" in update) exit 0 ;; *) exit 100 ;; esac
+STUBEOF
+  chmod +x "$STUB_BIN/apt-get"
+
+  DOTFILES_PACKAGES_DIR="$fake_pkgs" DOTFILES_DJ_PACKAGES_DIR="$fake_pkgs" run sh "$INSTALL_PKGS"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "running fallback script" ]]
+  [ -f "$marker" ]
+}
+
+# --- sbin-only tools (e.g. mount.nfs) ---------------------------------------
+#
+# nfs-common's binaries (mount.nfs, showmount, ...) only ever install
+# into /sbin or /usr/sbin, which a non-root $PATH deliberately
+# excludes. A `command -v`-only check would report such a tool
+# "missing" on every single run, forever, even right after a
+# successful package install -- install-packages (and migrate.sh's
+# pending-packages check, which just re-runs this with --dry-run)
+# would never converge. DOTFILES_SBIN_DIRS lets tests point at a fake
+# dir instead of the real /sbin.
+
+@test "a tool only present under DOTFILES_SBIN_DIRS counts as already installed" {
+  fake_pkgs="$SANDBOX/fake-pkgs"
+  mkdir -p "$fake_pkgs/renames"
+  printf 'dotfiles-test-sbin-tool\n' > "$fake_pkgs/common.txt"
+
+  fake_sbin="$SANDBOX/fake-sbin"
+  mkdir -p "$fake_sbin"
+  printf '#!/bin/sh\n' > "$fake_sbin/dotfiles-test-sbin-tool"
+  chmod +x "$fake_sbin/dotfiles-test-sbin-tool"
+
+  DOTFILES_PACKAGES_DIR="$fake_pkgs" DOTFILES_DJ_PACKAGES_DIR="$fake_pkgs" \
+    DOTFILES_SBIN_DIRS="$fake_sbin" run sh "$INSTALL_PKGS" --dry-run
+  [ "$status" -eq 0 ]
+  grep -qE "already installed:.*dotfiles-test-sbin-tool" <<< "$output"
+  ! grep -qE "to install:.*dotfiles-test-sbin-tool" <<< "$output"
+}
+
+@test "a tool absent from PATH and every DOTFILES_SBIN_DIRS is still reported missing" {
+  fake_pkgs="$SANDBOX/fake-pkgs"
+  mkdir -p "$fake_pkgs/renames"
+  printf 'dotfiles-test-sbin-tool\n' > "$fake_pkgs/common.txt"
+
+  DOTFILES_PACKAGES_DIR="$fake_pkgs" DOTFILES_DJ_PACKAGES_DIR="$fake_pkgs" \
+    DOTFILES_SBIN_DIRS="$SANDBOX/empty-sbin" run sh "$INSTALL_PKGS" --dry-run
+  [ "$status" -eq 0 ]
+  grep -qE "to install:.*dotfiles-test-sbin-tool" <<< "$output"
+}
+
+# --- packages/scripts/fd.sh: Debian fdfind symlink -------------------------
+
+@test "fd.sh: exits 0 immediately when fd is already on PATH" {
+  stub_cmd fd
+  run sh "$DOTFILES_REPO_ROOT/packages/scripts/fd.sh"
+  [ "$status" -eq 0 ]
+}
+
+@test "fd.sh: creates fd symlink via sudo ln when fdfind is on PATH" {
+  stub_sudo_passthrough
+  stub_cmd fdfind
+  stub_cmd ln
+  # /bin/sh is an absolute path so bats finds it without PATH; STUB_BIN-only
+  # PATH keeps real fd/fdfind invisible while stubs remain reachable.
+  # printf/command/exit are dash builtins so no extra PATH entries needed.
+  PATH="$STUB_BIN" run /bin/sh "$DOTFILES_REPO_ROOT/packages/scripts/fd.sh"
+  [ "$status" -eq 0 ]
+  stub_called ln
+  [[ "$(stub_log)" =~ "fdfind" ]]
+}
+
+@test "fd.sh: exits 1 when neither fd nor fdfind is on PATH" {
+  # Default run merges stderr into $output, so printf >&2 is visible there.
+  PATH="$STUB_BIN" run /bin/sh "$DOTFILES_REPO_ROOT/packages/scripts/fd.sh"
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "fdfind not found" ]]
+}
+
+# --- packages/scripts/bats.sh: upstream bats-core ---------------------------
+#
+# Unlike the other fallback installers, this one must look at the
+# VERSION rather than mere presence: Debian/Ubuntu do ship `bats`, just
+# at 1.2.1, which silently aborts any test file calling
+# `bats_require_minimum_version`.
+
+BATS_SH() { printf '%s' "$DOTFILES_REPO_ROOT/packages/scripts/bats.sh"; }
+
+# A `bats` on the stub PATH reporting $1.
+write_fake_bats() {
+  printf '#!/bin/sh\n[ "$1" = --version ] && echo "Bats %s"\nexit 0\n' "$2" > "$1"
+  chmod +x "$1"
+}
+
+# Stub curl so `-o <path> <url>` yields a real tarball laid out the way
+# GitHub's source archive is, whose install.sh drops a fake bats
+# reporting $NEW_VERSION into <prefix>/bin.
+stub_bats_curl() {
+  : "${NEW_VERSION:=1.11.1}"
+  cat > "$STUB_BIN/curl" <<EOF
+#!/bin/sh
+{ printf 'curl'; for a in "\$@"; do printf ' %s' "\$a"; done; printf '\n'; } >> "$SANDBOX/stub.log"
+out=
+while [ \$# -gt 0 ]; do
+  case "\$1" in -o) out=\$2; shift 2 ;; *) shift ;; esac
+done
+[ -n "\$out" ] || exit 0
+d="\$(mktemp -d)"
+mkdir -p "\$d/bats-core-$NEW_VERSION"
+cat > "\$d/bats-core-$NEW_VERSION/install.sh" <<'INNER'
+#!/bin/sh
+mkdir -p "\$1/bin"
+printf '#!/bin/sh\n[ "\$1" = --version ] && echo "Bats $NEW_VERSION"\nexit 0\n' > "\$1/bin/bats"
+chmod +x "\$1/bin/bats"
+INNER
+chmod +x "\$d/bats-core-$NEW_VERSION/install.sh"
+tar -czf "\$out" -C "\$d" "bats-core-$NEW_VERSION"
+rm -rf "\$d"
+EOF
+  chmod +x "$STUB_BIN/curl"
+}
+
+@test "bats.sh: exits 0 without downloading when bats is already new enough" {
+  write_fake_bats "$STUB_BIN/bats" 1.11.1
+  stub_bats_curl
+  PATH="$STUB_BIN:/usr/bin:/bin" run /bin/sh "$(BATS_SH)"
+  [ "$status" -eq 0 ]
+  ! stub_called curl
+}
+
+@test "bats.sh: installs upstream when the distro version is too old" {
+  write_fake_bats "$STUB_BIN/bats" 1.2.1
+  stub_bats_curl
+  stub_sudo_passthrough
+  prefix="$SANDBOX/prefix"
+
+  BATS_INSTALL_PREFIX="$prefix" PATH="$prefix/bin:$STUB_BIN:/usr/bin:/bin" \
+    run /bin/sh "$(BATS_SH)"
+  [ "$status" -eq 0 ]
+  [ -x "$prefix/bin/bats" ]
+  [[ "$output" =~ "Bats 1.11.1" ]]
+}
+
+@test "bats.sh: a presence check would not have been enough (1.2.1 is present)" {
+  # Guards the one thing that makes this installer different from its
+  # siblings: `command -v bats` succeeds here and must not short-circuit.
+  write_fake_bats "$STUB_BIN/bats" 1.2.1
+  stub_bats_curl
+  stub_sudo_passthrough
+  prefix="$SANDBOX/prefix"
+
+  BATS_INSTALL_PREFIX="$prefix" PATH="$prefix/bin:$STUB_BIN:/usr/bin:/bin" \
+    run /bin/sh "$(BATS_SH)"
+  [ "$status" -eq 0 ]
+  stub_called curl
+}
+
+@test "bats.sh: is idempotent -- the second run downloads nothing" {
+  write_fake_bats "$STUB_BIN/bats" 1.2.1
+  stub_bats_curl
+  stub_sudo_passthrough
+  prefix="$SANDBOX/prefix"
+
+  BATS_INSTALL_PREFIX="$prefix" PATH="$prefix/bin:$STUB_BIN:/usr/bin:/bin" \
+    run /bin/sh "$(BATS_SH)"
+  [ "$status" -eq 0 ]
+  rm -f "$SANDBOX/stub.log"
+
+  BATS_INSTALL_PREFIX="$prefix" PATH="$prefix/bin:$STUB_BIN:/usr/bin:/bin" \
+    run /bin/sh "$(BATS_SH)"
+  [ "$status" -eq 0 ]
+  ! stub_called curl
+}
+
+@test "bats.sh: fails cleanly when curl is unavailable" {
+  write_fake_bats "$STUB_BIN/bats" 1.2.1
+  PATH="$STUB_BIN" run /bin/sh "$(BATS_SH)"
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "curl is required" ]]
+}
+
+@test "bats.sh: reports when the upstream build stays shadowed on PATH" {
+  # Installed correctly, but <prefix>/bin sits BEHIND the distro copy,
+  # so the version check still sees 1.2.1 -- the failure mode worth
+  # naming, since it looks like a successful install.
+  write_fake_bats "$STUB_BIN/bats" 1.2.1
+  stub_bats_curl
+  stub_sudo_passthrough
+  prefix="$SANDBOX/prefix"
+
+  BATS_INSTALL_PREFIX="$prefix" PATH="$STUB_BIN:$prefix/bin:/usr/bin:/bin" \
+    run /bin/sh "$(BATS_SH)"
+  [ "$status" -eq 1 ]
+  [ -x "$prefix/bin/bats" ]
+  [[ "$output" =~ "ahead of /usr/bin on PATH" ]]
+}
+
+# --- renames: optional third column (the binary to look for) ---------------
+#
+# `code-oss SKIP codium` / `code-oss code`: one logical name whose binary
+# differs per package manager, so the presence check looks for the right
+# thing instead of leaving a permanently-"missing" twin on every OS.
+
+bin_column_setup() {
+  fake_pkgs="$SANDBOX/fake-pkgs"
+  mkdir -p "$fake_pkgs/renames" "$fake_pkgs/scripts"
+  printf 'faketool\n' > "$fake_pkgs/common.txt"
+  stub_cmd apt
+  stub_sudo_passthrough
+  stub_cmd apt-get
+}
+
+@test "third column: a SKIP tool is present when its named binary is on PATH" {
+  bin_column_setup
+  printf 'faketool SKIP faketool-bin\n' > "$fake_pkgs/renames/apt.txt"
+  marker="$SANDBOX/script-ran"
+  printf '#!/bin/sh\ntouch "%s"\n' "$marker" > "$fake_pkgs/scripts/faketool.sh"
+  stub_cmd faketool-bin
+
+  DOTFILES_PACKAGES_DIR="$fake_pkgs" DOTFILES_DJ_PACKAGES_DIR="$fake_pkgs" run sh "$INSTALL_PKGS"
+  [ "$status" -eq 0 ]
+  [ ! -f "$marker" ]
+  [[ "$output" != *"WARNING"* ]]
+  [[ "$output" != *"running fallback script"* ]]
+}
+
+@test "third column: a SKIP tool whose binary is absent runs its fallback script" {
+  bin_column_setup
+  printf 'faketool SKIP faketool-bin\n' > "$fake_pkgs/renames/apt.txt"
+  # The script provides the *named* binary, not one called after the logical name.
+  printf '#!/bin/sh\nprintf "#!/bin/sh\\n" > "%s/faketool-bin"; chmod +x "%s/faketool-bin"\n' \
+    "$STUB_BIN" "$STUB_BIN" > "$fake_pkgs/scripts/faketool.sh"
+
+  DOTFILES_PACKAGES_DIR="$fake_pkgs" DOTFILES_DJ_PACKAGES_DIR="$fake_pkgs" run sh "$INSTALL_PKGS"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"running fallback script for faketool"* ]]
+  [[ "$output" != *"could not install"* ]]
+  [ -x "$STUB_BIN/faketool-bin" ]
+}
+
+@test "third column: a package-manager entry is 'already installed' via the named binary" {
+  bin_column_setup
+  printf 'faketool realpkg faketool-bin\n' > "$fake_pkgs/renames/apt.txt"
+  stub_cmd faketool-bin
+
+  DOTFILES_PACKAGES_DIR="$fake_pkgs" DOTFILES_DJ_PACKAGES_DIR="$fake_pkgs" run sh "$INSTALL_PKGS" --dry-run
+  [ "$status" -eq 0 ]
+  grep -qE "already installed:.*faketool" <<< "$output"
+  ! grep -qE "to install:.*realpkg" <<< "$output"
+}
+
+@test "third column: a package-manager entry installs the package when the named binary is absent" {
+  bin_column_setup
+  printf 'faketool realpkg faketool-bin\n' > "$fake_pkgs/renames/apt.txt"
+
+  DOTFILES_PACKAGES_DIR="$fake_pkgs" DOTFILES_DJ_PACKAGES_DIR="$fake_pkgs" run sh "$INSTALL_PKGS"
+  [ "$status" -eq 0 ]
+  grep -q "apt-get install.*realpkg" "$SANDBOX/stub.log"
+}
+
+@test "third column: a package-manager entry does nothing when the named binary is present" {
+  bin_column_setup
+  printf 'faketool realpkg faketool-bin\n' > "$fake_pkgs/renames/apt.txt"
+  stub_cmd faketool-bin
+
+  DOTFILES_PACKAGES_DIR="$fake_pkgs" DOTFILES_DJ_PACKAGES_DIR="$fake_pkgs" run sh "$INSTALL_PKGS"
+  [ "$status" -eq 0 ]
+  ! grep -q "apt-get install.*realpkg" "$SANDBOX/stub.log"
+}
+
+@test "third column: without one, the logical name is the binary (unchanged behaviour)" {
+  bin_column_setup
+  printf 'faketool realpkg\n' > "$fake_pkgs/renames/apt.txt"
+  stub_cmd faketool
+
+  DOTFILES_PACKAGES_DIR="$fake_pkgs" DOTFILES_DJ_PACKAGES_DIR="$fake_pkgs" run sh "$INSTALL_PKGS" --dry-run
+  grep -qE "already installed:.*faketool" <<< "$output"
+}
+
+@test "third column: a trailing comment is not mistaken for a binary name" {
+  bin_column_setup
+  printf 'faketool realpkg # not a binary\n' > "$fake_pkgs/renames/apt.txt"
+  stub_cmd faketool
+
+  DOTFILES_PACKAGES_DIR="$fake_pkgs" DOTFILES_DJ_PACKAGES_DIR="$fake_pkgs" run sh "$INSTALL_PKGS" --dry-run
+  grep -qE "already installed:.*faketool" <<< "$output"
+}
+
+# --- NixOS: nix profile backend, SYSTEM marker ----------------------------
+
+# Steer os-detect to nix: a NixOS os-release plus a stub `nix`. apt is
+# stubbed too, to prove NixOS wins over it.
+nixos_env() {
+  printf 'ID=nixos\n' > "$SANDBOX/os-release"
+  export DOTFILES_OS_RELEASE_FILE="$SANDBOX/os-release"
+  stub_cmd nix
+  stub_cmd apt
+  stub_sudo_passthrough
+  stub_cmd apt-get
+}
+
+@test "nix: a missing tool goes into the user profile from nixpkgs, without sudo" {
+  fake_pkgs="$SANDBOX/fake-pkgs"
+  mkdir -p "$fake_pkgs/renames"
+  printf 'dotfiles-test-pkg-zzz\n' > "$fake_pkgs/common.txt"
+  printf 'dotfiles-test-pkg-zzz some-attr\n' > "$fake_pkgs/renames/nix.txt"
+  nixos_env
+  DOTFILES_PACKAGES_DIR="$fake_pkgs" DOTFILES_DJ_PACKAGES_DIR="$fake_pkgs" run sh "$INSTALL_PKGS"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "PKG=nix" ]]
+  grep -q "^nix .*profile add nixpkgs#some-attr$" "$SANDBOX/stub.log"
+  ! stub_called sudo
+  ! stub_called apt-get
+}
+
+@test "SYSTEM: neither installed nor reported missing, but listed as OS-provided" {
+  fake_pkgs="$SANDBOX/fake-pkgs"
+  mkdir -p "$fake_pkgs/renames"
+  printf 'dotfiles-test-daemon-zzz\n' > "$fake_pkgs/common.txt"
+  printf 'dotfiles-test-daemon-zzz SYSTEM\n' > "$fake_pkgs/renames/nix.txt"
+  nixos_env
+  DOTFILES_PACKAGES_DIR="$fake_pkgs" DOTFILES_DJ_PACKAGES_DIR="$fake_pkgs" run sh "$INSTALL_PKGS"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "provided by the OS config (SYSTEM): dotfiles-test-daemon-zzz" ]]
+  [[ "$output" =~ "to install: (none)" ]]
+  [[ "$output" != *"could not install"* ]]
+  ! stub_called nix
+}
+
+@test "nix: fallback scripts don't run unless marked nix-ok (most target /usr/local/bin)" {
+  fake_pkgs="$SANDBOX/fake-pkgs"
+  mkdir -p "$fake_pkgs/renames" "$fake_pkgs/scripts"
+  printf 'faketool\n' > "$fake_pkgs/common.txt"
+  printf 'faketool SKIP\n' > "$fake_pkgs/renames/nix.txt"
+  marker="$SANDBOX/faketool-installed"
+  printf '#!/bin/sh\ntouch "%s"\n' "$marker" > "$fake_pkgs/scripts/faketool.sh"
+  nixos_env
+  DOTFILES_PACKAGES_DIR="$fake_pkgs" DOTFILES_DJ_PACKAGES_DIR="$fake_pkgs" run sh "$INSTALL_PKGS"
+  [ "$status" -eq 0 ]
+  [ ! -f "$marker" ]
+  [[ "$output" =~ "could not install: faketool" ]]
+}
+
+@test "nix: a fallback script marked nix-ok does run" {
+  fake_pkgs="$SANDBOX/fake-pkgs"
+  mkdir -p "$fake_pkgs/renames" "$fake_pkgs/scripts"
+  printf 'faketool\n' > "$fake_pkgs/common.txt"
+  printf 'faketool SKIP\n' > "$fake_pkgs/renames/nix.txt"
+  marker="$SANDBOX/faketool-installed"
+  printf '#!/bin/sh\n# dj-installer: nix-ok\ntouch "%s"\n' "$marker" > "$fake_pkgs/scripts/faketool.sh"
+  nixos_env
+  DOTFILES_PACKAGES_DIR="$fake_pkgs" DOTFILES_DJ_PACKAGES_DIR="$fake_pkgs" run sh "$INSTALL_PKGS"
+  [ "$status" -eq 0 ]
+  [ -f "$marker" ]
+}
+
+@test "nix: a failed nix install warns and carries on with the next tool" {
+  fake_pkgs="$SANDBOX/fake-pkgs"
+  mkdir -p "$fake_pkgs/renames"
+  printf 'dotfiles-test-a-zzz\ndotfiles-test-b-zzz\n' > "$fake_pkgs/common.txt"
+  nixos_env
+  printf '#!/bin/sh\necho "nix $*" >> "%s/stub.log"\nexit 1\n' "$SANDBOX" > "$STUB_BIN/nix"
+  DOTFILES_PACKAGES_DIR="$fake_pkgs" DOTFILES_DJ_PACKAGES_DIR="$fake_pkgs" run sh "$INSTALL_PKGS"
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "nix could not install dotfiles-test-a-zzz" ]]
+  grep -q "nixpkgs#dotfiles-test-b-zzz" "$SANDBOX/stub.log"
+}

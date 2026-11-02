@@ -1,0 +1,5 @@
+# Template seed for the personal "vm" type list
+# (~/.config/dj/packages/types/vm.txt, used when
+# `dj system-type vm` is set).
+#
+# Lightweight guest tooling. Populate as VMs come online.
