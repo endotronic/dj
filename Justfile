@@ -213,3 +213,4 @@ init *ARGS:
 
 # Opt-in modules (dj module list). Each module's recipes refuse to run until it's enabled.
 import 'modules/claude/claude.just'
+import 'modules/opencode/opencode.just'
