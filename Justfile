@@ -206,3 +206,7 @@ doctor *ARGS:
 # Report -- and with --fix, repair -- machine state newer code expects (--list, --only ID).
 migrate *ARGS:
     @sh "{{SCRIPTS}}/migrate.sh" "$@"
+
+# First run without a private repo: scaffold your config, stage it (--remote URL, --commit).
+init *ARGS:
+    sh "{{SCRIPTS}}/init.sh" "$@"

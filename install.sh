@@ -1030,3 +1030,9 @@ next steps:
   1. reload your shell:  . ~/.bashrc   (or . ~/.zshrc on zsh)
   2. 'dj doctor' for sanity checks
 EOF
+if ! dot rev-parse --verify -q HEAD >/dev/null 2>&1; then
+  cat <<EOF
+  3. your private repo is empty: 'dj init' lays out your config and
+     says how to publish it
+EOF
+fi
