@@ -249,7 +249,7 @@ if [ -n "$missing" ]; then
       ;;
     nix)
       # NixOS: user packages go into the per-user profile (no sudo, so
-      # this stays inside $HOME as §9 asks). Names are nixpkgs attributes;
+      # this stays inside $HOME). Names are nixpkgs attributes;
       # `nixpkgs` resolves through the registry entry NixOS pins to the
       # system's own nixpkgs, so nothing new is downloaded to evaluate.
       for _l in $missing; do
