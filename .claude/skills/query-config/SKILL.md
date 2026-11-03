@@ -6,7 +6,7 @@ description: Answer questions about the dotfiles configuration and the current m
 # query-config
 
 A read-only skill: answer accurately about the current state of this
-machine and the design in docs/design.md (and the user's own notes in CLAUDE.local.md, when present). Do not change anything.
+machine and the design in docs/design.md (and the user's own notes in .claude/AGENTS.md, when present). Do not change anything.
 
 ## Shell alias note
 
@@ -22,7 +22,7 @@ When showing the user commands to run themselves, use `dj` and `dot`.
 
 ## Sources of truth, in order
 
-1. **docs/design.md** (and **CLAUDE.local.md**, the user's own notes,
+1. **docs/design.md** (and **.claude/AGENTS.md**, the user's own notes,
    when present) — authoritative on the
    *design*. Quote it (with section number) for "why is it this way?"
 2. **The filesystem** — authoritative on what's *actually* installed and

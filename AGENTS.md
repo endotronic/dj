@@ -4,11 +4,14 @@ This file is for agents (and people) changing **this repository**, the
 public engine. Design and rationale: `docs/design.md`. How it's used:
 `README.md`.
 
-Nothing here is about any particular user. If `CLAUDE.local.md` exists
-beside this file, it's the current user's own notes about their machines
-(linked in from their private repo by the claude module). Use it for
-context about their setup, and never copy anything from it into this
-repo.
+Nothing here is about any particular user. If `.claude/AGENTS.md` exists,
+it's the current user's own notes about their machines (linked in from
+their private repo by the claude module). Use it for context about their
+setup, and never copy anything from it into this repo.
+
+This is the only agent-instructions file. Don't add a `CLAUDE.md` or
+`CLAUDE.local.md` beside it: Claude Code reads `AGENTS.md` only where
+neither exists.
 
 ## Layout
 

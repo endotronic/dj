@@ -32,8 +32,10 @@ package, query config, edit config, map intent to a `dj` verb) are loaded.
 
 Context about *your* machines and decisions belongs in your private repo.
 Keep it at `~/.config/dj/AGENTS.md`; the `claude-local-context` migration
-links it into the dj checkout as `CLAUDE.local.md` (gitignored), so `dj
-claude` sessions see it next to dj's own `AGENTS.md`.
+links it into the dj checkout as `.claude/AGENTS.md` (gitignored), so `dj
+claude` sessions see it next to dj's own `AGENTS.md`. (Not
+`CLAUDE.local.md`: Claude Code skips a directory's `AGENTS.md` when that
+directory has a `CLAUDE.md` or `CLAUDE.local.md`.)
 
 ## Keeping secrets out of a session
 

@@ -1,5 +1,5 @@
 # Launch Claude Code in this repo, with the project skills for operating
-# your dj setup (and CLAUDE.local.md, your own notes, when you have one).
+# your dj setup (and .claude/AGENTS.md, your own notes, when you have one).
 # Args become a one-shot query via `claude -p`; no args -> interactive,
 # which needs a terminal (headless with no prompt explains itself rather
 # than inheriting claude's confusing print-mode error). A prompt piped on

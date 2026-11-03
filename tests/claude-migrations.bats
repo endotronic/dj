@@ -212,7 +212,7 @@ copy_repo() {
   copy_repo
   run sh "$MIGRATE" --only claude-local-context
   [ "$status" -eq 0 ]
-  [[ "$output" != *"CLAUDE.local.md"* ]]
+  [[ "$output" != *"AGENTS.md"* ]]
 }
 
 @test "claude-local-context: --fix links the notes, then reports ok" {
@@ -223,18 +223,45 @@ copy_repo() {
   [ "$status" -eq 1 ]
   run sh "$MIGRATE" --fix --only claude-local-context
   [ "$status" -eq 0 ]
-  [ "$(readlink "$COPY/CLAUDE.local.md")" = "$HOME/.config/dj/AGENTS.md" ]
+  [ "$(readlink "$COPY/.claude/AGENTS.md")" = "$HOME/.config/dj/AGENTS.md" ]
+  [ ! -e "$COPY/CLAUDE.local.md" ]
   run sh "$MIGRATE" --only claude-local-context
   [ "$status" -eq 0 ]
 }
 
-@test "claude-local-context: a real CLAUDE.local.md is backed up, not clobbered" {
+@test "claude-local-context: a real .claude/AGENTS.md is backed up, not clobbered" {
+  copy_repo
+  mkdir -p "$HOME/.config/dj" "$COPY/.claude"
+  echo "# my machines" > "$HOME/.config/dj/AGENTS.md"
+  echo "# hand-written" > "$COPY/.claude/AGENTS.md"
+  run sh "$MIGRATE" --fix --only claude-local-context
+  [ "$status" -eq 0 ]
+  [ -L "$COPY/.claude/AGENTS.md" ]
+  grep -q hand-written "$SANDBOX/backup/AGENTS.md"
+}
+
+@test "claude-local-context: an old CLAUDE.local.md link is pending, and --fix removes it" {
+  # Claude Code skips AGENTS.md in a directory that has a CLAUDE.local.md.
+  copy_repo
+  mkdir -p "$HOME/.config/dj" "$COPY/.claude"
+  echo "# my machines" > "$HOME/.config/dj/AGENTS.md"
+  ln -s "$HOME/.config/dj/AGENTS.md" "$COPY/.claude/AGENTS.md"
+  ln -s "$HOME/.config/dj/AGENTS.md" "$COPY/CLAUDE.local.md"
+  run sh "$MIGRATE" --only claude-local-context
+  [ "$status" -eq 1 ]
+  run sh "$MIGRATE" --fix --only claude-local-context
+  [ "$status" -eq 0 ]
+  [ ! -e "$COPY/CLAUDE.local.md" ] && [ ! -L "$COPY/CLAUDE.local.md" ]
+  run sh "$MIGRATE" --only claude-local-context
+  [ "$status" -eq 0 ]
+}
+
+@test "claude-local-context: a CLAUDE.local.md that is not our link is left alone" {
   copy_repo
   mkdir -p "$HOME/.config/dj"
   echo "# my machines" > "$HOME/.config/dj/AGENTS.md"
   echo "# hand-written" > "$COPY/CLAUDE.local.md"
   run sh "$MIGRATE" --fix --only claude-local-context
   [ "$status" -eq 0 ]
-  [ -L "$COPY/CLAUDE.local.md" ]
-  grep -q hand-written "$SANDBOX/backup/CLAUDE.local.md"
+  grep -q hand-written "$COPY/CLAUDE.local.md"
 }

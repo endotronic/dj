@@ -1,6 +1,8 @@
 # Per-user agent context, linked in from the private repo (never tracked here).
+.claude/AGENTS.md
+# Not used by dj, and must not exist: a CLAUDE.local.md beside AGENTS.md makes
+# Claude Code skip AGENTS.md.
 CLAUDE.local.md
-AGENTS.local.md
 
 # Machine-local Claude Code permissions.
 .claude/settings.local.json
