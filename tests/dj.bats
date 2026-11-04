@@ -39,14 +39,53 @@ teardown() {
   [[ "$output" == *"'just' is not installed"* ]]
 }
 
-@test "system-type: persists a valid type, rejects a bad one, clears with none" {
-  run "$DJ" system-type laptop
+@test "system-type: persists a known type, rejects a bad one, clears with none" {
+  mkdir -p "$XDG_CONFIG_HOME/dj/packages/types"
+  : > "$XDG_CONFIG_HOME/dj/packages/types/laptop.txt"
+  run "$DJ" system-type laptop < /dev/null
   [ "$status" -eq 0 ]
   [ "$(cat "$XDG_CONFIG_HOME/dotfiles/system-type")" = laptop ]
   run "$DJ" system-type 'bad type'
   [ "$status" -eq 2 ]
   run "$DJ" system-type none
   [ ! -f "$XDG_CONFIG_HOME/dotfiles/system-type" ]
+}
+
+@test "system-type: a type only the post-install lists know counts as known" {
+  mkdir -p "$XDG_CONFIG_HOME/dj/postinstall/types"
+  : > "$XDG_CONFIG_HOME/dj/postinstall/types/htpc.txt"
+  run "$DJ" system-type htpc < /dev/null
+  [ "$status" -eq 0 ]
+  [ "$(cat "$XDG_CONFIG_HOME/dotfiles/system-type")" = htpc ]
+}
+
+@test "system-type: a new type needs confirmation, and nothing is written without it" {
+  mkdir -p "$XDG_CONFIG_HOME/dj/packages/types" "$XDG_CONFIG_HOME/dotfiles"
+  : > "$XDG_CONFIG_HOME/dj/packages/types/desktop.txt"
+  echo desktop > "$XDG_CONFIG_HOME/dotfiles/system-type"
+  run "$DJ" system-type dekstop < /dev/null
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"new system type"* ]]
+  [[ "$output" == *"Known types: desktop"* ]]
+  [[ "$output" == *"--yes"* ]]
+  [ "$(cat "$XDG_CONFIG_HOME/dotfiles/system-type")" = desktop ]
+}
+
+@test "system-type: --yes sets a new type without asking" {
+  run "$DJ" system-type terminal --yes < /dev/null
+  [ "$status" -eq 0 ]
+  [ "$(cat "$XDG_CONFIG_HOME/dotfiles/system-type")" = terminal ]
+  run "$DJ" system-type terminal -y < /dev/null
+  [ "$status" -eq 0 ]
+}
+
+@test "system-type: a flag in the TYPE slot is rejected, not persisted" {
+  run "$DJ" system-type --dry-run --yes
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"can't start with '-'"* ]]
+  [ ! -f "$XDG_CONFIG_HOME/dotfiles/system-type" ]
+  run "$DJ" system-type desktop --bogus
+  [ "$status" -eq 2 ]
 }
 
 @test "arguments reach recipes intact: backticks and spaces are not re-parsed" {

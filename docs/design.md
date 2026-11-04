@@ -64,7 +64,11 @@ load into every agent session anywhere under your home directory.
 A **system type** is any identifier (`desktop`, `server`, `laptop`,
 `htpc`, ...), a lookup key for package and hook lists, nothing more. It's
 host-local state, set with `install.sh --system-type` or `dj system-type`,
-never tracked, and never guessed from `$DISPLAY` or similar.
+never tracked, and never guessed from `$DISPLAY` or similar. A type no
+`types/` list mentions yet is still valid (it means common-only), but since
+that's usually a typo, `dj system-type` asks before persisting it (`--yes`
+skips the question). Give a deliberately common-only type an empty,
+commented `types/<type>.txt` so it reads as known.
 
 ## 4. Shell layer
 

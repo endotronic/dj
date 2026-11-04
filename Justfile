@@ -96,23 +96,61 @@ postinstall *ARGS:
     sh "{{SCRIPTS}}/run-postinstall.sh" "$@"
 
 # Persist this machine's system type (any identifier; `none` clears it). Doesn't install anything.
-system-type TYPE:
+# A type with no package or hook list yet asks for confirmation (--yes skips it).
+system-type TYPE *FLAGS:
     #!/bin/sh
-    case "$1" in
+    set -eu
+    type=$1
+    shift
+    yes=0
+    for a in "$@"; do
+      case "$a" in
+        -y|--yes) yes=1 ;;
+        *) echo "error: unknown flag: $a (system-type takes only --yes)" >&2; exit 2 ;;
+      esac
+    done
+    case "$type" in
       none|'')
         rm -f "{{TIER_FILE}}"
         echo "system-type cleared (common-only)"
+        exit 0
+        ;;
+      -*)
+        # A flag that landed in the TYPE slot (`dj system-type --dry-run`)
+        # would otherwise be a perfectly valid identifier.
+        echo "error: TYPE can't start with '-' (got: $type)" >&2
+        exit 2
         ;;
       *[!A-Za-z0-9_-]*)
         echo "error: TYPE must contain only letters, digits, _ and -" >&2
         exit 2
         ;;
-      *)
-        mkdir -p "$(dirname "{{TIER_FILE}}")"
-        printf '%s\n' "$1" > "{{TIER_FILE}}"
-        echo "system-type set to $1; run 'dj upgrade' to install its packages"
-        ;;
     esac
+    # Any identifier is a valid type, but one that no list mentions yet is
+    # usually a typo: say so, and confirm before persisting it.
+    pk=${DOTFILES_DJ_PACKAGES_DIR:-{{DJ_DIR}}/packages}
+    hk={{DJ_DIR}}/postinstall
+    if [ "$yes" -ne 1 ] && [ ! -f "$pk/types/$type.txt" ] && [ ! -f "$hk/types/$type.txt" ]; then
+      known=$(for f in "$pk"/types/*.txt "$hk"/types/*.txt; do
+                [ -f "$f" ] && basename "$f" .txt; done | sort -u | tr '\n' ' ')
+      echo "'$type' is a new system type: there is no $pk/types/$type.txt."
+      echo "Known types: ${known:-(none)}"
+      echo "A machine of this type gets only common.txt and its host's list until one exists."
+      if [ -t 0 ]; then
+        printf "Set system-type to '%s' anyway? [y/N] " "$type"
+        read -r ans || ans=
+        case "$ans" in
+          y|Y|yes|YES) ;;
+          *) echo "unchanged"; exit 1 ;;
+        esac
+      else
+        echo "error: not confirmed (no terminal); re-run with --yes to set it" >&2
+        exit 1
+      fi
+    fi
+    mkdir -p "$(dirname "{{TIER_FILE}}")"
+    printf '%s\n' "$type" > "{{TIER_FILE}}"
+    echo "system-type set to $type; run 'dj upgrade' to install its packages"
 
 # List, enable or disable opt-in modules: dj module [list|enable NAME|disable NAME].
 module *ARGS:

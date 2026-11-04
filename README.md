@@ -67,7 +67,7 @@ all of it from a machine that's already set up.
 | `dj add PATH` | track a file (`dot commit`, `dot push` as with any repo) |
 | `dj secret-add PATH` | encrypt a file into your secrets and register where it goes |
 | `dj secret-edit NAME` | edit one in place through sops |
-| `dj system-type TYPE` | change which type lists apply here |
+| `dj system-type TYPE` | change which type lists apply here (asks first for a type no list has) |
 | `dj module list` | see and enable optional modules |
 
 Your configuration lives in your repo under `~/.config/dj/`:
