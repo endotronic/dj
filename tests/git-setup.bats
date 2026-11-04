@@ -223,6 +223,19 @@ staged_files() {
   grep -q -- '--quick-gen-key' "$SANDBOX/stub.log"
 }
 
+@test "commit.gpgsign=false in git config: no GPG key, signing stays off" {
+  git config --global user.name  "Jane Dev"
+  git config --global user.email "jane@example.com"
+  git config --global commit.gpgsign false
+
+  run sh "$SCRIPT" --yes
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"not generating a GPG key"* ]]
+  ! grep -q -- '--quick-gen-key' "$SANDBOX/stub.log"
+  [ "$(git config --global --get commit.gpgsign)" = false ]
+  [ -z "$(git config --global --get user.signingkey || true)" ]
+}
+
 @test "git configured to sign commits after new GPG key" {
   git config --global user.name  "Jane Dev"
   git config --global user.email "jane@example.com"

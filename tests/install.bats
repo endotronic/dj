@@ -784,6 +784,19 @@ _make_fake_repo_dir() {
   [ "$(stat -c '%a' "$HOME/.ssh")" = "700" ]
 }
 
+@test "--git-key naming ~/.ssh/id_githost itself is not an error" {
+  stage_fake_dotfiles_checkout
+  mkdir -p "$HOME/.ssh"
+  printf 'FAKE-DEPLOY-KEY\n' > "$HOME/.ssh/id_githost"
+  chmod 644 "$HOME/.ssh/id_githost"
+
+  run sh "$INSTALL" --on-conflict backup --git-key "$HOME/.ssh/id_githost"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"clone key already at"* ]]
+  grep -q FAKE-DEPLOY-KEY "$HOME/.ssh/id_githost"
+  [ "$(stat -c '%a' "$HOME/.ssh/id_githost")" = "600" ]
+}
+
 @test "--git-key with unreadable path warns and install still succeeds" {
   stage_fake_dotfiles_checkout
 

@@ -151,8 +151,15 @@ gpg_key_created=
 gpg_key_imported=
 [ -r "$HOME/.private/gpg/private-key.asc" ] && gpg_key_imported=1
 
+# A machine that should never sign (one with no GPG identity of its own)
+# says so in its tracked git config: commit.gpgsign = false.
+gpg_optout=
+[ "$(git config --global --get commit.gpgsign 2>/dev/null || true)" = false ] && gpg_optout=1
+
 if ! command -v gpg >/dev/null 2>&1; then
   log "gpg not found; skipping GPG key setup"
+elif [ -n "$gpg_optout" ] && [ -z "$gpg_key_imported" ]; then
+  log "commit.gpgsign is false in git config; not generating a GPG key"
 elif gpg --list-secret-keys --keyid-format LONG 2>/dev/null | grep -q '^sec'; then
   if [ -n "$gpg_key_imported" ]; then
     log "GPG secret key restored from private repo"

@@ -71,6 +71,28 @@ requires_sops_and_age() {
   grep -q "user-customized" "$FAKE_REPO/.sops.yaml"
 }
 
+@test "an existing .sops.yaml that lists this key: no add-your-key advice" {
+  requires_sops_and_age
+  age-keygen -o "$XDG_CONFIG_HOME/sops/age/keys.txt" 2>/dev/null
+  chmod 600 "$XDG_CONFIG_HOME/sops/age/keys.txt"
+  pub=$(awk '/^# public key:/ { print $NF }' "$XDG_CONFIG_HOME/sops/age/keys.txt")
+  printf 'creation_rules:\n  - path_regex: secrets/.*\\.enc$\n    age: %s,age1other\n' "$pub" > "$FAKE_REPO/.sops.yaml"
+  run sh "$SOPS_INIT"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"already lists this key"* ]]
+  [[ "$output" != *"to add this machine's key"* ]]
+}
+
+@test "an existing .sops.yaml without this key still says how to add it" {
+  requires_sops_and_age
+  age-keygen -o "$XDG_CONFIG_HOME/sops/age/keys.txt" 2>/dev/null
+  chmod 600 "$XDG_CONFIG_HOME/sops/age/keys.txt"
+  printf 'creation_rules:\n  - path_regex: secrets/.*\\.enc$\n    age: age1other\n' > "$FAKE_REPO/.sops.yaml"
+  run sh "$SOPS_INIT"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"to add this machine's key"* ]]
+}
+
 @test "writes .sops.yaml when only the age key already exists" {
   requires_sops_and_age
   # Pre-generate a key but no .sops.yaml.

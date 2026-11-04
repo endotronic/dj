@@ -50,7 +50,9 @@ if [ -z "$PUB_KEY" ]; then
 fi
 log "public key: $PUB_KEY"
 
-if [ -e "$SOPS_YAML" ]; then
+if [ -e "$SOPS_YAML" ] && grep -qF "$PUB_KEY" "$SOPS_YAML"; then
+  log ".sops.yaml already lists this key as a recipient; nothing to do"
+elif [ -e "$SOPS_YAML" ]; then
   log ".sops.yaml already exists; not overwriting"
   log "to add this machine's key, edit .sops.yaml manually then run:"
   log "  find ~/.private/secrets -name '*.enc' -exec sops updatekeys {} \\;"

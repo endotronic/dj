@@ -493,9 +493,15 @@ if [ -n "$GIT_KEY_SRC" ]; then
   else
     mkdir -p "$HOME/.ssh"
     chmod 700 "$HOME/.ssh"
-    cp "$GIT_KEY_SRC" "$GIT_KEY"
+    # The key may already be in place (pre-staged there, or a re-run):
+    # cp refuses to copy a file onto itself, which would abort the run.
+    if [ "$GIT_KEY_SRC" -ef "$GIT_KEY" ]; then
+      log "private-repo clone key already at $GIT_KEY"
+    else
+      cp "$GIT_KEY_SRC" "$GIT_KEY"
+      log "installed private-repo clone key at $GIT_KEY"
+    fi
     chmod 600 "$GIT_KEY"
-    log "installed private-repo clone key at $GIT_KEY"
   fi
 fi
 
