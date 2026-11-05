@@ -163,6 +163,14 @@ make_pubkey() {
   run sh "$SCRIPT"
   [ "$status" -eq 0 ]
   [[ "$output" =~ "commit it yourself" ]]
+  script_output=$output
   run git --git-dir="$DOT_DIR" --work-tree="$HOME" diff --cached --name-only
-  [[ "$output" =~ "authorized_keys.d/$HOSTNAME_SHORT.pub" ]]
+  [[ "$output" =~ "authorized_keys.d/$HOSTNAME_SHORT.pub" ]] || {
+    printf 'expected host: %s\nstaged: [%s]\nstatus:\n%s\nlog:\n%s\nscript said:\n%s\n' \
+      "$HOSTNAME_SHORT" "$output" \
+      "$(git --git-dir="$DOT_DIR" --work-tree="$HOME" status --porcelain --untracked-files=all 2>&1)" \
+      "$(git --git-dir="$DOT_DIR" log --oneline --format='%h %an <%ae> %s' 2>&1)" \
+      "$script_output" >&2
+    false
+  }
 }
