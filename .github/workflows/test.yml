@@ -29,7 +29,26 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install bats-core jq just shellcheck
       - name: bats
-        run: bats tests/
+        # Each failing test also becomes an annotation (title = the test,
+        # body = bats' diagnostics), so failures read without the log.
+        run: |
+          set +e
+          bats tests/ 2>&1 | tee "$RUNNER_TEMP/bats.out"
+          status=${PIPESTATUS[0]}
+          awk '
+            function flush() {
+              if (name != "") {
+                gsub(/%/, "%25", body); gsub(/\r/, "", body); gsub(/\n/, "%0A", body)
+                printf "::error title=%s::%s\n", name, body
+              }
+              name = ""; body = ""
+            }
+            /^not ok / { flush(); name = $0; sub(/^not ok [0-9]+ /, "", name); gsub(/[:,]/, " ", name); next }
+            /^(ok|not ok) / { flush(); next }
+            name != "" && /^#/ { body = body substr($0, 3) "\n" }
+            END { flush() }
+          ' "$RUNNER_TEMP/bats.out"
+          exit "$status"
       - name: shellcheck
         # Advisory until the inherited scripts have a clean baseline.
         continue-on-error: true
