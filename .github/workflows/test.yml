@@ -18,12 +18,16 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y zsh dash jq shellcheck
+          # The recipe tests run `just`; take a pinned release rather than
+          # whatever version the runner's distro happens to package.
+          curl -fsSL https://just.systems/install.sh \
+            | sudo bash -s -- --tag 1.59.0 --to /usr/local/bin
           # Distro bats is too old (1.2); the suite needs >= 1.5.
           git clone --depth 1 --branch v1.11.0 https://github.com/bats-core/bats-core.git /tmp/bats
           sudo /tmp/bats/install.sh /usr/local
       - name: Install test dependencies (macOS)
         if: runner.os == 'macOS'
-        run: brew install bats-core jq shellcheck
+        run: brew install bats-core jq just shellcheck
       - name: bats
         run: bats tests/
       - name: shellcheck

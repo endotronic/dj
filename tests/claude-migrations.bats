@@ -158,6 +158,8 @@ EOF
 @test "claude-secrets-rules: a gate registered at an old path is pending, and --fix replaces it" {
   # A machine set up before the gate moved still names the old file, which
   # no longer exists: Claude Code can't run it, so the gate is silently off.
+  secrets_gate
+  secrets_claude
   mkdir -p "$HOME/.claude"
   cat > "$HOME/.claude/settings.json" <<'EOF'
 {"hooks":{"PreToolUse":[
@@ -165,6 +167,8 @@ EOF
   {"matcher":"Bash","hooks":[{"type":"command","command":"sh /x/other.sh"},
                              {"type":"command","command":"sh /old2/secrets-gate.sh"}]}]}}
 EOF
+  run sh "$MIGRATE" --only claude-secrets-rules
+  [ "$status" -eq 1 ]
   run sh "$MIGRATE" --fix --only claude-secrets-rules
   [ "$status" -eq 0 ]
   run sh "$MIGRATE" --fix --only claude-secrets-rules
