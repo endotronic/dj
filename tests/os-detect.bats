@@ -45,6 +45,7 @@ teardown() {
 
 @test "DOTFILES_PKG=apt when apt is on PATH before pacman (linux)" {
   stub_cmd apt
+  as_linux
   stub_cmd pacman
   case "$(sh -c '. "$OS_DETECT" && printf %s "$DOTFILES_OS"')" in
     linux|wsl) ;;
@@ -61,7 +62,9 @@ teardown() {
   esac
   stub_cmd nix
   stub_cmd apt
+  as_linux
   printf 'ID=nixos\n' > "$SANDBOX/os-release"
+  as_linux
   DOTFILES_OS_RELEASE_FILE="$SANDBOX/os-release" \
     run sh -c '. "$OS_DETECT" && printf %s/%s "$DOTFILES_PKG" "$DOTFILES_DISTRO"'
   [ "$output" = "nix/nixos" ]
@@ -74,6 +77,7 @@ teardown() {
   esac
   stub_cmd nix
   stub_cmd apt
+  as_linux
   printf 'ID=debian\n' > "$SANDBOX/os-release"
   DOTFILES_OS_RELEASE_FILE="$SANDBOX/os-release" \
     run sh -c '. "$OS_DETECT" && printf %s "$DOTFILES_PKG"'

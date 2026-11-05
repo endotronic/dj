@@ -595,6 +595,9 @@ EOF
 printf 'Sure! #ff0000 seems fitting.\n'
 EOF
   chmod +x "$STUB_BIN/claude"
+  # The script bounds claude with timeout, which macOS lacks by default.
+  printf '#!/bin/sh\nshift\nexec "$@"\n' > "$STUB_BIN/timeout"
+  chmod +x "$STUB_BIN/timeout"
 
   run sh "$SETUP" testhost --system-type server < /dev/null
   [ "$status" -eq 0 ]

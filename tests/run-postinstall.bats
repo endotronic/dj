@@ -70,6 +70,7 @@ teardown() {
   marker="$SANDBOX/myhook-ran"
   printf '#!/bin/sh\ntouch "%s"\n' "$marker" > "$fake_hooks/myhook.sh"
   printf 'ID=nixos\n' > "$SANDBOX/os-release"
+  as_linux
   stub_cmd nix
 
   DOTFILES_OS_RELEASE_FILE="$SANDBOX/os-release" \
@@ -82,6 +83,7 @@ teardown() {
 
 @test "NixOS: applies the flake through the nixos-flake-applied migration" {
   printf 'ID=nixos\n' > "$SANDBOX/os-release"
+  as_linux
   stub_cmd nix
   fake_root="$SANDBOX/fake-root"
   mkdir -p "$fake_root/scripts"
@@ -95,6 +97,7 @@ teardown() {
 
 @test "NixOS: --dry-run applies nothing" {
   printf 'ID=nixos\n' > "$SANDBOX/os-release"
+  as_linux
   stub_cmd nix
   fake_root="$SANDBOX/fake-root"
   mkdir -p "$fake_root/scripts"

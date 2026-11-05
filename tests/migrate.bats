@@ -507,6 +507,7 @@ IP
 
 nixos_flake_setup() {
   printf 'ID=nixos\n' > "$SANDBOX/os-release"
+  as_linux
   export DOTFILES_OS_RELEASE_FILE="$SANDBOX/os-release"
   export DOTFILES_NIXOS_FLAKE="$HOME/.config/nixos"
   mkdir -p "$DOTFILES_NIXOS_FLAKE" "$SANDBOX/store/sys-a" "$SANDBOX/store/sys-b"
@@ -626,6 +627,7 @@ RP
 @test "postinstall-hooks: N/A on NixOS, even with an unresolved hook listed" {
   printf '#!/bin/sh\nexit 1\n' > "$FAKE_ROOT/scripts/run-postinstall.sh"
   printf 'ID=nixos\n' > "$SANDBOX/os-release"
+  as_linux
   DOTFILES_OS_RELEASE_FILE="$SANDBOX/os-release" run sh "$MIGRATE" --only postinstall-hooks
   [ "$status" -eq 0 ]
   [[ "$output" != *"post-install hook"* ]]

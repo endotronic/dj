@@ -17,9 +17,11 @@ name=${1:?usage: theme-for-host.sh NAME}
 log() { printf '[dj-setup] %s\n' "$*" >&2; }
 
 color=
-if command -v claude >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1; then
+# GNU timeout; Homebrew's coreutils installs it as gtimeout on macOS.
+to=$(command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null || true)
+if command -v claude >/dev/null 2>&1 && [ -n "$to" ]; then
   prompt="Respond with ONLY a 6-digit hex color code (like #2596be) and nothing else -- no explanation, no markdown -- that you associate with or that is evocative of the word \"$name\" (for example, what a similar-sounding color name suggests). If nothing specific comes to mind, pick any pleasant accent color."
-  color=$(timeout 20 claude -p "$prompt" 2>/dev/null | grep -oE '#[0-9a-fA-F]{6}' | head -n1) || color=
+  color=$("$to" 20 claude -p "$prompt" 2>/dev/null | grep -oE '#[0-9a-fA-F]{6}' | head -n1) || color=
 fi
 if [ -n "$color" ]; then
   log "generated tmux theme color for $name via claude: $color"

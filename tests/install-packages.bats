@@ -126,6 +126,7 @@ teardown() {
 
   # Steer os-detect to apt and capture the install invocation.
   stub_cmd apt
+  as_linux
   stub_sudo_passthrough
   stub_cmd apt-get
 
@@ -148,6 +149,8 @@ teardown() {
   printf 'dotfiles-test-pkg-type\n' > "$fake_pkgs/types/sometype.txt"
 
   stub_cmd apt
+
+  as_linux
   stub_sudo_passthrough
   stub_cmd apt-get
 
@@ -165,6 +168,8 @@ teardown() {
   printf 'dotfiles-test-pkg-host\n' > "$fake_pkgs/hosts/$_host.txt"
 
   stub_cmd apt
+
+  as_linux
   stub_sudo_passthrough
   stub_cmd apt-get
 
@@ -198,6 +203,7 @@ teardown() {
 
   # Steer os-detect to pick apt by making 'apt' findable.
   stub_cmd apt
+  as_linux
   stub_sudo_passthrough
   # apt-get: update succeeds, install fails (package not found).
   cat > "$STUB_BIN/apt-get" <<STUBEOF
@@ -226,6 +232,8 @@ STUBEOF
   chmod +x "$fake_pkgs/scripts/faketool.sh"
 
   stub_cmd apt
+
+  as_linux
   stub_sudo_passthrough
   stub_cmd apt-get
 
@@ -243,6 +251,7 @@ STUBEOF
   printf '#!/bin/sh\nexit 0\n' > "$fake_pkgs/scripts/faketool.sh"
   printf '#!/bin/sh\nexit 0\n' > "$fake_pkgs/scripts/presenttool.sh"
   stub_cmd apt
+  as_linux
   stub_cmd presenttool
 
   DOTFILES_PACKAGES_DIR="$fake_pkgs" DOTFILES_DJ_PACKAGES_DIR="$fake_pkgs" run sh "$INSTALL_PKGS" --dry-run
@@ -255,6 +264,7 @@ STUBEOF
 
 @test "--dry-run reports '(none)' via fallback script when nothing is due" {
   stub_cmd apt
+  as_linux
   run sh "$INSTALL_PKGS" --dry-run
   [ "$status" -eq 0 ]
   [[ "$output" == *"to install via fallback script:"* ]]
@@ -272,6 +282,8 @@ STUBEOF
   chmod +x "$fake_pkgs/scripts/dotfiles-test-pkg-zzz.sh"
 
   stub_cmd apt
+
+  as_linux
   stub_sudo_passthrough
   cat > "$STUB_BIN/apt-get" <<STUBEOF
 #!/bin/sh
@@ -482,6 +494,7 @@ bin_column_setup() {
   mkdir -p "$fake_pkgs/renames" "$fake_pkgs/scripts"
   printf 'faketool\n' > "$fake_pkgs/common.txt"
   stub_cmd apt
+  as_linux
   stub_sudo_passthrough
   stub_cmd apt-get
 }
@@ -568,9 +581,11 @@ bin_column_setup() {
 # stubbed too, to prove NixOS wins over it.
 nixos_env() {
   printf 'ID=nixos\n' > "$SANDBOX/os-release"
+  as_linux
   export DOTFILES_OS_RELEASE_FILE="$SANDBOX/os-release"
   stub_cmd nix
   stub_cmd apt
+  as_linux
   stub_sudo_passthrough
   stub_cmd apt-get
 }

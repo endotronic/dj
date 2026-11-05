@@ -37,11 +37,12 @@ sandbox_setup() {
   unset DOTFILES_SKIP_SECRETS
   # And modules enabled by the ambient environment.
   unset DJ_MODULES
-  # OS detection: tests describe a Linux machine unless they say
-  # otherwise. On a macOS host, detection would otherwise take the
-  # brew-only path whatever package manager a test stubs.
-  export DOTFILES_UNAME_S=Linux
 }
+
+# For a test that describes a Linux machine (it stubs apt, or fakes a
+# NixOS os-release): on a macOS host, OS detection would otherwise take
+# the brew-only path whatever the test stubs.
+as_linux() { export DOTFILES_UNAME_S=Linux; }
 
 # A file's permission bits in octal (644), on GNU (stat -c) and BSD/macOS
 # (stat -f) alike.
