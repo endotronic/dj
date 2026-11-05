@@ -199,7 +199,7 @@ if [ -f "$SSH_CONFIG" ]; then
           cat "$BLOCK" >> "$TMP"
           inserted=1
         fi
-        hdr=$(printf '%s' "$stripped" | sed 's/^#\+[[:space:]]*//')
+        hdr=$(printf '%s' "$stripped" | sed 's/^##*[[:space:]]*//')
         if [ "$hdr" = "$TITLE" ]; then in_target=1; else in_target=0; fi
         ;;
     esac

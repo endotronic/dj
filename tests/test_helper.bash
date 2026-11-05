@@ -15,7 +15,10 @@ export DOTFILES_REPO_ROOT
 # Create a fresh sandbox: temp $SANDBOX dir, override HOME and
 # XDG_CONFIG_HOME inside it. Saves originals so teardown can restore.
 sandbox_setup() {
-  SANDBOX="$(mktemp -d)"
+  # By physical path: macOS's temp dir is a symlink (/var ->
+  # /private/var), and git, readlink -f and pwd -P report the resolved
+  # form, which then fails to match paths built from $SANDBOX.
+  SANDBOX="$(cd "$(mktemp -d)" && pwd -P)"
   export SANDBOX
 
   _ORIG_HOME="$HOME"

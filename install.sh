@@ -420,7 +420,13 @@ fi
 
 PUBLIC_CLONED=0
 if [ -d "$DOTFILES_DIR" ]; then
-  if [ -n "$PUBLIC_LOCAL_SOURCE" ] && [ "$PUBLIC_LOCAL_SOURCE" = "$DOTFILES_DIR" ]; then
+  # Same checkout? Compare physical paths: git reports the source's toplevel
+  # with symlinks resolved, while $DOTFILES_DIR keeps any symlink in $HOME's
+  # path (macOS's /var -> /private/var, /home -> /var/home on some distros).
+  _src_phys=
+  [ -n "$PUBLIC_LOCAL_SOURCE" ] && _src_phys=$(CDPATH= cd -- "$PUBLIC_LOCAL_SOURCE" 2>/dev/null && pwd -P) || true
+  _dd_phys=$(CDPATH= cd -- "$DOTFILES_DIR" 2>/dev/null && pwd -P) || _dd_phys=
+  if [ -n "$_src_phys" ] && [ "$_src_phys" = "$_dd_phys" ]; then
     log "using existing checkout at $DOTFILES_DIR (running from within it)"
     # The resolved source IS this checkout, so there's nothing to clean up.
     PUBLIC_LOCAL_SOURCE=

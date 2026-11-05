@@ -162,6 +162,21 @@ _make_fake_repo_dir() {
   grep -q "self marker" "$HOME/.dotfiles/MARKER"
 }
 
+@test "install.sh in its own checkout is used in place even when \$HOME's path has a symlink" {
+  mkdir -p "$SANDBOX/real-home"
+  ln -s "$SANDBOX/real-home" "$SANDBOX/link-home"
+  export HOME="$SANDBOX/link-home"
+  export XDG_CONFIG_HOME="$HOME/.config"
+  mkdir -p "$XDG_CONFIG_HOME/dotfiles"
+  _make_fake_repo_dir "$HOME/.dotfiles" "self marker"
+
+  run sh "$HOME/.dotfiles/install.sh" --on-conflict backup --remove-source no
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ "(running from within it)" ]]
+  [[ "$output" != *"updating existing checkout"* ]]
+  grep -q "self marker" "$HOME/.dotfiles/MARKER"
+}
+
 # --- private repo: empty-init fallback and cloning -------------------------
 
 @test "no --private-repo: initializes an empty bare private repo" {
