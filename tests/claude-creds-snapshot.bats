@@ -9,6 +9,10 @@ load test_helper
 setup() {
   sandbox_setup
   stub_dir_setup
+  # The script branches on `uname -s` itself: report Linux unless a
+  # test says otherwise (the Darwin test replaces this stub).
+  printf '#!/bin/sh\necho Linux\n' > "$STUB_BIN/uname"
+  chmod +x "$STUB_BIN/uname"
   export SNAPSHOT_SCRIPT="$DOTFILES_REPO_ROOT/modules/claude/claude-creds-snapshot.sh"
 }
 

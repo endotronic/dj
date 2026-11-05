@@ -651,7 +651,7 @@ fix() { touch "$HOME/my-thing"; }
 migration_main "$@"
 MIG
   run sh "$MIGRATE" --list
-  [[ "${lines[-1]}" == "my-thing "*"auto"*"my thing is set up" ]]
+  [[ "${lines[${#lines[@]}-1]}" == "my-thing "*"auto"*"my thing is set up" ]]
   run sh "$MIGRATE" --only my-thing
   [ "$status" -eq 1 ]
   [[ "$output" == *"MIGR    my thing is set up"* ]]

@@ -278,9 +278,10 @@ EOF
   # Hermetic: PATH=STUB_BIN only, so a real, system-installed
   # docker-compose can't short-circuit the check. `ln` isn't a dash
   # builtin, so stub it as a thin wrapper around the real binary.
-  cat > "$STUB_BIN/ln" <<'EOF'
+  real_ln=$(command -v ln)
+  cat > "$STUB_BIN/ln" <<EOF
 #!/bin/sh
-exec /usr/bin/ln "$@"
+exec "$real_ln" "\$@"
 EOF
   chmod +x "$STUB_BIN/ln"
 

@@ -34,10 +34,11 @@ jobs:
         run: |
           set +e
           bats --print-output-on-failure tests/ 2>&1 | tee "$RUNNER_TEMP/bats.out"
+          # Read bats' status first: any later command overwrites PIPESTATUS.
+          status=${PIPESTATUS[0]}
           # GitHub keeps 10 error annotations per step: list every failure first.
           failed=$(grep '^not ok ' "$RUNNER_TEMP/bats.out" | sed 's/^not ok [0-9]* //' | awk '{ printf "%s%%0A", $0 }')
           [ -z "$failed" ] || echo "::error title=$(grep -c '^not ok ' "$RUNNER_TEMP/bats.out") failing tests::$failed"
-          status=${PIPESTATUS[0]}
           awk '
             function flush() {
               if (name != "") {

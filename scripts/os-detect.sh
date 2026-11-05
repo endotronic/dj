@@ -7,7 +7,8 @@
 #   DOTFILES_SYSTEM_TYPE  any identifier (letters, digits, _, -) | (empty)
 # Safe to source repeatedly; idempotent.
 
-case "$(uname -s)" in
+# DOTFILES_UNAME_S overrides `uname -s`, for testing.
+case "${DOTFILES_UNAME_S:-$(uname -s)}" in
   Darwin) DOTFILES_OS=darwin ;;
   Linux)
     if [ -r /proc/version ] && grep -qiE '(microsoft|wsl)' /proc/version 2>/dev/null; then

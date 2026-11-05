@@ -249,7 +249,7 @@ fi
 NEEDS_SUDO_SETUP=$CREATED
 if [ "$NEEDS_SUDO_SETUP" = 0 ]; then
   case "$(passwd -S "$USERNAME" 2>/dev/null | awk '{print $2}')" in
-    L|NP|'') NEEDS_SUDO_SETUP=1 ;;
+    (L|NP|'') NEEDS_SUDO_SETUP=1 ;;
   esac
 fi
 
@@ -267,8 +267,8 @@ if [ "$NEEDS_SUDO_SETUP" = 1 ]; then
     # refreshed fine -- so its failure must not block the install
     # that follows.
     case "$PKG_MGR" in
-      apt)    { apt-get update -qq || true; } && apt-get install -y sudo ;;
-      pacman) pacman -Sy --noconfirm sudo ;;
+      (apt)    { apt-get update -qq || true; } && apt-get install -y sudo ;;
+      (pacman) pacman -Sy --noconfirm sudo ;;
     esac || printf 'warn: failed to install sudo on this host -- will fall back to a NOPASSWD-less warning\n' >&2
   fi
 

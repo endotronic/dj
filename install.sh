@@ -270,7 +270,8 @@ export DJ_MODULES
 
 # ---------- 1. OS / package-manager detection (inlined for bootstrap) ----------
 
-case "$(uname -s)" in
+# DOTFILES_UNAME_S overrides `uname -s`, for testing (as in os-detect.sh).
+case "${DOTFILES_UNAME_S:-$(uname -s)}" in
   Darwin) OS=darwin ;;
   Linux)
     if [ -r /proc/version ] && grep -qiE '(microsoft|wsl)' /proc/version 2>/dev/null; then
