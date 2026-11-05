@@ -7,3 +7,10 @@
 
 # Debian's repos ship diffnav (bookworm+); Ubuntu's don't (apt.txt SKIP).
 diffnav diffnav
+
+# Compose v2 isn't in Debian's own repos: docker-compose-v2 (apt.txt) is
+# Ubuntu's package, docker-compose-plugin only comes from Docker's apt
+# repository, and Debian's docker-compose is the unmaintained v1. Hosts
+# with Docker's repo already have it (so this never runs there);
+# packages/scripts/docker-compose.sh installs it everywhere else.
+docker-compose SKIP
