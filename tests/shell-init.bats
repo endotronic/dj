@@ -25,13 +25,17 @@ teardown() {
 
 # Convenience: source ~/.bashrc in an interactive-ish bash and run
 # the given command. Forces interactive mode (-i) so .bashrc's
-# `case $- in *i*) ;; *) return ;; esac` guard doesn't bail.
+# `case $- in *i*) ;; *) return ;; esac` guard doesn't bail, but with
+# --norc, sourcing the sandboxed ~/.bashrc explicitly: an interactive bash
+# otherwise reads the host's system rc first (Debian/Ubuntu's
+# /etc/bash.bashrc), and Ubuntu's prints a sudo hint for users in the
+# sudo group -- CI's runner -- into the output these tests compare.
 in_bash() {
   # Combine the command's stderr with its stdout (so tests can
   # assert on usage messages and the like), but discard bash's own
   # interactive-mode warnings (e.g. "cannot set terminal process
   # group") so they don't drown the assertions.
-  bash -ic "$1 2>&1" 2>/dev/null
+  bash --norc -ic ". \"\$HOME/.bashrc\"; $1 2>&1" 2>/dev/null
 }
 
 # --- DOTFILES_OS / env exports --------------------------------------------
