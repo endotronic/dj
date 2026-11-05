@@ -445,7 +445,10 @@ cat > "$zsh_dir/completion.zsh" << 'ZSH_COMP'
 autoload -Uz compinit
 _compdump="${XDG_STATE_HOME:-$HOME/.local/state}/zsh/zcompdump"
 mkdir -p "$(dirname "$_compdump")"
-compinit -d "$_compdump"
+# compinit asks before using insecure completion directories; with no
+# terminal to ask on (zsh -ic from a script, ssh host zsh -ic) it aborts
+# instead, so there skip them (-i) and keep the question for real terminals.
+if [ -t 0 ]; then compinit -d "$_compdump"; else compinit -i -d "$_compdump"; fi
 unset _compdump
 
 zstyle ':completion:*' matcher-list \

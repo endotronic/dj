@@ -83,8 +83,8 @@ make_pubkey() {
   make_pubkey AAA alice@alpha > "$HOME/.ssh/authorized_keys.d/alpha.pub"
 
   sh "$SCRIPT" --no-register >/dev/null
-  [ "$(stat -c '%a' "$HOME/.ssh/authorized_keys")" = "600" ]
-  [ "$(stat -c '%a' "$HOME/.ssh")" = "700" ]
+  [ "$(file_mode "$HOME/.ssh/authorized_keys")" = "600" ]
+  [ "$(file_mode "$HOME/.ssh")" = "700" ]
 }
 
 @test "an empty key directory never truncates an existing authorized_keys" {

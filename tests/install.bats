@@ -780,8 +780,8 @@ _make_fake_repo_dir() {
   run sh "$INSTALL" --on-conflict backup --git-key "$key"
   [ "$status" -eq 0 ]
   grep -q FAKE-DEPLOY-KEY "$HOME/.ssh/id_githost"
-  [ "$(stat -c '%a' "$HOME/.ssh/id_githost")" = "600" ]
-  [ "$(stat -c '%a' "$HOME/.ssh")" = "700" ]
+  [ "$(file_mode "$HOME/.ssh/id_githost")" = "600" ]
+  [ "$(file_mode "$HOME/.ssh")" = "700" ]
 }
 
 @test "--git-key naming ~/.ssh/id_githost itself is not an error" {
@@ -794,7 +794,7 @@ _make_fake_repo_dir() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"clone key already at"* ]]
   grep -q FAKE-DEPLOY-KEY "$HOME/.ssh/id_githost"
-  [ "$(stat -c '%a' "$HOME/.ssh/id_githost")" = "600" ]
+  [ "$(file_mode "$HOME/.ssh/id_githost")" = "600" ]
 }
 
 @test "--git-key with unreadable path warns and install still succeeds" {
@@ -849,7 +849,7 @@ _make_fake_repo_dir() {
   printf 'AGE-SECRET-KEY-1FAKE\n' > "$key_file"
 
   sh "$INSTALL" --on-conflict backup --age-key "$key_file" >/dev/null
-  perms=$(stat -c '%a' "$XDG_CONFIG_HOME/sops/age/keys.txt")
+  perms=$(file_mode "$XDG_CONFIG_HOME/sops/age/keys.txt")
   [ "$perms" = "600" ]
 }
 
@@ -899,7 +899,7 @@ _make_fake_repo_dir() {
   [[ "$output" =~ "fetched age key via scp from oldhost:$remote_key" ]]
   [ -f "$XDG_CONFIG_HOME/sops/age/keys.txt" ]
   grep -q "AGE-SECRET-KEY-1REMOTE" "$XDG_CONFIG_HOME/sops/age/keys.txt"
-  perms=$(stat -c '%a' "$XDG_CONFIG_HOME/sops/age/keys.txt")
+  perms=$(file_mode "$XDG_CONFIG_HOME/sops/age/keys.txt")
   [ "$perms" = "600" ]
   stub_called scp
 }

@@ -39,6 +39,10 @@ sandbox_setup() {
   unset DJ_MODULES
 }
 
+# A file's permission bits in octal (644), on GNU (stat -c) and BSD/macOS
+# (stat -f) alike.
+file_mode() { stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"; }
+
 sandbox_teardown() {
   export HOME="$_ORIG_HOME"
   if [ -n "${_ORIG_XDG:-}" ]; then

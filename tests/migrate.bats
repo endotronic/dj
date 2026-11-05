@@ -163,7 +163,7 @@ make_bare_with_origin() {
   run sh "$MIGRATE" --fix --only ssh-pubkey
   [ "$status" -eq 0 ]
   [ -f "$HOME/.ssh/id_ed25519.pub" ]
-  [ "$(stat -c '%a' "$HOME/.ssh/id_ed25519.pub")" = 644 ]
+  [ "$(file_mode "$HOME/.ssh/id_ed25519.pub")" = 644 ]
   # the derived key must match the private key it came from
   [ "$(ssh-keygen -lf "$HOME/.ssh/id_ed25519" | awk '{print $2}')" = \
     "$(ssh-keygen -lf "$HOME/.ssh/id_ed25519.pub" | awk '{print $2}')" ]
@@ -188,35 +188,35 @@ make_stale_pubkey() {
 
 @test "ssh-pubkey-match: ok when every pair matches" {
   ssh-keygen -q -t ed25519 -N '' -f "$HOME/.ssh/id_ed25519" -C machine
-  ssh-keygen -q -t ed25519 -N '' -f "$HOME/.ssh/onyx_id_ed25519" -C shared
+  ssh-keygen -q -t ed25519 -N '' -f "$HOME/.ssh/host1_id_ed25519" -C shared
   run sh "$MIGRATE" --only ssh-pubkey-match
   [ "$status" -eq 0 ]
   [[ "$output" == *"ok"*"matches the private key"* ]]
 }
 
 @test "ssh-pubkey-match: a private key with no .pub is fine" {
-  ssh-keygen -q -t ed25519 -N '' -f "$HOME/.ssh/onyx_id_ed25519" -C shared
-  rm -f "$HOME/.ssh/onyx_id_ed25519.pub"
+  ssh-keygen -q -t ed25519 -N '' -f "$HOME/.ssh/host1_id_ed25519" -C shared
+  rm -f "$HOME/.ssh/host1_id_ed25519.pub"
   run sh "$MIGRATE" --only ssh-pubkey-match
   [ "$status" -eq 0 ]
-  [ ! -e "$HOME/.ssh/onyx_id_ed25519.pub" ]
+  [ ! -e "$HOME/.ssh/host1_id_ed25519.pub" ]
 }
 
 @test "ssh-pubkey-match: pending when a .pub belongs to a different key" {
-  make_stale_pubkey onyx_id_ed25519
+  make_stale_pubkey host1_id_ed25519
   run sh "$MIGRATE" --only ssh-pubkey-match
   [ "$status" -eq 1 ]
   [[ "$output" == *"MIGR"* ]]
 }
 
 @test "ssh-pubkey-match: --fix regenerates the .pub and backs up the stale one" {
-  make_stale_pubkey onyx_id_ed25519
+  make_stale_pubkey host1_id_ed25519
   run sh "$MIGRATE" --fix --only ssh-pubkey-match
   [ "$status" -eq 0 ]
-  [ "$(ssh-keygen -y -f "$HOME/.ssh/onyx_id_ed25519" | awk '{print $2}')" = \
-    "$(awk '{print $2}' "$HOME/.ssh/onyx_id_ed25519.pub")" ]
-  [ "$(stat -c '%a' "$HOME/.ssh/onyx_id_ed25519.pub")" = 644 ]
-  cmp -s "$SANDBOX/old.pub" "$DOTFILES_BACKUP_DIR/.ssh/onyx_id_ed25519.pub"
+  [ "$(ssh-keygen -y -f "$HOME/.ssh/host1_id_ed25519" | awk '{print $2}')" = \
+    "$(awk '{print $2}' "$HOME/.ssh/host1_id_ed25519.pub")" ]
+  [ "$(file_mode "$HOME/.ssh/host1_id_ed25519.pub")" = 644 ]
+  cmp -s "$SANDBOX/old.pub" "$DOTFILES_BACKUP_DIR/.ssh/host1_id_ed25519.pub"
   # the matching pair is left alone, and a second run is a no-op
   run sh "$MIGRATE" --fix --only ssh-pubkey-match
   [ "$status" -eq 0 ]
@@ -225,7 +225,8 @@ make_stale_pubkey() {
 
 @test "ssh-pubkey-match: a differing comment alone is not a mismatch" {
   ssh-keygen -q -t ed25519 -N '' -f "$HOME/.ssh/id_ed25519" -C original
-  sed -i 's/original$/renamed by hand/' "$HOME/.ssh/id_ed25519.pub"
+  sed 's/original$/renamed by hand/' "$HOME/.ssh/id_ed25519.pub" > "$SANDBOX/pub"
+  mv "$SANDBOX/pub" "$HOME/.ssh/id_ed25519.pub"
   run sh "$MIGRATE" --only ssh-pubkey-match
   [ "$status" -eq 0 ]
 }

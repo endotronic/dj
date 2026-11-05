@@ -30,6 +30,13 @@ teardown() {
 # otherwise reads the host's system rc first (Debian/Ubuntu's
 # /etc/bash.bashrc), and Ubuntu's prints a sudo hint for users in the
 # sudo group -- CI's runner -- into the output these tests compare.
+# The zsh counterpart: -f skips every rc file, the host's /etc/zsh/zshrc
+# included (Debian/Ubuntu's runs a compinit of its own), and the sandboxed
+# ~/.zshrc is then sourced explicitly in an interactive shell.
+in_zsh() {
+  zsh -f -ic ". \"\$HOME/.zshrc\"; $1 2>&1" 2>/dev/null
+}
+
 in_bash() {
   # Combine the command's stderr with its stdout (so tests can
   # assert on usage messages and the like), but discard bash's own
@@ -226,7 +233,7 @@ EOF
 
 @test "zsh: sourcing .zshrc sets DOTFILES_OS" {
   command -v zsh >/dev/null 2>&1 || skip "zsh not installed"
-  run zsh -ic 'printf %s "$DOTFILES_OS"'
+  run in_zsh 'printf %s "$DOTFILES_OS"'
   [ "$status" -eq 0 ]
   case "$output" in
     darwin|linux|wsl) ;;
@@ -236,13 +243,13 @@ EOF
 
 @test "zsh: dot is an alias" {
   command -v zsh >/dev/null 2>&1 || skip "zsh not installed"
-  run zsh -ic 'alias dot'
+  run in_zsh 'alias dot'
   [ "$status" -eq 0 ]
   [[ "$output" =~ "git --git-dir" ]]
 }
 
 @test "zsh: history settings (HISTSIZE) are set" {
   command -v zsh >/dev/null 2>&1 || skip "zsh not installed"
-  run zsh -ic 'printf %s "$HISTSIZE"'
+  run in_zsh 'printf %s "$HISTSIZE"'
   [ "$output" = "100000" ]
 }
