@@ -158,7 +158,10 @@ make_pubkey() {
 @test "a failed commit (e.g. no git identity configured) still leaves the key staged, with a warning" {
   make_pubkey MINE alice@here > "$HOME/.ssh/id_ed25519.pub"
   git init --bare -q "$DOT_DIR"
-  # Deliberately no user.email/user.name -- git refuses to commit.
+  # Deliberately no user.email/user.name, and no guessing one either:
+  # macOS's git otherwise derives user@host.local and commits anyway.
+  export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=user.useConfigOnly GIT_CONFIG_VALUE_0=true
+  unset EMAIL GIT_AUTHOR_EMAIL GIT_COMMITTER_EMAIL
 
   run sh "$SCRIPT"
   [ "$status" -eq 0 ]
