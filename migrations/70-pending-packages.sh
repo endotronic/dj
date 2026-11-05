@@ -10,9 +10,12 @@
 
 desc() { echo "every package in the active lists is installed"; }
 
+# Both report lines: packages the manager installs, and SKIP tools a
+# fallback script installs. Joined on one line; empty when nothing is due.
 pending_package_line() {
   sh "$REPO_ROOT/scripts/install-packages.sh" --dry-run 2>/dev/null \
-    | sed -n 's/^.*to install: \(.*\)$/\1/p' | grep -vx '(none)' | head -1
+    | sed -n -E 's/^.*to install( via fallback script)?: (.*)$/\2/p' \
+    | grep -vx '(none)' | tr '\n' ' ' | sed 's/ *$//'
 }
 
 check() {

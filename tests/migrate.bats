@@ -405,6 +405,20 @@ IP
   [[ "$output" == *"MIGR"* ]]
 }
 
+@test "pending-packages: pending when only a fallback script has work to do" {
+  # A SKIP tool installed by its fallback script used to read as "nothing
+  # to install", so --fix never ran the script.
+  cat > "$FAKE_ROOT/scripts/install-packages.sh" <<'IP'
+#!/bin/sh
+echo "[install-packages] to install: (none)"
+echo "[install-packages] to install via fallback script: docker-compose"
+IP
+  chmod +x "$FAKE_ROOT/scripts/install-packages.sh"
+  run sh "$MIGRATE" --only pending-packages
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"MIGR"* ]]
+}
+
 @test "pending-packages: ok when nothing is outstanding" {
   cat > "$FAKE_ROOT/scripts/install-packages.sh" <<'IP'
 #!/bin/sh

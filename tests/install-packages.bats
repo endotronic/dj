@@ -235,6 +235,31 @@ STUBEOF
   [ -f "$marker" ]
 }
 
+@test "--dry-run lists an absent SKIP tool that has a fallback script as work to do" {
+  fake_pkgs="$SANDBOX/fake-pkgs"
+  mkdir -p "$fake_pkgs/renames" "$fake_pkgs/scripts"
+  printf 'faketool\nnoscript\npresenttool\n' > "$fake_pkgs/common.txt"
+  printf 'faketool SKIP\nnoscript SKIP\npresenttool SKIP\n' > "$fake_pkgs/renames/apt.txt"
+  printf '#!/bin/sh\nexit 0\n' > "$fake_pkgs/scripts/faketool.sh"
+  printf '#!/bin/sh\nexit 0\n' > "$fake_pkgs/scripts/presenttool.sh"
+  stub_cmd apt
+  stub_cmd presenttool
+
+  DOTFILES_PACKAGES_DIR="$fake_pkgs" DOTFILES_DJ_PACKAGES_DIR="$fake_pkgs" run sh "$INSTALL_PKGS" --dry-run
+  [ "$status" -eq 0 ]
+  line=$(printf '%s\n' "$output" | grep 'to install via fallback script:')
+  [[ "$line" == *" faketool"* ]]
+  [[ "$line" != *"noscript"* ]]      # SKIP with no script: nothing would run
+  [[ "$line" != *"presenttool"* ]]   # already on PATH
+}
+
+@test "--dry-run reports '(none)' via fallback script when nothing is due" {
+  stub_cmd apt
+  run sh "$INSTALL_PKGS" --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"to install via fallback script:"* ]]
+}
+
 @test "fallback script runs for pkg-manager-failed tool when script exists" {
   # Isolated packages dir: one tool whose apt install fails, but has a script.
   # Use a name that cannot exist on any real system.

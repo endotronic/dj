@@ -182,6 +182,28 @@ while IFS= read -r logical; do
   fi
 done < "$active_list"
 
+# The fallback script that would run for a tool, if any: the user's copy
+# wins, and on NixOS only scripts marked nix-ok run (see the fallback pass
+# below, which uses this same rule).
+fallback_script() {
+  _fs="$lists_dir/scripts/${1}.sh"
+  [ -f "$_fs" ] || _fs="$scripts_dir/${1}.sh"
+  [ -f "$_fs" ] || return 1
+  if [ "$DOTFILES_PKG" = nix ] && ! grep -q '^# dj-installer: nix-ok' "$_fs"; then
+    return 1
+  fi
+  printf '%s' "$_fs"
+}
+
+# SKIP tools that are absent but have a fallback script are still work to
+# do -- report them, or a check reading "to install" alone (the
+# pending-packages migration) would call the machine up to date.
+via_script=
+for _l in $skipped; do
+  present "$_l" && continue
+  fallback_script "$_l" >/dev/null && via_script="$via_script $_l"
+done
+
 # Build display string with resolved actual package names for the report.
 _to_install_display=
 for _l in $missing; do
@@ -194,6 +216,7 @@ printf '[install-packages] already installed:%s\n' "${already:- (none)}"
 printf '[install-packages] skipped (SKIP):%s\n' "${skipped:- (none)}"
 [ -n "$system" ] && printf '[install-packages] provided by the OS config (SYSTEM):%s\n' "$system"
 printf '[install-packages] to install:%s\n'      "${_to_install_display:- (none)}"
+printf '[install-packages] to install via fallback script:%s\n' "${via_script:- (none)}"
 
 [ "$DRY_RUN" = 1 ] && { printf '[install-packages] --dry-run set; not installing\n'; exit 0; }
 [ -z "$missing" ] && [ -z "$skipped" ] && exit 0
@@ -273,12 +296,7 @@ fi
 # renames/nix.txt instead.
 for _l in $missing $skipped; do
   present "$_l" && continue
-  _script="$lists_dir/scripts/${_l}.sh"
-  [ -f "$_script" ] || _script="$scripts_dir/${_l}.sh"
-  [ -f "$_script" ] || continue
-  if [ "$DOTFILES_PKG" = nix ] && ! grep -q '^# dj-installer: nix-ok' "$_script"; then
-    continue
-  fi
+  _script=$(fallback_script "$_l") || continue
   printf '[install-packages] running fallback script for %s\n' "$_l"
   if sh "$_script"; then
     printf '[install-packages] installed %s via script\n' "$_l"
