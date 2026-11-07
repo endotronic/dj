@@ -507,7 +507,20 @@ cat > "$HOME/.zprofile" << 'ZPROFILE'
 ZPROFILE
   fi
 
-  dot add "$HOME/.zshrc" "$HOME/.zprofile" "$zsh_dir/"
+  # completion.zsh runs compinit itself; skip the distro's own one
+  # (Debian/Ubuntu /etc/zsh/zshrc), which zsh runs first unless this is set
+  # by ~/.zshenv. Same text as the zsh-skip-global-compinit migration.
+  if ! grep -q '^[[:space:]]*skip_global_compinit=1' "$HOME/.zshenv" 2>/dev/null; then
+    {
+      [ -s "$HOME/.zshenv" ] && echo
+      echo "# dj's zsh layer runs compinit itself: skip the distro's own one"
+      echo "# (Debian/Ubuntu /etc/zsh/zshrc), which runs first and, without a"
+      echo "# terminal, aborts noisily over insecure completion directories."
+      echo "skip_global_compinit=1"
+    } >> "$HOME/.zshenv"
+  fi
+
+  dot add "$HOME/.zshrc" "$HOME/.zprofile" "$HOME/.zshenv" "$zsh_dir/"
   log "consolidated zsh config"
 fi
 

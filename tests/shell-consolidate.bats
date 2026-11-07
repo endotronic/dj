@@ -346,6 +346,28 @@ staged_files() {
   grep -q 'command -v starship' "$HOME/.config/zsh/prompt.zsh"
 }
 
+@test "zsh: ~/.zshenv skips the distro's compinit, and is staged" {
+  write_plain_zshrc
+  sh "$SCRIPT" --yes >/dev/null
+  grep -qx 'skip_global_compinit=1' "$HOME/.zshenv"
+  staged_files | grep -qx '\.zshenv'
+}
+
+@test "zsh: an existing ~/.zshenv is kept, the setting appended once" {
+  write_plain_zshrc
+  printf 'export FOO=bar\n' > "$HOME/.zshenv"
+  sh "$SCRIPT" --yes >/dev/null
+  grep -qx 'export FOO=bar' "$HOME/.zshenv"
+  [ "$(grep -c '^skip_global_compinit=1' "$HOME/.zshenv")" -eq 1 ]
+}
+
+@test "zsh: a ~/.zshenv that already sets it is left as it is" {
+  write_plain_zshrc
+  printf 'skip_global_compinit=1\n' > "$HOME/.zshenv"
+  sh "$SCRIPT" --yes >/dev/null
+  [ "$(cat "$HOME/.zshenv")" = "skip_global_compinit=1" ]
+}
+
 # --- both shells -------------------------------------------------------------
 
 @test "migrate both shells in one pass" {

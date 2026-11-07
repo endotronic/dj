@@ -78,12 +78,22 @@ commented `types/<type>.txt` so it reads as known.
 ~/.config/bash/    bash-only
 ~/.config/zsh/     zsh-only
 ~/.bashrc ~/.zshrc tiny loaders
+~/.zshenv          skip_global_compinit=1 (see below)
 ```
 
 `shell-consolidate.sh` creates this on a fresh machine (or migrates an
 existing `.bashrc`/`.zshrc` into the shell-specific init). Anything both
 shells need goes in the shared layer: a function defined only in the bash
 tree silently doesn't exist in zsh.
+
+`~/.config/zsh/completion.zsh` runs `compinit` itself, with `-i` when
+there's no terminal (where it can't ask about insecure completion
+directories, so it would abort noisily). Debian and Ubuntu's
+`/etc/zsh/zshrc` runs a second, plain one first unless
+`skip_global_compinit=1` is set by then, i.e. in `~/.zshenv`, so dj sets it
+there (`shell-consolidate.sh` on new machines, the
+`zsh-skip-global-compinit` migration on existing ones). It means nothing
+on other systems.
 
 The one POSIX trap that bites: zsh doesn't word-split an unquoted
 parameter. Build argument lists in the positional parameters (`set --`),

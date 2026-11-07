@@ -239,6 +239,41 @@ make_stale_pubkey() {
   [ "$status" -eq 0 ]
 }
 
+# --- zsh-skip-global-compinit ------------------------------------------------
+
+@test "zsh-skip-global-compinit: N/A without dj's zsh layer" {
+  run sh "$MIGRATE" --only zsh-skip-global-compinit
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"zshenv"* ]]
+  [ ! -e "$HOME/.zshenv" ]
+}
+
+@test "zsh-skip-global-compinit: pending, then --fix appends and keeps what was there" {
+  mkdir -p "$HOME/.config/zsh"
+  : > "$HOME/.config/zsh/completion.zsh"
+  printf 'export FOO=bar\n' > "$HOME/.zshenv"
+  run sh "$MIGRATE" --only zsh-skip-global-compinit
+  [ "$status" -eq 1 ]
+  run sh "$MIGRATE" --fix --only zsh-skip-global-compinit
+  [ "$status" -eq 0 ]
+  grep -qx 'export FOO=bar' "$HOME/.zshenv"
+  grep -qx 'skip_global_compinit=1' "$HOME/.zshenv"
+  run sh "$MIGRATE" --fix --only zsh-skip-global-compinit
+  [ "$status" -eq 0 ]
+  [ "$(grep -c '^skip_global_compinit=1' "$HOME/.zshenv")" -eq 1 ]
+  run sh "$MIGRATE" --only zsh-skip-global-compinit
+  [ "$status" -eq 0 ]
+}
+
+@test "zsh-skip-global-compinit: --fix creates ~/.zshenv when there is none" {
+  mkdir -p "$HOME/.config/zsh"
+  : > "$HOME/.config/zsh/completion.zsh"
+  run sh "$MIGRATE" --fix --only zsh-skip-global-compinit
+  [ "$status" -eq 0 ]
+  grep -qx 'skip_global_compinit=1' "$HOME/.zshenv"
+  [ "$(head -c1 "$HOME/.zshenv")" = "#" ]
+}
+
 # --- legacy-tmux-conf -------------------------------------------------------
 
 @test "legacy-tmux-conf: N/A when no tracked tmux.conf is deployed" {
