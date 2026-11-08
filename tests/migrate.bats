@@ -51,6 +51,42 @@ path_without_bats() {
   export PATH="$STUB_BIN:$farm"
 }
 
+# PATH of symlinks to the basics migrate.sh and the migrations call, plus
+# do-nothing stubs for the named tools, so the host's own gpg/sops/... can't
+# leak in and "gpg is missing" can be expressed.
+path_with_tools() {
+  local farm="$SANDBOX/toolbin" c src
+  mkdir -p "$farm"
+  for c in sh awk cat chmod date dirname git grep head hostname id mkdir mktemp mv rm sed ssh-keygen tr uname; do
+    src="$(command -v "$c" 2>/dev/null)" || continue
+    [ -n "$src" ] && ln -sf "$src" "$farm/$c"
+  done
+  for c in "$@"; do
+    rm -f "$farm/$c"   # may be a symlink to the real tool (git)
+    printf '#!/bin/sh\nexit 0\n' > "$farm/$c"
+    chmod +x "$farm/$c"
+  done
+  export PATH="$STUB_BIN:$farm"
+}
+
+# An install-packages.sh that records the list it was handed and "installs"
+# it (the runner re-checks after a fix) by dropping stubs into path_with_tools'
+# bin dir.
+stub_install_packages_recording() {
+  cat > "$FAKE_ROOT/scripts/install-packages.sh" <<IP
+#!/bin/sh
+cat "\$DOTFILES_DJ_PACKAGES_DIR/common.txt" > "$SANDBOX/installed-list"
+if [ "\${STUB_INSTALL_RC:-0}" = 0 ]; then
+  for t in \$(cat "\$DOTFILES_DJ_PACKAGES_DIR/common.txt"); do
+    printf '#!/bin/sh\\nexit 0\\n' > "$SANDBOX/toolbin/\$t"
+    chmod +x "$SANDBOX/toolbin/\$t"
+  done
+fi
+exit \${STUB_INSTALL_RC:-0}
+IP
+  chmod +x "$FAKE_ROOT/scripts/install-packages.sh"
+}
+
 # A bare private repo at $DOT_DIR with an origin pointing at a real
 # upstream, mimicking what `git clone --bare` leaves behind: no
 # remote.origin.fetch, no branch tracking.
@@ -512,6 +548,57 @@ IP
   run sh "$MIGRATE" -q --only pending-packages
   [ "$status" -eq 0 ]
   [ "$output" = "[migrate] machine state is up to date" ]
+}
+
+# --- required-deps ----------------------------------------------------------
+
+@test "required-deps: N/A without install-packages.sh" {
+  path_with_tools
+  run sh "$MIGRATE" --only required-deps
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"MIGR"* ]]
+}
+
+@test "required-deps: pending when one required tool is missing" {
+  stub_install_packages_recording
+  path_with_tools git sops age just
+  run sh "$MIGRATE" --only required-deps
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"MIGR"* ]]
+  [[ "$output" == *"dj migrate --fix --only required-deps"* ]]
+}
+
+@test "required-deps: ok when git gpg sops age and just are all present" {
+  stub_install_packages_recording
+  path_with_tools git gpg sops age just
+  run sh "$MIGRATE" --only required-deps
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ok"* ]]
+}
+
+@test "required-deps: --fix installs exactly the missing tools, from a throwaway list" {
+  stub_install_packages_recording
+  path_with_tools git sops just
+  run sh "$MIGRATE" --fix --only required-deps
+  [ "$status" -eq 0 ]
+  [ "$(tr '\n' ' ' < "$SANDBOX/installed-list")" = "gpg age " ]
+  # The user's own package lists are untouched.
+  [ ! -e "$XDG_CONFIG_HOME/dj/packages/common.txt" ]
+}
+
+@test "required-deps: --fix does not call the installer when nothing is missing" {
+  stub_install_packages_recording
+  path_with_tools git gpg sops age just
+  run sh "$MIGRATE" --fix --only required-deps
+  [ "$status" -eq 0 ]
+  [ ! -e "$SANDBOX/installed-list" ]
+}
+
+@test "required-deps: --fix reports failure when the installer fails" {
+  stub_install_packages_recording
+  path_with_tools git gpg sops age
+  STUB_INSTALL_RC=3 run sh "$MIGRATE" --fix --only required-deps
+  [ "$status" -ne 0 ]
 }
 
 # --- selection --------------------------------------------------------------

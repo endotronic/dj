@@ -123,7 +123,9 @@ manager file (`~/.config/dj/packages/renames/` beats `packages/renames/`),
 and fallback installers in `~/.config/dj/packages/scripts/` beat dj's.
 `packages/template/` only seeds a fresh machine's `common.txt`.
 
-`git gpg sops age just` are dj's own requirements and always installed.
+`git gpg sops age just` are dj's own requirements and always installed:
+by `install.sh`, and by the `required-deps` migration on a machine that
+never ran it (a `$HOME` copied from another install, say).
 
 ## 6. Post-install hooks
 
