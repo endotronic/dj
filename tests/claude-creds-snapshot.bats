@@ -75,7 +75,7 @@ EOF
 
 @test "missing sops binary errors clearly" {
   # Source file exists, but no sops on PATH (clean stub PATH only).
-  export PATH="$STUB_BIN:/usr/bin:/bin"
+  export PATH="$STUB_BIN:$(system_bin)"
   src="$SANDBOX/creds.json"
   printf '{"token":"x"}\n' > "$src"
   export CLAUDE_CREDS_SRC="$src"

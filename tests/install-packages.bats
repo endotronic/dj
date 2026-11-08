@@ -8,6 +8,10 @@ bats_require_minimum_version 1.5.0
 setup() {
   sandbox_setup
   stub_dir_setup
+  # Detection needs a package manager on PATH, and which ones the host has
+  # varies (CI has apt; NixOS has none). Provide one so a test never
+  # borrows the host's.
+  stub_cmd apt
   export INSTALL_PKGS="$DOTFILES_REPO_ROOT/scripts/install-packages.sh"
 }
 
@@ -411,7 +415,7 @@ EOF
 @test "bats.sh: exits 0 without downloading when bats is already new enough" {
   write_fake_bats "$STUB_BIN/bats" 1.11.1
   stub_bats_curl
-  PATH="$STUB_BIN:/usr/bin:/bin" run /bin/sh "$(BATS_SH)"
+  PATH="$STUB_BIN:$(system_bin)" run /bin/sh "$(BATS_SH)"
   [ "$status" -eq 0 ]
   ! stub_called curl
 }
@@ -422,7 +426,7 @@ EOF
   stub_sudo_passthrough
   prefix="$SANDBOX/prefix"
 
-  BATS_INSTALL_PREFIX="$prefix" PATH="$prefix/bin:$STUB_BIN:/usr/bin:/bin" \
+  BATS_INSTALL_PREFIX="$prefix" PATH="$prefix/bin:$STUB_BIN:$(system_bin)" \
     run /bin/sh "$(BATS_SH)"
   [ "$status" -eq 0 ]
   [ -x "$prefix/bin/bats" ]
@@ -437,7 +441,7 @@ EOF
   stub_sudo_passthrough
   prefix="$SANDBOX/prefix"
 
-  BATS_INSTALL_PREFIX="$prefix" PATH="$prefix/bin:$STUB_BIN:/usr/bin:/bin" \
+  BATS_INSTALL_PREFIX="$prefix" PATH="$prefix/bin:$STUB_BIN:$(system_bin)" \
     run /bin/sh "$(BATS_SH)"
   [ "$status" -eq 0 ]
   stub_called curl
@@ -449,12 +453,12 @@ EOF
   stub_sudo_passthrough
   prefix="$SANDBOX/prefix"
 
-  BATS_INSTALL_PREFIX="$prefix" PATH="$prefix/bin:$STUB_BIN:/usr/bin:/bin" \
+  BATS_INSTALL_PREFIX="$prefix" PATH="$prefix/bin:$STUB_BIN:$(system_bin)" \
     run /bin/sh "$(BATS_SH)"
   [ "$status" -eq 0 ]
   rm -f "$SANDBOX/stub.log"
 
-  BATS_INSTALL_PREFIX="$prefix" PATH="$prefix/bin:$STUB_BIN:/usr/bin:/bin" \
+  BATS_INSTALL_PREFIX="$prefix" PATH="$prefix/bin:$STUB_BIN:$(system_bin)" \
     run /bin/sh "$(BATS_SH)"
   [ "$status" -eq 0 ]
   ! stub_called curl
@@ -476,7 +480,7 @@ EOF
   stub_sudo_passthrough
   prefix="$SANDBOX/prefix"
 
-  BATS_INSTALL_PREFIX="$prefix" PATH="$STUB_BIN:$prefix/bin:/usr/bin:/bin" \
+  BATS_INSTALL_PREFIX="$prefix" PATH="$STUB_BIN:$prefix/bin:$(system_bin)" \
     run /bin/sh "$(BATS_SH)"
   [ "$status" -eq 1 ]
   [ -x "$prefix/bin/bats" ]

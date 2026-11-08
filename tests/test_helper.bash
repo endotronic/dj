@@ -40,6 +40,36 @@ sandbox_setup() {
   unset DOTFILES_SKIP_SECRETS
   # And modules enabled by the ambient environment.
   unset DJ_MODULES
+  # And the distro: scripts branch on /etc/os-release (NixOS: the flake owns
+  # system state, no hooks, no fallback scripts), so a suite run on a NixOS
+  # host would exercise the NixOS branch everywhere. Pin a generic Debian
+  # one; a test that needs NixOS, another distro, or none sets its own
+  # DOTFILES_OS_RELEASE_FILE.
+  printf 'ID=debian\n' > "$SANDBOX/os-release"
+  export DOTFILES_OS_RELEASE_FILE="$SANDBOX/os-release"
+  # And EDITOR: shell/env.sh defaults it (${EDITOR:-nvim}), which an
+  # ambient value (NixOS exports nano) would hide.
+  unset EDITOR
+}
+
+# The directory of the ordinary POSIX tools a script under test calls (awk,
+# tar, grep, ...), as symlinks in $SANDBOX, for tests that pin PATH:
+#   PATH="$STUB_BIN:$(system_bin)" run sh script
+# Not "/usr/bin:/bin": that is where those tools live on Debian and macOS,
+# but not on NixOS. Deliberately without bats, curl, sudo, docker and the
+# like, which tests stub or need absent.
+system_bin() {
+  local farm="$SANDBOX/system-bin" c src
+  if [ ! -d "$farm" ]; then
+    mkdir -p "$farm"
+    for c in sh awk basename cat chmod cp cut date dirname env expr find grep \
+             gzip head ln ls mkdir mktemp mv pwd readlink rm sed sleep sort \
+             tail tar tee touch tr uname wc xargs; do
+      src="$(type -P "$c" 2>/dev/null)" || continue
+      [ -n "$src" ] && ln -sf "$src" "$farm/$c"
+    done
+  fi
+  printf '%s' "$farm"
 }
 
 # For a test that describes a Linux machine (it stubs apt, or fakes a

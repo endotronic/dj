@@ -224,10 +224,10 @@ EOF
   stub_cmd usermod
 
   # docker.sh pipes through tr/grep, which aren't dash builtins -- keep
-  # real /usr/bin:/bin reachable (after STUB_BIN, so stubs still win
+  # the system tools reachable (after STUB_BIN, so stubs still win
   # for the names we stub) instead of the docker.sh-not-installed
   # test's fully hermetic PATH=STUB_BIN.
-  PATH="$STUB_BIN:/usr/bin:/bin" run /bin/sh "$DOTFILES_REPO_ROOT/packages/postinstall/docker.sh"
+  PATH="$STUB_BIN:$(system_bin)" run /bin/sh "$DOTFILES_REPO_ROOT/packages/postinstall/docker.sh"
   [ "$status" -eq 0 ]
   stub_called systemctl
   [[ "$(stub_log)" =~ "systemctl enable --now docker" ]]
@@ -255,7 +255,7 @@ exit 0
 EOF
   chmod +x "$STUB_BIN/usermod"
 
-  PATH="$STUB_BIN:/usr/bin:/bin" run /bin/sh "$DOTFILES_REPO_ROOT/packages/postinstall/docker.sh"
+  PATH="$STUB_BIN:$(system_bin)" run /bin/sh "$DOTFILES_REPO_ROOT/packages/postinstall/docker.sh"
   [ "$status" -eq 0 ]
   ! stub_called usermod
 }

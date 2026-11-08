@@ -85,7 +85,7 @@ EOF
 
 @test "claude-secrets-rules: N/A without claude on PATH" {
   secrets_gate
-  PATH="$STUB_BIN:/usr/bin:/bin" run sh "$MIGRATE" --only claude-secrets-rules
+  PATH="$STUB_BIN:$(system_bin)" run sh "$MIGRATE" --only claude-secrets-rules
   [ "$status" -eq 0 ]
   [[ "$output" != *"secrets-rules"* ]]
 }
