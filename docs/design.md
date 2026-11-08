@@ -161,6 +161,13 @@ stopping the others.
 - The pre-commit hook rejects plaintext under `.private/secrets/` and runs
   gitleaks if present. It's a backstop: sops editing never writes
   plaintext to the working tree in the first place.
+- The public repo has its own hooks (`pre-commit`, `commit-msg`) that
+  reject added lines or a message containing anything from
+  `~/.config/dj/personal-denylist.txt` (your username, domains, hostnames).
+  The list lives in your private repo because the list of what not to
+  publish is itself personal; without one the hooks do nothing. Installed
+  by install.sh and the `public-repo-guard` migration; `--no-verify`
+  overrides once.
 
 ## 8. SSH keys
 
@@ -249,7 +256,8 @@ on that machine. See `modules/README.md`.
 7. Back up a legacy `~/.tmux.conf*` when `~/.config/tmux/tmux.conf` is
    tracked (tmux loads both).
 8. Record `--module`s; seed `common.txt` on a genuinely fresh machine.
-9. Pre-commit hook; packages; post-install hooks.
+9. Pre-commit hook (private repo); the public repo's personal-denylist
+   hooks; packages; post-install hooks.
 10. Age key; SOPS init; apply secrets; module post-secrets hooks.
 11. Shell consolidation; git identity and keys; module finish hooks.
 

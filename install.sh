@@ -883,6 +883,12 @@ if [ -f "$HOOK_SRC" ]; then
   log "linked pre-commit hook -> $HOOK_SRC"
 fi
 
+# The public repo's own hooks: refuse commits containing anything from the
+# personal denylist (a no-op without one).
+if [ -f "$DOTFILES_DIR/scripts/install-public-hooks.sh" ]; then
+  DOTFILES_REPO_ROOT=$DOTFILES_DIR sh "$DOTFILES_DIR/scripts/install-public-hooks.sh" || true
+fi
+
 # ---------- 10. Full package install ----------
 
 # Vendor installers (packages/scripts/claude.sh, for one) put binaries
