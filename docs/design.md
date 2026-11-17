@@ -45,7 +45,7 @@ files are the live files. There's nothing to apply, and nothing to drift
 between a source and a rendered copy. The cost is that `$HOME` is full of
 untracked files, so `status.showUntrackedFiles=no` is set on the repo (load
 bearing; don't unset it) and new files are added explicitly
-(`dj add`, `dot add`). `dj audit-config` helps find what's worth tracking.
+(`dj add`, `dot add`).
 
 **Your agent notes** live at `~/.config/dj/AGENTS.md` in your repo, never
 at its root: the root is `$HOME`, and an `AGENTS.md`/`CLAUDE.md` there would

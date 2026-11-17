@@ -40,9 +40,6 @@ in their interactive shell.
 | "set type/tier to desktop", "switch type to <anything>" | `system-type <type\|none>` (any identifier — it's a lookup key for `~/.config/dj/packages/types/<type>.txt`; does NOT install — follow with `upgrade` if they want install too) |
 | "first-time SOPS setup" | `sops-init` |
 | "sanity check", "is everything ok" | `doctor` |
-| "what's under ~/.config that we could track?" | `audit-config` (or `-q` for newline list) |
-| "diff <path> against the distro default" | `config-diff <path>` |
-| "snapshot / refresh claude credentials" | `claude-creds-snapshot` |
 | "open claude here in dotfiles context" | `claude` |
 | "run the tests" | `test` |
 

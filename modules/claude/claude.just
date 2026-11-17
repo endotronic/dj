@@ -173,8 +173,3 @@ claude *ARGS:
       rm -f "$tmpout" "$tmperr"
       exit "$rc"
     fi
-
-# Snapshot the Claude Code login into your secrets (Linux/WSL) so other machines restore it.
-claude-creds-snapshot:
-    @just --justfile "{{justfile()}}" _require-module claude
-    sh "{{justfile_directory()}}/modules/claude/claude-creds-snapshot.sh"

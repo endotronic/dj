@@ -40,8 +40,6 @@ When showing the user commands to run themselves, use `dj` and `dot`.
 | Overall health | `dj doctor` |
 | What's tracked under a path? | `git --git-dir="$HOME/.config.git" --work-tree="$HOME" ls-tree --full-tree -r --name-only HEAD -- <path>` |
 | Is file X tracked? | `git --git-dir="$HOME/.config.git" --work-tree="$HOME" ls-files --error-unmatch <path>` (exit 0 = yes) |
-| What's untracked under ~/.config that we *could* track? | `dj audit-config -q` |
-| How does our X differ from distro default? | `dj config-diff <path>` |
 | What packages should be installed on this machine? | `cat ~/.config/dj/packages/common.txt ~/.config/dj/packages/types/$(cat ~/.config/dotfiles/system-type 2>/dev/null).txt ~/.config/dj/packages/hosts/$(hostname -s).txt 2>/dev/null` (personal lists, private repo — see docs/design.md) |
 | What's actually installed? | `command -v <tool>` per tool (or run `dj doctor`) |
 | What secrets are materialized? | `sops -d ~/.private/secrets/manifest.txt.enc` (decrypts manifest only) |

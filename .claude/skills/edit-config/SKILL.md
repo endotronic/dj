@@ -1,6 +1,6 @@
 ---
 name: edit-config
-description: Modify a tracked (or to-be-tracked) configuration file according to a user goal stated in natural language ("tighten the starship prompt", "make hyprland gaps smaller", "add an alias for kc"). Handles the dotfiles-specific workflow: prefer override hooks, diff against distro default, stage via `dot add`, leave commit/push to the user.
+description: Modify a tracked (or to-be-tracked) configuration file according to a user goal stated in natural language ("tighten the starship prompt", "make hyprland gaps smaller", "add an alias for kc"). Handles the dotfiles-specific workflow: prefer override hooks, stage via `dot add`, leave commit/push to the user.
 ---
 
 # edit-config
@@ -35,26 +35,20 @@ When telling the user what to run next, use `dj` and `dot`.
    instead of editing the file directly. Omarchy's own tooling makes this
    mandatory.
 
-3. **Diff against the upstream default first** when relevant. Run
-   `dj config-diff <path>`
-   to see how the current file differs from the distro default.
-   This tells you whether the file is already a divergence (safe to edit)
-   or matches upstream (consider whether an override fragment is better).
-
-4. **Make the edit** with `Edit` (not `Write`) when modifying an
+3. **Make the edit** with `Edit` (not `Write`) when modifying an
    existing file. Keep the change minimal — don't reformat, don't
    reorder unrelated sections, don't "improve" surrounding code.
 
-5. **Verify syntactically** if a quick check exists:
+4. **Verify syntactically** if a quick check exists:
    - shell snippets: `sh -n <file>` or `bash -n <file>`
    - toml: open and re-read; structural typos usually visible
    - hyprland: no built-in linter; rely on user to reload
 
-6. **Show what changed.** Run `git --git-dir="$HOME/.config.git" --work-tree="$HOME" diff -- <path>`
+5. **Show what changed.** Run `git --git-dir="$HOME/.config.git" --work-tree="$HOME" diff -- <path>`
    for bare-repo-tracked files. Tell the user *concretely* what the
    change does in one sentence.
 
-7. **Stage but don't commit.** If the file isn't tracked yet, use
+6. **Stage but don't commit.** If the file isn't tracked yet, use
    `git --git-dir="$HOME/.config.git" --work-tree="$HOME" add <path>`.
    Mention `dot commit` / `dot push` as the next steps for the user.
    Never commit without explicit approval.

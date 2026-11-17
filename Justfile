@@ -176,14 +176,6 @@ secret-add SRC *ARGS:
 rotate:
     sh "{{SCRIPTS}}/rotate-key.sh"
 
-# Classify each ~/.config entry against the distro's default tree (-q: just the track-list).
-audit-config *ARGS:
-    sh "{{SCRIPTS}}/audit-config.sh" "$@"
-
-# Diff a config path against the distro's default for it.
-config-diff PATH:
-    sh "{{SCRIPTS}}/config-diff.sh" "$1"
-
 # Sanity checks plus stale machine state; --fix applies the auto-fixable repairs.
 doctor *ARGS:
     #!/bin/sh

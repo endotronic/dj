@@ -73,9 +73,10 @@ gets past a textual scan.
 Track a status line script at `~/.claude/statusline-command.sh` and the
 `claude-statusline` migration turns it on in `settings.json`.
 
-## Login on Linux/WSL
+## Logging in
 
-`dj claude-creds-snapshot` encrypts `~/.claude/.credentials.json` into your
-secrets and registers it in the manifest, so `dj sync` restores the login
-on your other machines. Re-run it when the token expires. On macOS the
-login lives in the Keychain; log in on each machine.
+Log in to Claude Code on each machine (`claude`, then `/login`). Don't put
+`~/.claude/.credentials.json` in your secrets: Claude Code refreshes the
+token in that file as it runs, so every `dj sync` would overwrite the fresh
+token with your stale copy, and a token refresh on one machine can
+invalidate the copy the others hold.
