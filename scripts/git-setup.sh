@@ -8,10 +8,11 @@
 #   - SSH key: generated at ~/.ssh/id_ed25519 only if absent. This key is
 #     this machine's own identity and never leaves it -- only its *public*
 #     half travels, via authorized-keys.sh (see below and docs/design.md)
-#   - GPG key: generated only if no secret keys exist (rebuild-secrets.sh
-#     imports one first if the private repo has one registered); git
-#     configured to sign with it if this script created or restored it
-#     and signing isn't already configured
+#   - GPG key: opt-in. Generated only when asked for (--gpg, or yes at the
+#     prompt) and no secret key exists yet. A key restored from the private
+#     repo (rebuild-secrets.sh imports it first) means you opted in on
+#     another machine. Either way git is configured to sign with it, unless
+#     signing is already configured
 #
 # SSH and GPG are deliberately handled differently here:
 #   - GPG identifies *the person* ("alice signed this commit"), so one key
@@ -24,8 +25,9 @@
 #     machine keeps its own private key and authorized-keys.sh publishes
 #     only the public half for the others to trust.
 #
-# Pass --yes to skip the identity prompt (non-interactive use with
-# existing config). Pass --no to do nothing.
+# Pass --yes to skip the prompts (non-interactive use with existing
+# config). Pass --no to do nothing. Pass --gpg to generate a GPG signing
+# key without being asked.
 
 set -eu
 
@@ -33,11 +35,13 @@ DOT_DIR=${DOT_DIR:-$HOME/.config.git}
 PRIVATE_DIR=${PRIVATE_DIR:-$HOME/.private}
 AGE_KEY=${XDG_CONFIG_HOME:-$HOME/.config}/sops/age/keys.txt
 SETUP=ask
+GPG_WANT=
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --yes) SETUP=yes ;;
     --no)  SETUP=no ;;
+    --gpg) GPG_WANT=1 ;;
     *)
       printf 'error: unknown argument: %s\n' "$1" >&2
       exit 2 ;;
@@ -169,11 +173,20 @@ elif gpg --list-secret-keys --keyid-format LONG 2>/dev/null | grep -q '^sec'; th
 elif [ -z "$git_name" ] || [ -z "$git_email" ]; then
   log "git identity not set; skipping GPG key generation"
 else
-  log "generating GPG key for $git_name <$git_email> (this may take a moment)"
-  gpg --batch --passphrase '' \
-    --quick-gen-key "$git_name <$git_email>" rsa4096 sign 0
-  gpg_key_created=1
-  log "GPG key generated"
+  if [ -z "$GPG_WANT" ] && [ "$SETUP" = ask ] && can_prompt; then
+    printf '[git-setup] Generate a GPG key and sign your commits with it? [y/N]: '
+    read -r _gpg_ans </dev/tty || _gpg_ans=
+    case "$_gpg_ans" in y|Y|yes) GPG_WANT=1 ;; esac
+  fi
+  if [ -n "$GPG_WANT" ]; then
+    log "generating GPG key for $git_name <$git_email> (this may take a moment)"
+    gpg --batch --passphrase '' \
+      --quick-gen-key "$git_name <$git_email>" rsa4096 sign 0
+    gpg_key_created=1
+    log "GPG key generated"
+  else
+    log "no GPG key generated; commit signing is opt-in (later: sh ~/.dotfiles/scripts/git-setup.sh --gpg)"
+  fi
 fi
 
 # Find the secret key matching this identity, if any -- covers keys we

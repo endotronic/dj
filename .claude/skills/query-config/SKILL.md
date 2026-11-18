@@ -42,7 +42,7 @@ When showing the user commands to run themselves, use `dj` and `dot`.
 | Is file X tracked? | `git --git-dir="$HOME/.config.git" --work-tree="$HOME" ls-files --error-unmatch <path>` (exit 0 = yes) |
 | What packages should be installed on this machine? | `cat ~/.config/dj/packages/common.txt ~/.config/dj/packages/types/$(cat ~/.config/dotfiles/system-type 2>/dev/null).txt ~/.config/dj/packages/hosts/$(hostname -s).txt 2>/dev/null` (personal lists, private repo — see docs/design.md) |
 | What's actually installed? | `command -v <tool>` per tool (or run `dj doctor`) |
-| What secrets are materialized? | `sops -d ~/.private/secrets/manifest.txt.enc` (decrypts manifest only) |
+| What secrets are there, and where do they go? | Ask the user to run `sops -d ~/.private/secrets/manifest.txt.enc` in their own shell: decrypting in a session puts it in context, and the claude module's secrets gate blocks it |
 
 ## Style
 
@@ -55,9 +55,8 @@ When showing the user commands to run themselves, use `dj` and `dot`.
 
 ## What not to do
 
-- Don't run `sops -d` on secret payload files unless the user has
-  explicitly asked you to inspect a specific secret. The manifest
-  itself is fair game.
+- Don't decrypt anything or read materialized secrets (`~/.secrets`,
+  `~/.private`) yourself. Name the file and let the user look.
 - Don't make changes. If you find the user is asking "should I add X?",
   answer the question, then hand off to the `install-package` or
   `edit-config` skill if they want to act.

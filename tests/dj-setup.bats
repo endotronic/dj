@@ -287,6 +287,8 @@ default_stubs() {
   [ "$status" -eq 0 ]
   remote_cmd=$(remote_cmd_from_ssh_call)
   [[ "$remote_cmd" == *"https://raw.githubusercontent.com/someuser/somerepo/main/install.sh"* ]]
+  # ...and clones that origin (as https), not install.sh's upstream default.
+  [[ "$remote_cmd" == *"--repo "*"https://github.com/someuser/somerepo.git"* ]]
 }
 
 @test "derives the raw install URL from an https://github.com origin" {
@@ -309,6 +311,8 @@ default_stubs() {
   [ "$status" -eq 0 ]
   remote_cmd=$(remote_cmd_from_ssh_call)
   [[ "$remote_cmd" == *"https://raw.githubusercontent.com/endotronic/dj/main/install.sh"* ]]
+  # The upstream script still clones this machine's own origin.
+  [[ "$remote_cmd" == *"--repo "*"https://gitlab.example.com/someuser/somerepo.git"* ]]
 }
 
 # ---------- private-repo / sops / ssh invocation shape ------------------

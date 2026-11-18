@@ -20,13 +20,13 @@ This task can touch both repos (docs/design.md):
   packages when `dj system-type <type>` is set; `hosts/<hostname>.txt`
   adds packages only on that one machine. Edit them directly with
   `Edit`/`Read` like any other tracked config — they're already live.
-- **Renames + fallback scripts** come in two places. dj's own,
-  `~/.dotfiles/packages/{renames,scripts}/`, are shared mechanism in the
-  **public repo** (`git` inside `~/.dotfiles/`) -- only for mappings any
-  user of the tool would want. For a tool only this user cares about, put
-  them beside the lists instead: `~/.config/dj/packages/renames/<mgr>.txt`
-  and `~/.config/dj/packages/scripts/<name>.sh` (private repo, `dot`),
-  which win over dj's. `packages/template/` is just a seed for fresh
+- **Renames + fallback scripts** go beside the lists:
+  `~/.config/dj/packages/renames/<mgr>.txt` and
+  `~/.config/dj/packages/scripts/<name>.sh`, in the **private repo**
+  (`dot`). They win over dj's own in `~/.dotfiles/packages/`, which is
+  upstream's code: read it, don't edit it. A mapping every user of the
+  tool would want can go upstream as a pull request, but only if the user
+  asks. `packages/template/` is just a seed for fresh
   installs; never edit it when adding a package to *this* machine's
   lists.
 
@@ -70,8 +70,7 @@ When telling the user what to run next, use `dj` and `dot`.
    existing entries are; the project isn't strict about ordering.
 
 5. **Resolve per-OS package names.** For each of `apt`, `pacman`, `brew`,
-   `nix`, in the user's `~/.config/dj/packages/renames/<mgr>.txt` (or dj's
-   own, if the mapping is generally useful):
+   `nix`, in the user's `~/.config/dj/packages/renames/<mgr>.txt`:
    - If the binary name === package name on that manager: no rename needed.
    - If they differ (e.g. `fd` → `fd-find` on apt): add `<logical> <actual>`.
    - If the tool isn't available on that manager: add `<logical> SKIP` with
@@ -90,21 +89,16 @@ When telling the user what to run next, use `dj` and `dot`.
    manager wasn't SKIP for this OS), surface the install failure — don't
    silently claim success.
 
-8. **Show diffs and stage.** Two separate diffs, two separate repos:
-   - List file (private repo): `git --git-dir="$HOME/.config.git" --work-tree="$HOME" diff -- ~/.config/dj/packages/`
-     → stage with `dot add ~/.config/dj/packages/<file>`
-   - Renames (public repo, only if you touched them): `git -C "$HOME/.dotfiles" diff -- packages/renames/`
-     → stage with plain `git add` inside `~/.dotfiles/`
+8. **Show the diff and stage.** Everything is in the private repo:
+   `git --git-dir="$HOME/.config.git" --work-tree="$HOME" diff -- ~/.config/dj/packages/`,
+   then stage with `dot add` for each file you changed (a new renames file
+   or script is untracked, so name it explicitly).
 
-   Suggest the commits as next steps but **do not commit without
-   explicit approval** (docs/design.md):
+   Suggest the commit as the next step but **do not commit without
+   explicit approval**:
    ```
    dot add ~/.config/dj/packages/common.txt
    dot commit -m 'packages: add pv to common' && dot push
-   ```
-   and, if renames changed:
-   ```
-   cd ~/.dotfiles && git add packages/renames/ && git commit -m 'packages: map pv renames' && git push
    ```
 
 ## What to avoid
@@ -112,16 +106,13 @@ When telling the user what to run next, use `dj` and `dot`.
 - Don't `apt install` / `brew install` directly. The whole point is
   routing through `install-packages.sh` so the package lists stay
   authoritative and re-runs on a fresh machine produce the same state.
-- Don't edit `~/.dotfiles/packages/template/` when the user wants a
-  package on *their* machine — that's only the seed for brand-new
-  installs, not a live list. Edit the personal list under
-  `~/.config/dj/packages/` instead.
 - Don't add a rename you're not sure about. Ask the user.
 - Don't claim "added to common" without verifying the binary actually
   installed — a wrong package name in apt can succeed but install the
   wrong binary, leaving `command -v` failing.
-- Don't mix the two repos in one commit — list-file changes go through
-  `dot`, renames changes go through plain `git` in `~/.dotfiles/`.
+- Don't edit anything under `~/.dotfiles/` (including
+  `packages/template/`, which only seeds brand-new installs): it's dj's
+  code, and a local edit there blocks `dj sync` from fast-forwarding it.
 
 ## Example
 

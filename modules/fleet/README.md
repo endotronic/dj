@@ -13,7 +13,8 @@ From a bootstrapped machine, set up a brand-new one over SSH:
    `~/.ssh/id_githost` if you use a private-repo clone key.
 3. Installs `curl` on the target if it's missing.
 4. Runs install.sh there over `ssh -A -t` with this machine's
-   `--private-repo` and the pushed keys filled in. The forwarded agent
+   `--private-repo`, its dj origin as `--repo` (so a fork's machines get
+   the fork), and the pushed keys filled in. The forwarded agent
    covers the private clone.
 
 Every connection is multiplexed over one OpenSSH ControlMaster, so a

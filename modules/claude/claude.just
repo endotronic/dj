@@ -5,15 +5,12 @@
 # than inheriting claude's confusing print-mode error). A prompt piped on
 # stdin works either way.
 # Pass -y or --yolo (anywhere in args) to add --dangerously-skip-permissions.
-# Remote Control is OFF by default (it mirrors the session to another
-# device); pass --remote-control to opt in. The --settings guard below
-# keeps remoteControlAtStartup from re-arming it from a settings file.
-# Always enables auto-mode. If -r/--resume is present, -p/--print is
-# skipped (resume implies an interactive session).
+# Nothing else is set: permission mode, Remote Control and the rest come
+# from your own Claude Code settings. If -r/--resume is present,
+# -p/--print is skipped (resume implies an interactive session).
 # Runs `claude` itself, or your own launcher in its place: an executable
 # at $DJ_CLAUDE_LAUNCHER, else ~/.config/dj/claude/launcher (private
-# repo). A launcher gets the same arguments, plus DJ_CLAUDE_REMOTE_CONTROL
-# (1 or 0) in its environment.
+# repo), with the same arguments.
 alias c := claude
 
 claude *ARGS:
@@ -22,13 +19,7 @@ claude *ARGS:
     sh "{{SCRIPTS}}/module.sh" enabled claude || { echo "the 'claude' module is not enabled here; enable it with: dj module enable claude" >&2; exit 2; }
     command -v claude >/dev/null 2>&1 || { echo "claude not on PATH; install Claude Code first" >&2; exit 127; }
     yolo_flag=""
-    # Remote Control is off unless asked for. The --settings guard below
-    # keeps a settings file's remoteControlAtStartup from arming it behind
-    # this recipe's back; it's skipped when the caller passed their own
-    # --settings, since only one such flag can take effect.
-    rc=0
     resuming=0
-    user_settings=""
     prompt=""
     # Sort the caller's arguments into three buckets: flags this recipe owns,
     # flags to hand straight to claude, and the prompt text.
@@ -55,26 +46,12 @@ claude *ARGS:
       case "$arg" in
         -y|--yolo)
           yolo_flag="--dangerously-skip-permissions" ;;
-        --remote-control)    rc=1 ;;
-        --no-remote-control) rc=0 ;;
         -r|--resume)
           resuming=1 ;;
         -p|--print)
           # Added below, only when there's a prompt to go with it; -r means
           # an interactive session, where it would be wrong.
           ;;
-        --settings)
-          if [ "$n" -eq 0 ]; then
-            echo "dj claude: --settings needs a value" >&2
-            exit 2
-          fi
-          user_settings=$1
-          shift
-          n=$((n - 1))
-          set -- "$@" --settings "$user_settings" ;;
-        --settings=*)
-          user_settings=${arg#--settings=}
-          set -- "$@" --settings "$user_settings" ;;
         -*)
           # A flag this recipe doesn't know: pass it through, and if it's one
           # that takes a value, carry the value with it so the word after it
@@ -83,7 +60,7 @@ claude *ARGS:
           case "$arg" in
             --model|--fallback-model|--agent|--agents|--effort|--name|-n|\
             --system-prompt|--append-system-prompt|--input-format|\
-            --output-format|--permission-mode|--session-id|--setting-sources|\
+            --output-format|--permission-mode|--session-id|--setting-sources|--settings|\
             --debug-file|--plugin-dir|--plugin-url|--max-budget-usd|\
             --add-dir|--mcp-config|--tools|--allowedTools|--allowed-tools|\
             --disallowedTools|--disallowed-tools|--betas|--file|--json-schema)
@@ -98,20 +75,6 @@ claude *ARGS:
       esac
     done
     prompt="${prompt# }"
-    rc_settings=""
-    if [ "$rc" -eq 1 ]; then
-      rc_flag="--remote-control"
-      if [ -z "$user_settings" ]; then
-        rc_settings='{"remoteControlAtStartup":true}'
-      fi
-    else
-      rc_flag=""
-      if [ -z "$user_settings" ]; then
-        rc_settings='{"remoteControlAtStartup":false}'
-      fi
-    fi
-    DJ_CLAUDE_REMOTE_CONTROL=$rc
-    export DJ_CLAUDE_REMOTE_CONTROL
     launcher=${DJ_CLAUDE_LAUNCHER:-{{DJ_DIR}}/claude/launcher}
     [ -x "$launcher" ] || launcher=$(command -v claude)
     cd "{{justfile_directory()}}"
@@ -124,11 +87,6 @@ claude *ARGS:
     elif [ -n "$prompt" ]; then
       set -- -p "$prompt" "$@"
     fi
-    if [ -n "$rc_settings" ]; then
-      set -- --settings "$rc_settings" "$@"
-    fi
-    set -- --enable-auto-mode "$@"
-    [ -z "$rc_flag" ] || set -- "$rc_flag" "$@"
     [ -z "$yolo_flag" ] || set -- "$yolo_flag" "$@"
     if [ "$resuming" -eq 1 ]; then
       "$launcher" "$@"

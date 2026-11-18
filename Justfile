@@ -225,8 +225,10 @@ doctor *ARGS:
       printf '  miss  %s -- run: dj authorized-keys\n' "$keys_d"
       rc=1
     fi
-    for k in "$HOME/.ssh/id_ed25519" "$HOME/.ssh/id_rsa" "$HOME/.ssh/id_githost"; do
-      if [ -e "$k" ]; then
+    # Every SSH private key (id_*, not *.pub), whichever ones you keep.
+    for k in "$HOME"/.ssh/id_*; do
+      case "$k" in *.pub) continue ;; esac
+      if [ -f "$k" ]; then
         mode=$(stat -c '%a' "$k" 2>/dev/null || stat -f '%Lp' "$k" 2>/dev/null)
         if [ "$mode" = 600 ]; then
           printf '  ok    %s perms=600\n' "$k"

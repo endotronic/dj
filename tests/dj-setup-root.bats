@@ -483,6 +483,8 @@ EOF
   [ "$status" -eq 0 ]
   remote_cmd=$(final_remote_cmd)
   [[ "$remote_cmd" == *"https://raw.githubusercontent.com/someuser/somerepo/main/install.sh"* ]]
+  # ...and clones that origin (as https), not install.sh's upstream default.
+  [[ "$remote_cmd" == *"--repo "*"https://github.com/someuser/somerepo.git"* ]]
 }
 
 @test "falls back to the default raw URL for a non-github origin" {
@@ -494,6 +496,8 @@ EOF
   [ "$status" -eq 0 ]
   remote_cmd=$(final_remote_cmd)
   [[ "$remote_cmd" == *"https://raw.githubusercontent.com/endotronic/dj/main/install.sh"* ]]
+  # The upstream script still clones this machine's own origin.
+  [[ "$remote_cmd" == *"--repo "*"https://gitlab.example.com/someuser/somerepo.git"* ]]
 }
 
 @test "remote command includes this machine's own private-repo URL" {

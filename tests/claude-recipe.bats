@@ -26,7 +26,6 @@ setup() {
   cat > "$DJ_CLAUDE_LAUNCHER" <<EOF
 #!/bin/sh
 {
-  printf 'RC=%s\n' "\${DJ_CLAUDE_REMOTE_CONTROL-<unset>}"
   for a in "\$@"; do printf 'A=%s\n' "\$a"; done
   printf 'STDIN=[%s]\n' "\$(cat)"
 } > "$SANDBOX/launcher.args"
@@ -81,11 +80,13 @@ launcher_misses() { ! launcher_got "$1"; }
   launcher_got 'what is 2 plus 2'
 }
 
-@test "claude: runs through the configured launcher and always enables auto-mode" {
+@test "claude: runs through the configured launcher and sets nothing of its own" {
   run run_claude hi
   [ "$status" -eq 0 ]
   [[ "$output" == *"launcher-ran"* ]]
-  launcher_got '--enable-auto-mode'
+  [ "$(grep -c '^A=' "$SANDBOX/launcher.args")" -eq 2 ]   # -p and the prompt
+  launcher_misses '--enable-auto-mode'
+  ! grep -q -- 'remoteControl' "$SANDBOX/launcher.args"
 }
 
 @test "claude: no args and no terminal says so instead of failing obscurely" {
@@ -109,26 +110,11 @@ launcher_misses() { ! launcher_got "$1"; }
   launcher_misses '-p'
 }
 
-@test "claude: Remote Control is off by default, and pinned off in settings" {
-  run run_claude hi
-  [ "$status" -eq 0 ]
-  launcher_misses '--remote-control'
-  launcher_got '{"remoteControlAtStartup":false}'
-  grep -q '^RC=0$' "$SANDBOX/launcher.args"
-}
-
-@test "claude: --remote-control opts in, and tells the launcher" {
+@test "claude: --remote-control passes through to claude untouched" {
   run run_claude --remote-control hi
   [ "$status" -eq 0 ]
   launcher_got '--remote-control'
-  launcher_got '{"remoteControlAtStartup":true}'
-  grep -q '^RC=1$' "$SANDBOX/launcher.args"
-}
-
-@test "claude: --no-remote-control keeps it off" {
-  run run_claude --no-remote-control hi
-  [ "$status" -eq 0 ]
-  launcher_misses '--remote-control'
+  ! grep -q -- 'remoteControlAtStartup' "$SANDBOX/launcher.args"
 }
 
 @test "claude: -y maps to --dangerously-skip-permissions anywhere in args" {
@@ -191,12 +177,11 @@ launcher_misses() { ! launcher_got "$1"; }
 @test "claude: --settings keeps its value as its own argument" {
   run run_claude --settings '{"model": "opus"}' hi
   [ "$status" -eq 0 ]
-  # One --settings: the caller's, with the Remote Control guard dropped
-  # rather than appended -- two would make the winner depend on order.
   [ "$(grep -c '^A=--settings$' "$SANDBOX/launcher.args")" -eq 1 ]
   launcher_got '{"model": "opus"}'
   launcher_got 'hi'
-  launcher_misses '{"remoteControlAtStartup":false}'
+  # ...and its JSON value is not taken for the prompt.
+  [ "$(grep -c '^A=-p$' "$SANDBOX/launcher.args")" -eq 1 ]
 }
 
 @test "claude: a flag's value is not mistaken for the prompt" {
@@ -228,7 +213,7 @@ EOF
   run run_claude hi
   [ "$status" -eq 0 ]
   launcher_got 'hi'
-  launcher_got '--enable-auto-mode'
+  launcher_misses '--enable-auto-mode'
 }
 
 @test "claude: refuses with a hint when the module is disabled" {

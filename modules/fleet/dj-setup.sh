@@ -262,6 +262,15 @@ if [ -n "$REPO_PATH" ]; then
 else
   RAW_INSTALL_URL=${DOTFILES_REPO_RAW_URL:-https://raw.githubusercontent.com/endotronic/dj/main/install.sh}
 fi
+# ...and the target clones that same origin, not install.sh's built-in
+# upstream default: a fork's machines get the fork. A GitHub SSH origin
+# becomes https, which needs no credentials for a public repo.
+PUBLIC_REPO_ARG=
+case "$ORIGIN" in
+  '') ;;
+  git@github.com:*) PUBLIC_REPO_ARG="--repo $(q "https://github.com/${ORIGIN#git@github.com:}")" ;;
+  *)                PUBLIC_REPO_ARG="--repo $(q "$ORIGIN")" ;;
+esac
 
 # ---------- 4. Build the remote command and run it over a forwarded agent --
 
@@ -275,7 +284,7 @@ ENSURE_CURL='command -v curl >/dev/null 2>&1 || \
 { command -v brew >/dev/null 2>&1 && brew install curl; } || \
 { printf "error: curl is missing and no known package manager was found\n" >&2; exit 1; }'
 
-MAIN_CMD="$ENSURE_CURL && curl -fsSL $(q "$RAW_INSTALL_URL") | sh -s -- --private-repo $(q "$PRIVATE_REPO_URL") --age-key $(q "$REMOTE_TMP_KEY")"
+MAIN_CMD="$ENSURE_CURL && curl -fsSL $(q "$RAW_INSTALL_URL") | sh -s -- ${PUBLIC_REPO_ARG:+$PUBLIC_REPO_ARG }--private-repo $(q "$PRIVATE_REPO_URL") --age-key $(q "$REMOTE_TMP_KEY")"
 [ -n "$REMOTE_TMP_GITKEY" ] \
   && MAIN_CMD="$MAIN_CMD --git-key $(q "$REMOTE_TMP_GITKEY")"
 for arg in "$@"; do

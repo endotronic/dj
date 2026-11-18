@@ -214,11 +214,22 @@ staged_files() {
   }
 }
 
-@test "new GPG key generated when no secret keys exist and identity is set" {
+@test "no GPG key without --gpg: signing is opt-in" {
   git config --global user.name  "Jane Dev"
   git config --global user.email "jane@example.com"
 
-  sh "$SCRIPT" --yes >/dev/null
+  run sh "$SCRIPT" --yes
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"commit signing is opt-in"* ]]
+  ! grep -q -- '--quick-gen-key' "$SANDBOX/stub.log" 2>/dev/null
+  [ "$(gitcfg commit.gpgsign)" != "true" ]
+}
+
+@test "--gpg: new GPG key generated when no secret keys exist and identity is set" {
+  git config --global user.name  "Jane Dev"
+  git config --global user.email "jane@example.com"
+
+  sh "$SCRIPT" --yes --gpg >/dev/null
 
   grep -q -- '--quick-gen-key' "$SANDBOX/stub.log"
 }
@@ -240,7 +251,7 @@ staged_files() {
   git config --global user.name  "Jane Dev"
   git config --global user.email "jane@example.com"
 
-  sh "$SCRIPT" --yes >/dev/null
+  sh "$SCRIPT" --yes --gpg >/dev/null
 
   [ "$(gitcfg commit.gpgsign)" = "true" ]
   signing_key=$(gitcfg user.signingkey)
@@ -317,7 +328,7 @@ staged_files() {
   git config --global user.name  "Jane Dev"
   git config --global user.email "jane@example.com"
 
-  run sh "$SCRIPT" --yes
+  run sh "$SCRIPT" --yes --gpg
   [ "$status" -eq 0 ]
   [[ "$output" =~ "skipped registering GPG key" ]]
   [ ! -d "$HOME/.private" ]

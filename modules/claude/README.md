@@ -14,19 +14,18 @@ echo "question" | dj claude    # prompt on stdin
 ```
 
 Runs in this repo, so the project skills in `.claude/skills/` (install a
-package, query config, edit config, map intent to a `dj` verb) are loaded.
+package, query config, edit config) are loaded.
 
 - `-y` / `--yolo` adds `--dangerously-skip-permissions`; `-r` / `--resume`
-  resumes instead of going one-shot; auto mode is always on.
-- Remote Control is **off** unless you pass `--remote-control`, and a
-  settings guard keeps a settings file from re-arming it.
+  resumes instead of going one-shot. Nothing else is set: permission mode,
+  Remote Control and the rest follow your own Claude Code settings, and any
+  other flag passes straight through.
 - Arguments reach `claude` with their boundaries intact: a prompt with `$`
   or backticks is text, never shell.
 - **Your own launcher.** If `$DJ_CLAUDE_LAUNCHER` or
   `~/.config/dj/claude/launcher` (private repo) is executable, it runs in
-  place of `claude` with the same arguments and `DJ_CLAUDE_REMOTE_CONTROL`
-  (1/0) in its environment. Use it to route through a proxy, set a model,
-  and so on.
+  place of `claude` with the same arguments. Use it to route through a
+  proxy, set a model, pin settings for these sessions, and so on.
 
 ## Your notes: `~/.config/dj/AGENTS.md`
 

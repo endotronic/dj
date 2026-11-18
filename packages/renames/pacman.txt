@@ -8,7 +8,7 @@ mount.nfs nfs-utils
 # The package is wl-clipboard but it ships wl-copy/wl-paste, and the
 # installed-check is `command -v <logical>`, so list the binary name.
 wl-copy wl-clipboard
-# Claude Code is in the AUR but not the official repos; we don't
+# Claude Code is in the AUR but not the official repos, and dj doesn't
 # assume an AUR helper is present. packages/scripts/claude.sh runs the
 # vendor installer instead.
 claude SKIP

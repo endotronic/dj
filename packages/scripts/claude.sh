@@ -1,7 +1,7 @@
 #!/bin/sh
 # Install Claude Code via the vendor's official install script: the
 # fallback installer for the `claude` package name, which every renames
-# file marks SKIP (only the AUR ships it, and we don't assume an AUR
+# file marks SKIP (only the AUR ships it, and dj doesn't assume an AUR
 # helper). Idempotent: no-op if `claude` is already on PATH.
 #
 # dj-installer: nix-ok
@@ -9,7 +9,7 @@
 # the binary needs programs.nix-ld there.)
 #
 # This pipes a remote shell script to `sh`. That's the install path
-# Anthropic publishes; we trust the vendor on this. The URL can be
+# Anthropic publishes, so dj trusts the vendor on this. The URL can be
 # overridden with CLAUDE_INSTALL_URL for testing or mirroring.
 
 set -eu

@@ -17,10 +17,10 @@ use it; this covers the decisions.
 6. **Idempotent.** Every script converges when re-run.
 7. **Old machines catch up.** Repairs for state an older bootstrap never
    set up are first-class (migrations, §9).
-7. **bash and zsh parity** through a shared POSIX layer.
-8. **Multi-user safe.** Nothing outside `$HOME` except through the package
+8. **bash and zsh parity** through a shared POSIX layer.
+9. **Multi-user safe.** Nothing outside `$HOME` except through the package
    manager or an explicit post-install hook.
-9. **Configs travel everywhere; software is typed.** Every tracked file
+10. **Configs travel everywhere; software is typed.** Every tracked file
     lands on every machine; a system type only picks which package lists
     apply.
 
@@ -182,8 +182,14 @@ single file removal. Safety: an empty `.d` never truncates an existing
 Never track `~/.ssh/id_ed25519.pub`: it's per machine.
 
 The first private clone needs credentials before anything is restored:
-`install.sh --git-key` takes a deploy key for that clone. The
-shared-git-key module covers keeping one git-host key on every machine.
+`install.sh --git-key` takes a deploy key for that clone and installs it
+at `~/.ssh/id_githost`, the one path core, the fleet module (which hands
+it to a new machine) and the shared-git-key module (which keeps one such
+key on every machine) agree on.
+
+**GPG signing is opt-in.** `git-setup.sh` generates a signing key only
+when asked (`--gpg`, or yes at its prompt). A key you registered as a
+secret on one machine is restored on the others, and git signs with it.
 
 ## 9. Migrations
 
