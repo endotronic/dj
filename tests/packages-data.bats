@@ -15,11 +15,6 @@ pkg_lines() {
   awk 'NF && $1 !~ /^#/' "$1"
 }
 
-@test "packages/template/common.txt is non-empty" {
-  n=$(pkg_lines "$DOTFILES_REPO_ROOT/packages/template/common.txt" | wc -l)
-  [ "$n" -gt 0 ]
-}
-
 @test "every template/common.txt entry is a single bare token (no whitespace)" {
   bad=""
   while IFS= read -r line; do

@@ -282,16 +282,12 @@ staged_files() {
   grep -q 'DOTFILES_SKIP_SECRETS' "$HOME/.config/shell/secrets.sh"
 }
 
-@test "shared layer seeds dot alias, dot_add/mkcd, and puts bin/dj on PATH" {
+@test "shared layer seeds the dot alias and puts bin/dj on PATH" {
   write_plain_bashrc
   sh "$SCRIPT" --yes >/dev/null
   grep -q "alias dot='git --git-dir=\"\$HOME/.config.git\" --work-tree=\"\$HOME\"'" \
     "$HOME/.config/shell/aliases.sh"
-  grep -q 'dot_add()' "$HOME/.config/shell/functions.sh"
-  grep -q "alias dot-add='dot_add'" "$HOME/.config/shell/functions.sh"
-  grep -q 'mkcd()' "$HOME/.config/shell/functions.sh"
   grep -q '\.dotfiles/bin' "$HOME/.config/shell/env.sh"
-  grep -q '\.config\.git' "$HOME/.config/shell/functions.sh"
 }
 
 @test "OS stub files created for linux, darwin, wsl" {

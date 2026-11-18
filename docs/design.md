@@ -17,10 +17,10 @@ use it; this covers the decisions.
 6. **Idempotent.** Every script converges when re-run.
 7. **Old machines catch up.** Repairs for state an older bootstrap never
    set up are first-class (migrations, §9).
-8. **bash and zsh parity** through a shared POSIX layer.
-9. **Multi-user safe.** Nothing outside `$HOME` except through the package
+7. **bash and zsh parity** through a shared POSIX layer.
+8. **Multi-user safe.** Nothing outside `$HOME` except through the package
    manager or an explicit post-install hook.
-10. **Configs travel everywhere; software is typed.** Every tracked file
+9. **Configs travel everywhere; software is typed.** Every tracked file
     lands on every machine; a system type only picks which package lists
     apply.
 
@@ -244,7 +244,7 @@ on that machine. See `modules/README.md`.
 ## 12. Bootstrap order (install.sh)
 
 1. Detect OS and package manager; install git.
-2. Persist `--system-type` (and `--theme`, tmux-theme module).
+2. Persist `--system-type`.
 3. Clone or update `~/.dotfiles`; install dj's own requirements.
 4. Install the `--git-key` clone key, if given.
 5. Clone the private repo bare (fatal if `--private-repo` was given and
@@ -253,13 +253,11 @@ on that machine. See `modules/README.md`.
 6. Conflict-aware checkout: existing files are identical (removed and
    re-created), symlinks (backed up), or conflicts (per `--on-conflict
    ask|backup|keep|abort`; non-interactive runs must choose).
-7. Back up a legacy `~/.tmux.conf*` when `~/.config/tmux/tmux.conf` is
-   tracked (tmux loads both).
-8. Record `--module`s; seed `common.txt` on a genuinely fresh machine.
-9. Pre-commit hook (private repo); the public repo's personal-denylist
+7. Record `--module`s; seed `common.txt` on a genuinely fresh machine.
+8. Pre-commit hook (private repo); the public repo's personal-denylist
    hooks; packages; post-install hooks.
-10. Age key; SOPS init; apply secrets; module post-secrets hooks.
-11. Shell consolidation; git identity and keys; module finish hooks.
+9. Age key; SOPS init; apply secrets; module post-secrets hooks.
+10. Shell consolidation; git identity and keys; module finish hooks.
 
 Everything after step 3 touches only the invoking user's `$HOME`, except
 package installs and hooks.

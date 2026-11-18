@@ -25,6 +25,13 @@ test *ARGS:
     #!/bin/sh
     set -eu
     cd "{{justfile_directory()}}"
+    # bats_require_minimum_version (1.5) is used by several files; older bats
+    # aborts those files' setup and still reports the rest as passing.
+    v=$(bats --version 2>/dev/null | awk '{print $2}')
+    case "$v" in
+      '') echo "bats not found; install bats >= 1.5" >&2; exit 127 ;;
+      0.*|1.[0-4]|1.[0-4].*) echo "bats $v is too old for this suite; install bats >= 1.5 (sh packages/scripts/bats.sh)" >&2; exit 1 ;;
+    esac
     if [ $# -gt 0 ]; then exec bats "$@"; fi
     bats tests/
     if [ -d "{{DJ_DIR}}/tests" ]; then bats "{{DJ_DIR}}/tests/"; fi

@@ -153,3 +153,14 @@ teardown() {
   run sh "$M" check
   [ "$status" -eq 0 ]
 }
+
+@test "public-repo-guard migration: N/A without a denylist" {
+  mkdir -p scripts
+  cp "$HOOK" scripts/pre-commit-personal.sh
+  cp "$INSTALL" scripts/install-public-hooks.sh
+  export DOTFILES_REPO_ROOT="$TEST_REPO" DJ_REPO_ROOT="$TEST_REPO"
+  export DJ_MIGRATION_LIB="$BATS_TEST_DIRNAME/../scripts/lib/migration.sh"
+  export DJ_PERSONAL_DENYLIST="$SANDBOX/no-such-denylist.txt"
+  run sh "$BATS_TEST_DIRNAME/../migrations/66-public-repo-guard.sh" check
+  [ "$status" -eq 2 ]
+}

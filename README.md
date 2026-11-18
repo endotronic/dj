@@ -28,7 +28,7 @@ Linux (apt, pacman), NixOS, macOS (brew) and WSL. POSIX sh throughout.
   old machines don't quietly miss what new ones get.
 - **`dj doctor`**, **`dj sync`**, **`dj upgrade`** for daily use.
 - **Opt-in modules**: Claude Code integration, opencode, fleet bootstrap
-  over SSH, a shared git-host key, a per-machine tmux accent color.
+  over SSH, a shared git-host key.
 
 ## Starting out (no private repo yet)
 
@@ -168,7 +168,6 @@ during a bootstrap.
 | opencode | `dj opencode` (`dj o`): the same for opencode |
 | [fleet](modules/fleet/README.md) | `dj setup` and `dj setup-root` to bootstrap a machine over SSH from one already set up; `dj ssh-register` to group your machines in `~/.ssh/config` by type |
 | [shared-git-key](modules/shared-git-key/README.md) | one SSH key for your git host(s), restored from secrets everywhere, instead of registering every machine's own key with every forge |
-| [tmux-theme](modules/tmux-theme/README.md) | a per-machine accent color (`install.sh --theme`, or picked per host by `dj setup`) for your tmux config to read |
 
 Writing one: [modules/README.md](modules/README.md).
 

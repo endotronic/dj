@@ -32,12 +32,6 @@ starship SKIP
 claude SKIP
 # Not in Debian/Ubuntu apt repos; installed via packages/scripts/opencode.sh.
 opencode SKIP
-# Not in Debian/Ubuntu apt repos (only Debian sid has it); installed
-# via packages/scripts/glow.sh.
-glow SKIP
-# Debian/Ubuntu apt only ships a stale version (needed to compile
-# nvim-treesitter parsers); installed via packages/scripts/tree-sitter.sh.
-tree-sitter SKIP
 # apt is stuck at bats 1.2.1, which predates
 # `bats_require_minimum_version` (bats 1.5) -- the affected test files
 # abort in setup_file and are silently never run. Upstream build via
@@ -45,12 +39,5 @@ tree-sitter SKIP
 bats SKIP
 # Not in Ubuntu 24.04 apt repos; installed via packages/scripts/uv.sh.
 uv SKIP
-# Not in Ubuntu's apt repos (Debian has it; see debian.txt); on other
-# apt machines installed via packages/scripts/diffnav.sh.
-diffnav SKIP
 # WireGuard CLI: binary is wg, package is wireguard-tools
 wg wireguard-tools
-# VSCodium (the Open VSX build of VS Code) stands in for Arch's code-oss.
-# Debian/Ubuntu don't carry it, so packages/scripts/code-oss.sh adds
-# VSCodium's own apt repo. Third column: its binary is codium, not code-oss.
-code-oss SKIP codium

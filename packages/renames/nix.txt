@@ -22,7 +22,6 @@ python python3
 openssl openssl^bin
 wl-copy wl-clipboard
 wg wireguard-tools
-code-oss vscodium codium
 
 # Daemon, group and socket: virtualisation.docker.enable in the flake.
 docker SYSTEM

@@ -27,10 +27,7 @@
 # ~/.ssh/id_ed25519) that already exists with different content --
 # untracked files like that aren't visible to `dot checkout`'s conflict
 # check, so this is the backstop that keeps decrypting secrets from
-# silently clobbering a key you already had in place. Same story for a
-# pre-existing ~/.tmux.conf* when ~/.config/tmux/tmux.conf is tracked:
-# tmux loads both, so the old one would otherwise silently coexist
-# forever instead of being backed up like everything else.
+# silently clobbering a key you already had in place.
 #
 # Two repos get bootstrapped here:
 #   ~/.dotfiles/    public tooling repo -- plain `git clone` (or used
@@ -56,11 +53,9 @@ TIER_FILE=${XDG_CONFIG_HOME:-$HOME/.config}/dotfiles/system-type
 
 SYSTEM_TYPE=
 CONFLICT_MODE=ask
-REMOVE_SOURCE=ask
 AGE_KEY_SRC=
 SOPS_KEY_SRC=
 GIT_KEY_SRC=
-THEME_COLOR=
 MODULES=
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -72,16 +67,12 @@ while [ $# -gt 0 ]; do
     --private-repo=*) PRIVATE_REPO_URL=${1#*=} ;;
     --on-conflict)    shift; CONFLICT_MODE=${1:-} ;;
     --on-conflict=*)  CONFLICT_MODE=${1#*=} ;;
-    --remove-source)   shift; REMOVE_SOURCE=${1:-} ;;
-    --remove-source=*) REMOVE_SOURCE=${1#*=} ;;
     --age-key)        shift; AGE_KEY_SRC=${1:-} ;;
     --age-key=*)      AGE_KEY_SRC=${1#*=} ;;
     --git-key)     shift; GIT_KEY_SRC=${1:-} ;;
     --git-key=*)   GIT_KEY_SRC=${1#*=} ;;
     --sops)           shift; SOPS_KEY_SRC=${1:-} ;;
     --sops=*)         SOPS_KEY_SRC=${1#*=} ;;
-    --theme)          shift; THEME_COLOR=${1:-} ;;
-    --theme=*)        THEME_COLOR=${1#*=} ;;
     --module)         shift; MODULES="$MODULES ${1:-}" ;;
     --module=*)       MODULES="$MODULES ${1#*=}" ;;
     -h|--help)
@@ -131,14 +122,6 @@ Options:
         'keep' moves your files aside, checks out, then restores yours
         over the checked-out versions (tracked versions remain in the
         backup dir). 'abort' refuses to overwrite.
-  --remove-source {ask|yes|no}
-        When --repo points at a local directory (other than
-        ~/.dotfiles itself), that clone becomes redundant once its
-        content is cloned into ~/.dotfiles. 'ask' (default) prompts
-        at the end of a successful install (or does nothing if
-        non-interactive). 'yes' removes without prompting. 'no'
-        always leaves the source intact. No-op when --repo is a
-        remote URL or already points at ~/.dotfiles.
   --age-key PATH
         Path to an age private key file (keys.txt). Installs it to
         ~/.config/sops/age/keys.txt so that apply-secrets runs
@@ -174,11 +157,6 @@ Options:
         Takes effect for this run straight away and is added to
         ~/.config/dj/modules.txt, so later dj runs (and, once
         committed, your other machines) have it too.
-  --theme COLOR
-        (tmux-theme module, which this enables) 6-digit hex color, e.g.
-        #2596be, persisted to ~/.config/dotfiles/tmux-theme-color as
-        this machine's accent color. Host-local, like --system-type:
-        never tracked.
   -h, --help
         Show this help.
 EOF
@@ -203,14 +181,6 @@ case "$CONFLICT_MODE" in
   *)
     printf 'error: --on-conflict must be ask|backup|keep|abort (got: %s)\n' \
       "$CONFLICT_MODE" >&2
-    exit 2 ;;
-esac
-
-case "$REMOVE_SOURCE" in
-  ask|yes|no) ;;
-  *)
-    printf 'error: --remove-source must be ask|yes|no (got: %s)\n' \
-      "$REMOVE_SOURCE" >&2
     exit 2 ;;
 esac
 
@@ -243,16 +213,6 @@ esac
 case "$SOPS_KEY_SRC" in
   ''|*:*) ;;
   *) SOPS_KEY_SRC="$SOPS_KEY_SRC:~/.config/sops/age/keys.txt" ;;
-esac
-
-case "$THEME_COLOR" in
-  '') ;;
-  '#'[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F])
-    MODULES="$MODULES tmux-theme" ;;
-  *)
-    printf 'error: --theme must be a 6-digit hex color like #2596be (got: %s)\n' \
-      "$THEME_COLOR" >&2
-    exit 2 ;;
 esac
 
 for _m in $MODULES; do
@@ -389,15 +349,6 @@ if [ -n "$SYSTEM_TYPE" ]; then
   mkdir -p "$(dirname "$TIER_FILE")"
   printf '%s\n' "$SYSTEM_TYPE" > "$TIER_FILE"
   log "persisted system-type=$SYSTEM_TYPE"
-fi
-
-# ---------- 3b. Persist the tmux theme color (host-local, not tracked) ----
-
-if [ -n "$THEME_COLOR" ]; then
-  THEME_FILE=${XDG_CONFIG_HOME:-$HOME/.config}/dotfiles/tmux-theme-color
-  mkdir -p "$(dirname "$THEME_FILE")"
-  printf '%s\n' "$THEME_COLOR" > "$THEME_FILE"
-  log "persisted tmux theme color=$THEME_COLOR"
 fi
 
 # ---------- 4. Public tooling repo (~/.dotfiles/) ----------
@@ -800,26 +751,6 @@ else
   log "private repo has no commits yet; nothing to check out"
 fi
 
-# ---------- 7b. Clear legacy ~/.tmux.conf* shadowing the tracked config ----------
-#
-# tmux loads ~/.tmux.conf in addition to (and before) the tracked
-# ~/.config/tmux/tmux.conf -- it's a different path, so the
-# conflict-aware checkout above (which only walks tracked paths) never
-# sees it, and a tmux.conf from before this machine used dotfiles would
-# otherwise coexist forever, its settings quietly layered underneath
-# whatever the tracked config sets. Backed up rather than deleted, same
-# as every other displaced file in this script.
-
-tmux_backed_up=0
-[ -f "$HOME/.config/tmux/tmux.conf" ] && for f in "$HOME"/.tmux.conf*; do
-  [ -e "$f" ] || [ -L "$f" ] || continue
-  mkdir -p "$BACKUP_DIR"
-  log "moving legacy $(basename "$f") to $BACKUP_DIR (superseded by ~/.config/tmux/tmux.conf)"
-  mv "$f" "$BACKUP_DIR/"
-  tmux_backed_up=1
-done
-[ "$tmux_backed_up" -eq 1 ] && log "tmux: re-run 'tmux kill-server' (or restart your terminal) to drop the old config from memory"
-
 # ---------- 7c. Record flag-enabled modules ----------
 #
 # --module took effect for this run through DJ_MODULES; writing it to
@@ -838,38 +769,16 @@ fi
 # private config repo and travels via `dj sync`. On a returning
 # machine the checkout above just materialized it. On a genuinely
 # fresh install there's nothing to check out yet, so seed common.txt
-# from the public repo's template: a yes/no checkbox per tool when
-# attached to a terminal, or the full template otherwise.
+# from the public repo's template, which explains the format and lists
+# nothing: what to install is yours to choose.
 
 DJ_PACKAGES_DIR=${XDG_CONFIG_HOME:-$HOME/.config}/dj/packages
 DJ_PACKAGES_TEMPLATE=$DOTFILES_DIR/packages/template/common.txt
 
 if [ ! -f "$DJ_PACKAGES_DIR/common.txt" ] && [ -f "$DJ_PACKAGES_TEMPLATE" ]; then
   mkdir -p "$DJ_PACKAGES_DIR"
-  if can_prompt; then
-    printf '\n[install] Seeding your personal package list from the template.\n'
-    printf '[install] Answer y/n for each tool (Enter = yes):\n'
-    : > "$DJ_PACKAGES_DIR/common.txt"
-    while IFS= read -r _line; do
-      case "$_line" in
-        ''|'#'*)
-          printf '%s\n' "$_line" >> "$DJ_PACKAGES_DIR/common.txt"
-          continue ;;
-      esac
-      _name=$(printf '%s' "$_line" | awk '{print $1}')
-      printf '  include %-16s [Y/n]: ' "$_name"
-      read -r _ans </dev/tty || _ans=
-      case "$_ans" in
-        [Nn]*) ;;
-        *) printf '%s\n' "$_line" >> "$DJ_PACKAGES_DIR/common.txt" ;;
-      esac
-    done < "$DJ_PACKAGES_TEMPLATE"
-    unset _line _name _ans
-  else
-    log "non-interactive: seeding personal package list with the full template"
-    cp "$DJ_PACKAGES_TEMPLATE" "$DJ_PACKAGES_DIR/common.txt"
-  fi
-  log "wrote $DJ_PACKAGES_DIR/common.txt -- track it: dot add $DJ_PACKAGES_DIR/common.txt"
+  cp "$DJ_PACKAGES_TEMPLATE" "$DJ_PACKAGES_DIR/common.txt"
+  log "wrote $DJ_PACKAGES_DIR/common.txt (lists nothing yet; add your tools) -- track it: dot add $DJ_PACKAGES_DIR/common.txt"
 fi
 
 # ---------- 9. Install pre-commit hook (if present) ----------
@@ -1009,42 +918,12 @@ if [ -x "$DOTFILES_DIR/scripts/module.sh" ]; then
     || log "warn: a module post-secrets hook reported problems; see above"
 fi
 
-# ---------- 14. Optional cleanup of local public-repo source clone ----------
+# ---------- 14. Note a now-redundant local source clone ----------
 
-# If --repo was a local directory other than ~/.dotfiles itself, that
-# source clone is now redundant -- its content lives in $DOTFILES_DIR.
-# Honor --remove-source: yes deletes, no leaves alone, ask prompts.
+# If --repo was a local directory other than ~/.dotfiles itself, its
+# content now lives in $DOTFILES_DIR. Say so; deleting it is your call.
 if [ -n "$PUBLIC_LOCAL_SOURCE" ] && [ "$PUBLIC_LOCAL_SOURCE" != "$HOME" ]; then
-  log "source clone at $PUBLIC_LOCAL_SOURCE is now redundant"
-  log "(the checkout at $DOTFILES_DIR is your source of truth from here on)"
-  remove_source_clone() {
-    # If the invoking shell's cwd is inside the source clone (e.g. the
-    # user ran `cd ~/temp && sh ~/.dotfiles/install.sh ...`), step out
-    # *in this shell* first -- a subshell `cd` wouldn't help: removing
-    # the real cwd out from under the parent shell leaves it unable to
-    # getcwd() for any command it runs afterward (clone, sh, git, ...).
-    case "$(pwd -P 2>/dev/null || true)" in
-      "$PUBLIC_LOCAL_SOURCE"|"$PUBLIC_LOCAL_SOURCE"/*) cd "$HOME" ;;
-    esac
-    rm -rf "$PUBLIC_LOCAL_SOURCE" \
-      && log "removed $PUBLIC_LOCAL_SOURCE" \
-      || log "warn: failed to remove $PUBLIC_LOCAL_SOURCE"
-  }
-  case "$REMOVE_SOURCE" in
-    yes) remove_source_clone ;;
-    no)  log "leaving source clone in place (--remove-source no)" ;;
-    ask)
-      if can_prompt; then
-        printf '\n[install] remove source clone %s? [y/N]: ' "$PUBLIC_LOCAL_SOURCE"
-        read -r ans </dev/tty || ans=
-        case "$ans" in
-          y|Y|yes) remove_source_clone ;;
-          *)       log "leaving source clone in place" ;;
-        esac
-      else
-        log "non-interactive; not prompting. To clean up: rm -rf $PUBLIC_LOCAL_SOURCE"
-      fi ;;
-  esac
+  log "the source clone at $PUBLIC_LOCAL_SOURCE is no longer needed ($DOTFILES_DIR is the checkout from here on); remove it when you like"
 fi
 
 # ---------- 15. Offer shell consolidation ----------

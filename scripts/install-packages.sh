@@ -136,7 +136,7 @@ tool_present() {
 # A renames line may carry an optional third column: the binary to look for
 # when it differs from the logical name on that manager, e.g.
 #   pacman:  code-oss code            (package `code` ships /usr/bin/code-oss)
-#   apt:     code-oss SKIP codium     (fallback script installs VSCodium)
+#   apt:     code-oss SKIP codium     (a fallback script installs VSCodium)
 # Without it the logical name is the binary, as everywhere else. This keeps
 # one logical name for "the same tool, packaged differently" instead of two
 # names of which one is permanently absent (and warned about) on every OS.

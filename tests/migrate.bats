@@ -29,28 +29,6 @@ teardown() {
   sandbox_teardown
 }
 
-# A `bats` whose --version reports the given version string.
-stub_bats_version() {
-  printf '#!/bin/sh\ncase "$1" in\n  --version) echo "Bats %s" ;;\n  *) exit 0 ;;\nesac\n' \
-    "$1" > "$STUB_BIN/bats"
-  chmod +x "$STUB_BIN/bats"
-}
-
-# Replace PATH with a farm of symlinks to just the binaries migrate.sh
-# and the migrations actually call, deliberately omitting `bats`. The
-# sandbox only PREPENDS $STUB_BIN, so the host's own bats (the one
-# running this suite) is otherwise always reachable and "bats is not
-# installed" cannot be expressed.
-path_without_bats() {
-  local farm="$SANDBOX/minbin" c src
-  mkdir -p "$farm"
-  for c in sh awk chmod date dirname git grep head hostname id mkdir mktemp mv rm sed ssh-keygen uname; do
-    src="$(command -v "$c" 2>/dev/null)" || continue
-    [ -n "$src" ] && ln -sf "$src" "$farm/$c"
-  done
-  export PATH="$STUB_BIN:$farm"
-}
-
 # PATH of symlinks to the basics migrate.sh and the migrations call, plus
 # do-nothing stubs for the named tools, so the host's own gpg/sops/... can't
 # leak in and "gpg is missing" can be expressed.
@@ -112,7 +90,7 @@ make_bare_with_origin() {
   run sh "$MIGRATE" --list
   [ "$status" -eq 0 ]
   [[ "$output" == *"git-refspec"*"auto"* ]]
-  [[ "$output" == *"legacy-home-git"*"manual"* ]]
+  [[ "$output" == *"postinstall-hooks"*"manual"* ]]
   [[ "$output" == *"nixos-flake-applied"* ]]
 }
 
@@ -129,7 +107,6 @@ make_bare_with_origin() {
 }
 
 @test "migrate: a clean machine exits 0 and says so" {
-  stub_bats_version 1.11.1
   run sh "$MIGRATE"
   [ "$status" -eq 0 ]
   [[ "$output" == *"up to date"* ]]
@@ -310,160 +287,6 @@ make_stale_pubkey() {
   [ "$(head -c1 "$HOME/.zshenv")" = "#" ]
 }
 
-# --- legacy-tmux-conf -------------------------------------------------------
-
-@test "legacy-tmux-conf: N/A when no tracked tmux.conf is deployed" {
-  : > "$HOME/.tmux.conf"
-  run sh "$MIGRATE" --only legacy-tmux-conf
-  [ "$status" -eq 0 ]
-}
-
-@test "legacy-tmux-conf: --fix moves every ~/.tmux.conf* aside" {
-  mkdir -p "$HOME/.config/tmux"
-  echo tracked > "$HOME/.config/tmux/tmux.conf"
-  echo legacy   > "$HOME/.tmux.conf"
-  echo tmpl     > "$HOME/.tmux.conf.template"
-  run sh "$MIGRATE" --fix --only legacy-tmux-conf
-  [ "$status" -eq 0 ]
-  [ ! -e "$HOME/.tmux.conf" ]
-  [ ! -e "$HOME/.tmux.conf.template" ]
-  [ "$(cat "$DOTFILES_BACKUP_DIR/.tmux.conf")" = legacy ]
-  [ "$(cat "$DOTFILES_BACKUP_DIR/.tmux.conf.template")" = tmpl ]
-  # the tracked config is untouched
-  [ "$(cat "$HOME/.config/tmux/tmux.conf")" = tracked ]
-}
-
-@test "legacy-tmux-conf: ok once nothing shadows the tracked config" {
-  mkdir -p "$HOME/.config/tmux"
-  : > "$HOME/.config/tmux/tmux.conf"
-  run sh "$MIGRATE" --only legacy-tmux-conf
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"ok"* ]]
-}
-
-# --- bats-version -----------------------------------------------------------
-
-@test "bats-version: N/A when bats is not installed" {
-  path_without_bats
-  run sh "$MIGRATE" --only bats-version
-  [ "$status" -eq 0 ]
-  [[ "$output" != *"test suite"* ]]
-}
-
-@test "bats-version: ok at exactly the 1.5 minimum" {
-  stub_bats_version 1.5.0
-  run sh "$MIGRATE" --only bats-version
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"ok"* ]]
-}
-
-@test "bats-version: ok above the minimum" {
-  stub_bats_version 1.11.1
-  run sh "$MIGRATE" --only bats-version
-  [ "$status" -eq 0 ]
-}
-
-@test "bats-version: pending on 1.2.1 (the Debian/Ubuntu version)" {
-  stub_bats_version 1.2.1
-  run sh "$MIGRATE" --only bats-version
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"MIGR"* ]]
-}
-
-@test "bats-version: pending across a major boundary (0.4 < 1.5)" {
-  stub_bats_version 0.4.0
-  run sh "$MIGRATE" --only bats-version
-  [ "$status" -eq 1 ]
-}
-
-@test "bats-version: --fix runs the fallback installer and re-checks" {
-  stub_bats_version 1.2.1
-  mkdir -p "$FAKE_ROOT/packages/scripts"
-  # Stand in for packages/scripts/bats.sh: leaves a marker and
-  # "upgrades" the stub it is checked against.
-  cat > "$FAKE_ROOT/packages/scripts/bats.sh" <<EOF
-#!/bin/sh
-touch "$SANDBOX/installer-ran"
-printf '#!/bin/sh\ncase "\$1" in\n  --version) echo "Bats 1.11.1" ;;\n  *) exit 0 ;;\nesac\n' > "$STUB_BIN/bats"
-chmod +x "$STUB_BIN/bats"
-EOF
-  chmod +x "$FAKE_ROOT/packages/scripts/bats.sh"
-
-  run sh "$MIGRATE" --fix --only bats-version
-  [ "$status" -eq 0 ]
-  [ -f "$SANDBOX/installer-ran" ]
-  [[ "$output" == *"upgraded to 1.11.1"* ]]
-}
-
-@test "bats-version: --fix reports honestly when the installer does not help" {
-  stub_bats_version 1.2.1
-  mkdir -p "$FAKE_ROOT/packages/scripts"
-  printf '#!/bin/sh\nexit 0\n' > "$FAKE_ROOT/packages/scripts/bats.sh"
-  chmod +x "$FAKE_ROOT/packages/scripts/bats.sh"
-
-  run sh "$MIGRATE" --fix --only bats-version
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"still 1.2.1"* ]]
-}
-
-@test "bats-version: --fix warns when the fallback installer is missing" {
-  stub_bats_version 1.2.1
-  run sh "$MIGRATE" --fix --only bats-version
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"cannot upgrade bats"* ]]
-}
-
-# --- legacy-home-git --------------------------------------------------------
-
-@test "legacy-home-git: ok when \$HOME is not a git work tree" {
-  run sh "$MIGRATE" --only legacy-home-git
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"ok"* ]]
-}
-
-@test "legacy-home-git: MANUAL when ~/.git exists" {
-  git init -q "$HOME"
-  run sh "$MIGRATE" --only legacy-home-git
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"MANUAL"* ]]
-  [[ "$output" == *"$HOME/.git"* ]]
-}
-
-@test "legacy-home-git: MANUAL for a leftover ~/.gitignore alone" {
-  # The ignore file is half the trap on its own: it is read
-  # work-tree-relative, so it silently governs the private bare repo.
-  printf '.ssh\n' > "$HOME/.gitignore"
-  run sh "$MIGRATE" --only legacy-home-git
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"MANUAL"* ]]
-  [[ "$output" == *"$HOME/.gitignore"* ]]
-}
-
-@test "legacy-home-git: --fix never removes the repo on its own" {
-  git init -q "$HOME"
-  printf '.ssh\n' > "$HOME/.gitignore"
-  run sh "$MIGRATE" --fix --only legacy-home-git
-  [ "$status" -eq 1 ]
-  [ -d "$HOME/.git" ]
-  [ -f "$HOME/.gitignore" ]
-  [[ "$output" == *"mv ~/.git"* ]]
-}
-
-@test "legacy-home-git: reports uncommitted work so the decision is informed" {
-  git init -q "$HOME"
-  git --git-dir="$HOME/.git" --work-tree="$HOME" config user.email t@e.com
-  git --git-dir="$HOME/.git" --work-tree="$HOME" config user.name t
-  git --git-dir="$HOME/.git" --work-tree="$HOME" config commit.gpgsign false
-  printf 'one\n' > "$HOME/tracked.txt"
-  git --git-dir="$HOME/.git" --work-tree="$HOME" add tracked.txt
-  git --git-dir="$HOME/.git" --work-tree="$HOME" commit -q -m init
-  printf 'two\n' > "$HOME/tracked.txt"
-
-  run sh "$MIGRATE" --fix --only legacy-home-git
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"1 tracked file(s) with uncommitted changes"* ]]
-}
-
 # --- pending-packages / --quiet --------------------------------------------
 
 @test "pending-packages: pending when install-packages reports work to do" {
@@ -601,11 +424,19 @@ IP
   [ "$status" -ne 0 ]
 }
 
+# A run-postinstall.sh that reports an unresolved hook, so the MANUAL
+# postinstall-hooks migration is pending.
+pending_manual_hook() {
+  printf '#!/bin/sh\necho "[run-postinstall] WARNING: no hook script for example-hook" >&2\nexit 1\n' \
+    > "$FAKE_ROOT/scripts/run-postinstall.sh"
+  chmod +x "$FAKE_ROOT/scripts/run-postinstall.sh"
+}
+
 # --- selection --------------------------------------------------------------
 
 @test "migrate: --only restricts the run to the named migration" {
   make_bare_with_origin
-  mkdir -p "$HOME/.git"
+  pending_manual_hook
   run sh "$MIGRATE" --only git-refspec
   [ "$status" -eq 1 ]
   [[ "$output" != *"MANUAL"* ]]
@@ -613,7 +444,7 @@ IP
 
 @test "migrate: without --only every applicable migration is evaluated" {
   make_bare_with_origin
-  mkdir -p "$HOME/.git"
+  pending_manual_hook
   run sh "$MIGRATE"
   [ "$status" -eq 1 ]
   [[ "$output" == *"MIGR"* ]]
@@ -736,14 +567,14 @@ STUB
 @test "postinstall-hooks: MANUAL when a listed hook has no script" {
   cat > "$FAKE_ROOT/scripts/run-postinstall.sh" <<'RP'
 #!/bin/sh
-echo "[run-postinstall] WARNING: no hook script for zfs-textfile-collector" >&2
+echo "[run-postinstall] WARNING: no hook script for example-hook" >&2
 exit 1
 RP
   chmod +x "$FAKE_ROOT/scripts/run-postinstall.sh"
   run sh "$MIGRATE" --fix --only postinstall-hooks
   [ "$status" -eq 1 ]
   [[ "$output" == *"MANUAL"* ]]
-  [[ "$output" == *"zfs-textfile-collector"* ]]
+  [[ "$output" == *"example-hook"* ]]
 }
 
 @test "postinstall-hooks: N/A on NixOS, even with an unresolved hook listed" {

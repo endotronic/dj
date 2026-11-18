@@ -1,30 +1,16 @@
-# Template seed list for the personal "common" package list.
+# Your package list: tools every machine of yours gets.
 #
-# This file is NOT installed from directly -- it only seeds
-# ~/.config/dj/packages/common.txt on a fresh machine (interactively,
-# or in full when non-interactive). The real list lives in the private
-# config repo and travels with you; edit it via `dj install-package` or
-# by hand, not by editing this template.
+# One logical name per line: the binary `command -v` looks for (rg, not
+# ripgrep). dj maps it to each package manager's package name through
+# packages/renames/<manager>.txt, and to a fallback installer in
+# packages/scripts/<name>.sh where no package manager ships it. Your own
+# mappings and installers go beside this file, in renames/ and scripts/.
 #
-# One logical name per line. The logical name is the binary that
-# `command -v` will look for. Package-manager-specific renames live in
-# packages/renames/<pkg-mgr>.txt.
+# Add to types/<type>.txt for one kind of machine, hosts/<host>.txt for
+# one machine. git, gpg, sops, age and just are dj's own requirements and
+# are always installed, so they don't belong here.
 #
-# git, gpg, sops, age, and just are NOT listed here -- they're required
-# by dj itself (cloning, signing, secrets, `dj`), so
-# install.sh always installs them (step 5) rather than offering them as
-# an optional checkbox choice.
-
-nvim
-tmux
-starship
-rg
-fd
-fzf
-jq
-npm
-curl
-openssl
-bats
-
-uv
+# For example:
+# rg
+# fzf
+# jq

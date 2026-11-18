@@ -4,7 +4,6 @@
 nvim neovim
 gpg gnupg
 rg ripgrep
-tree-sitter tree-sitter-cli
 mount.nfs nfs-utils
 # The package is wl-clipboard but it ships wl-copy/wl-paste, and the
 # installed-check is `command -v <logical>`, so list the binary name.
@@ -15,7 +14,3 @@ wl-copy wl-clipboard
 claude SKIP
 # WireGuard CLI: binary is wg, package is wireguard-tools
 wg wireguard-tools
-# VS Code, Open Source build (Open VSX marketplace). The package is `code`;
-# it ships both `code` and `code-oss`. Elsewhere this logical name is
-# VSCodium -- see the third column in apt.txt / brew.txt.
-code-oss code

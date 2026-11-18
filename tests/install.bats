@@ -64,7 +64,6 @@ _make_fake_repo_dir() {
   [[ "$output" =~ "--age-key" ]]
   [[ "$output" =~ "--sops" ]]
   [[ "$output" =~ "--module" ]]
-  [[ "$output" =~ "--theme" ]]
   [[ "$output" =~ "--private-repo" ]]
 }
 
@@ -102,7 +101,7 @@ _make_fake_repo_dir() {
 @test "existing ~/.dotfiles checkout is used in place (no clone)" {
   stage_fake_dotfiles_checkout
 
-  run sh "$INSTALL" --on-conflict backup --remove-source no
+  run sh "$INSTALL" --on-conflict backup
   [ "$status" -eq 0 ]
   [[ "$output" =~ "using existing checkout at $HOME/.dotfiles" ]]
 }
@@ -111,7 +110,7 @@ _make_fake_repo_dir() {
   fake=$SANDBOX/src-public-repo
   _make_fake_repo_dir "$fake" "marker content"
 
-  run sh "$INSTALL" --repo "$fake" --on-conflict backup --remove-source no
+  run sh "$INSTALL" --repo "$fake" --on-conflict backup
   [ "$status" -eq 0 ]
   [[ "$output" =~ "cloning $fake into $HOME/.dotfiles" ]]
   [ -f "$HOME/.dotfiles/MARKER" ]
@@ -128,7 +127,7 @@ _make_fake_repo_dir() {
   printf 'v2\n' > "$origin/MARKER"
   git -C "$origin" commit -q -am v2
 
-  run sh "$INSTALL" --on-conflict backup --remove-source no
+  run sh "$INSTALL" --on-conflict backup
   [ "$status" -eq 0 ]
   [[ "$output" =~ "updating existing checkout at $HOME/.dotfiles" ]]
   grep -q "^v2$" "$HOME/.dotfiles/MARKER"
@@ -144,7 +143,7 @@ _make_fake_repo_dir() {
   # to what's tracked, not preserve whatever happens to be sitting there.
   printf 'locally modified, uncommitted\n' > "$HOME/.dotfiles/MARKER"
 
-  run sh "$INSTALL" --on-conflict backup --remove-source no
+  run sh "$INSTALL" --on-conflict backup
   [ "$status" -eq 0 ]
   grep -q "^v1$" "$HOME/.dotfiles/MARKER"
 }
@@ -152,7 +151,7 @@ _make_fake_repo_dir() {
 @test "install.sh running from within its own checkout is left as-is (no fetch)" {
   _make_fake_repo_dir "$HOME/.dotfiles" "self marker"
 
-  run sh "$HOME/.dotfiles/install.sh" --on-conflict backup --remove-source no
+  run sh "$HOME/.dotfiles/install.sh" --on-conflict backup
   [ "$status" -eq 0 ]
   [[ "$output" =~ "using existing checkout at $HOME/.dotfiles (running from within it)" ]]
   if [[ "$output" =~ "updating existing checkout" ]]; then
@@ -170,7 +169,7 @@ _make_fake_repo_dir() {
   mkdir -p "$XDG_CONFIG_HOME/dotfiles"
   _make_fake_repo_dir "$HOME/.dotfiles" "self marker"
 
-  run sh "$HOME/.dotfiles/install.sh" --on-conflict backup --remove-source no
+  run sh "$HOME/.dotfiles/install.sh" --on-conflict backup
   [ "$status" -eq 0 ]
   [[ "$output" =~ "(running from within it)" ]]
   [[ "$output" != *"updating existing checkout"* ]]
@@ -435,43 +434,6 @@ _make_fake_repo_dir() {
   [ ! -d "$HOME/.dotfiles-backup" ]
 }
 
-# --- legacy ~/.tmux.conf* cleanup -------------------------------------------
-
-@test "pre-existing ~/.tmux.conf* is backed up when tmux.conf is tracked" {
-  stage_fake_dotfiles_checkout
-  make_src_repo
-  add_to_repo .config/tmux/tmux.conf "# tracked tmux config"
-  publish_repo
-  printf '%s\n' "# legacy hand-written config" > "$HOME/.tmux.conf"
-  printf '%s\n' "# legacy template" > "$HOME/.tmux.conf.template"
-
-  run sh "$INSTALL" --private-repo "$SRC_REPO" --on-conflict backup
-  [ "$status" -eq 0 ]
-  [[ "$output" =~ "moving legacy .tmux.conf" ]]
-  [ ! -e "$HOME/.tmux.conf" ]
-  [ ! -e "$HOME/.tmux.conf.template" ]
-  [ -f "$HOME/.config/tmux/tmux.conf" ]
-  grep -q "tracked tmux config" "$HOME/.config/tmux/tmux.conf"
-  found=$(find "$HOME/.dotfiles-backup" -name ".tmux.conf" -type f | head -1)
-  [ -n "$found" ]
-  grep -q "legacy hand-written config" "$found"
-  found_template=$(find "$HOME/.dotfiles-backup" -name ".tmux.conf.template" -type f | head -1)
-  [ -n "$found_template" ]
-  grep -q "legacy template" "$found_template"
-}
-
-@test "no legacy ~/.tmux.conf*: nothing to back up, no-op" {
-  stage_fake_dotfiles_checkout
-  make_src_repo
-  add_to_repo .config/tmux/tmux.conf "# tracked tmux config"
-  publish_repo
-
-  run sh "$INSTALL" --private-repo "$SRC_REPO" --on-conflict backup
-  [ "$status" -eq 0 ]
-  [[ ! "$output" =~ "moving legacy" ]]
-  [ -f "$HOME/.config/tmux/tmux.conf" ]
-}
-
 # --- non-interactive guard -------------------------------------------------
 
 @test "--on-conflict ask refuses to act when non-interactive and conflicts exist" {
@@ -488,40 +450,6 @@ _make_fake_repo_dir() {
   [[ "$output" =~ "non-interactive" ]]
   # HOME unchanged.
   grep -q "^# user" "$HOME/.bashrc"
-}
-
-# --- theme color persistence ----------------------------------------------
-
-@test "--theme writes the tmux-theme-color file" {
-  stage_fake_dotfiles_checkout
-  make_src_repo
-  add_to_repo .bashrc "# tracked"
-  publish_repo
-
-  run sh "$INSTALL" --private-repo "$SRC_REPO" --theme '#2596be' --on-conflict backup
-  [ "$status" -eq 0 ]
-  [ -f "$XDG_CONFIG_HOME/dotfiles/tmux-theme-color" ]
-  [ "$(cat "$XDG_CONFIG_HOME/dotfiles/tmux-theme-color")" = "#2596be" ]
-}
-
-@test "--theme with invalid color exits 2" {
-  run sh "$INSTALL" --theme 'not-a-color'
-  [ "$status" -eq 2 ]
-  [[ "$output" =~ "--theme must be a 6-digit hex color" ]]
-}
-
-@test "--theme rejects a short hex color" {
-  run sh "$INSTALL" --theme '#fff'
-  [ "$status" -eq 2 ]
-  [[ "$output" =~ "--theme must be a 6-digit hex color" ]]
-}
-
-@test "omitting --theme leaves tmux-theme-color untouched" {
-  stage_fake_dotfiles_checkout
-
-  run sh "$INSTALL" --on-conflict backup
-  [ "$status" -eq 0 ]
-  [ ! -f "$XDG_CONFIG_HOME/dotfiles/tmux-theme-color" ]
 }
 
 # --- system-type persistence ---------------------------------------------
@@ -590,7 +518,7 @@ _make_fake_repo_dir() {
   fake=$SANDBOX/fake-our-repo
   _make_fake_repo_dir "$fake" "fake marker"
 
-  run sh "$fake/install.sh" --on-conflict backup --remove-source no
+  run sh "$fake/install.sh" --on-conflict backup
   [ "$status" -eq 0 ]
   [[ "$output" =~ "auto-detected source repo: $fake" ]]
   [[ "$output" =~ "REPO=$fake" ]]
@@ -605,7 +533,7 @@ _make_fake_repo_dir() {
   _make_fake_repo_dir "$other" "OTHER marker"
 
   run sh "$fake/install.sh" --repo "$other" \
-    --on-conflict backup --remove-source no
+    --on-conflict backup
   [ "$status" -eq 0 ]
   # Should NOT auto-detect, REPO is the --repo path.
   if [[ "$output" =~ "auto-detected source repo" ]]; then
@@ -630,7 +558,7 @@ _make_fake_repo_dir() {
   _make_fake_repo_dir "$fake" "clonable marker"
   export DOTFILES_REPO_URL=$fake
 
-  run sh "$outside/install.sh" --on-conflict backup --remove-source no
+  run sh "$outside/install.sh" --on-conflict backup
   [ "$status" -eq 0 ]
   if [[ "$output" =~ "auto-detected source repo" ]]; then
     printf 'unexpected auto-detect from a non-git dir\n%s\n' "$output" >&2
@@ -658,7 +586,7 @@ _make_fake_repo_dir() {
   _make_fake_repo_dir "$fake" "clonable marker"
   export DOTFILES_REPO_URL=$fake
 
-  run sh "$random/install.sh" --on-conflict backup --remove-source no
+  run sh "$random/install.sh" --on-conflict backup
   [ "$status" -eq 0 ]
   if [[ "$output" =~ "auto-detected source repo" ]]; then
     printf 'falsely auto-detected a non-our repo\n%s\n' "$output" >&2
@@ -667,76 +595,32 @@ _make_fake_repo_dir() {
   [[ "$output" =~ "REPO=$fake" ]]
 }
 
-# --- local --repo + --remove-source (public repo) -------------------------
+# --- local --repo (public repo) --------------------------------------------
 
-@test "invalid --remove-source exits 2" {
-  run sh "$INSTALL" --remove-source bogus
-  [ "$status" -eq 2 ]
-  [[ "$output" =~ "--remove-source must be" ]]
-}
-
-@test "--remove-source no leaves the local source clone intact" {
-  fake=$SANDBOX/src-public-repo
-  _make_fake_repo_dir "$fake" "marker"
-  run sh "$INSTALL" --repo "$fake" --on-conflict backup --remove-source no
-  [ "$status" -eq 0 ]
-  [ -d "$fake" ]
-}
-
-@test "--remove-source yes deletes the local source clone after install" {
-  fake=$SANDBOX/src-public-repo
-  _make_fake_repo_dir "$fake" "marker"
-  run sh "$INSTALL" --repo "$fake" --on-conflict backup --remove-source yes
-  [ "$status" -eq 0 ]
-  [ ! -d "$fake" ]
-  [[ "$output" =~ "removed $fake" ]]
-}
-
-@test "--remove-source yes from inside the source clone doesn't break the shell's cwd" {
-  # Regression: removing the source clone while the invoking shell's
-  # cwd was inside it left the shell unable to getcwd() -- every
-  # subsequent command (sh, git, ...) failed with
-  # "getcwd() failed: No such file or directory" /
-  # "fatal: Unable to read current working directory".
-  # Fix: cd the *real* shell (not a subshell) out to $HOME first.
-  fake=$SANDBOX/src-public-repo
-  _make_fake_repo_dir "$fake" "marker"
-
-  run sh -c "cd '$fake' && sh '$INSTALL' --repo '$fake' --on-conflict backup --remove-source yes"
-  [ "$status" -eq 0 ]
-  [ ! -d "$fake" ]
-  [[ "$output" =~ "removed $fake" ]]
-  if [[ "$output" =~ "getcwd" ]] || [[ "$output" =~ "current working directory" ]]; then
-    printf 'cwd corruption surfaced after source-clone removal:\n%s\n' "$output" >&2
-    false
-  fi
-}
-
-@test "non-interactive default keeps the source clone and prints a hint" {
+@test "a local --repo source clone is left in place, with a note" {
   fake=$SANDBOX/src-public-repo
   _make_fake_repo_dir "$fake" "marker"
   run sh "$INSTALL" --repo "$fake" --on-conflict backup
   [ "$status" -eq 0 ]
   [ -d "$fake" ]
-  [[ "$output" =~ "non-interactive" ]]
-  [[ "$output" =~ "rm -rf $fake" ]]
+  [[ "$output" =~ "source clone at $fake is no longer needed" ]]
 }
 
 @test "local source with origin: cloned public repo's origin gets rewired" {
   fake=$SANDBOX/src-public-repo
   _make_fake_repo_dir "$fake" "marker"
   ( cd "$fake" && git remote add origin https://github.com/u/r.git )
-  run sh "$INSTALL" --repo "$fake" --on-conflict backup --remove-source no
+  run sh "$INSTALL" --repo "$fake" --on-conflict backup
   [ "$status" -eq 0 ]
   run git -C "$HOME/.dotfiles" remote get-url origin
   [ "$status" -eq 0 ]
   [ "$output" = "https://github.com/u/r.git" ]
 }
 
-@test "remote --repo URL with existing checkout: --remove-source is a no-op" {
+@test "remote --repo URL with existing checkout: no source-clone note" {
   stage_fake_dotfiles_checkout
   run sh "$INSTALL" --repo "https://example.invalid/u/r.git" \
-    --on-conflict backup --remove-source ask
+    --on-conflict backup
   [ "$status" -eq 0 ]
   if [[ "$output" =~ "source clone at" ]]; then
     printf 'unexpected source-clone cleanup chatter:\n%s\n' "$output" >&2

@@ -56,16 +56,6 @@ in_bash() {
   esac
 }
 
-@test "sourcing .bashrc sets EDITOR=nvim" {
-  run in_bash 'printf %s "$EDITOR"'
-  [ "$output" = "nvim" ]
-}
-
-@test "sourcing .bashrc sets VISUAL=nvim" {
-  run in_bash 'printf %s "$VISUAL"'
-  [ "$output" = "nvim" ]
-}
-
 @test "sourcing .bashrc exports XDG dirs even when unset" {
   unset XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME XDG_STATE_HOME
   run in_bash 'printf "%s|%s|%s|%s" \
@@ -99,38 +89,6 @@ in_bash() {
   [ "$status" -eq 0 ]
   [[ "$output" =~ "git --git-dir" ]]
   [[ "$output" =~ "\$HOME/.config.git" ]]
-}
-
-@test "dot_add is a defined function" {
-  run in_bash 'declare -F dot_add'
-  [ "$status" -eq 0 ]
-  [[ "$output" =~ dot_add ]]
-}
-
-@test "dot-add alias points to dot_add" {
-  run in_bash 'alias dot-add'
-  [ "$status" -eq 0 ]
-  [[ "$output" =~ dot_add ]]
-}
-
-@test "dot_add with no args prints usage and exits non-zero" {
-  run in_bash 'dot_add'
-  [ "$status" -ne 0 ]
-  [[ "$output" =~ usage ]]
-}
-
-# --- mkcd function --------------------------------------------------------
-
-@test "mkcd creates and cd's into a new directory" {
-  run in_bash 'mkcd "$HOME/test-mkcd-dir" && pwd'
-  [ "$status" -eq 0 ]
-  [ "$output" = "$HOME/test-mkcd-dir" ]
-  [ -d "$HOME/test-mkcd-dir" ]
-}
-
-@test "mkcd with no args fails with usage" {
-  run in_bash 'mkcd'
-  [ "$status" -ne 0 ]
 }
 
 # --- OS-conditional file sourcing ----------------------------------------

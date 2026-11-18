@@ -1,13 +1,13 @@
 ---
 name: edit-config
-description: Modify a tracked (or to-be-tracked) configuration file according to a user goal stated in natural language ("tighten the starship prompt", "make hyprland gaps smaller", "add an alias for kc"). Handles the dotfiles-specific workflow: prefer override hooks, stage via `dot add`, leave commit/push to the user.
+description: Modify a tracked (or to-be-tracked) configuration file according to a user goal stated in natural language ("tighten the starship prompt", "make tmux scrollback longer", "add an alias for kc"). Handles the dotfiles-specific workflow: prefer override hooks, stage via `dot add`, leave commit/push to the user.
 ---
 
 # edit-config
 
 Apply a config change in a way that respects the project's design rules
-(see docs/design.md). The user wants a *result* ("smaller
-hyprland gaps"); your job is to make the right edit in the right place
+(see docs/design.md). The user wants a *result* ("longer
+tmux scrollback"); your job is to make the right edit in the right place
 and surface what changed.
 
 ## Shell alias note
@@ -28,12 +28,11 @@ When telling the user what to run next, use `dj` and `dot`.
    under `~/.config/`, `~/.gitconfig`, `~/.tmux.conf`, etc. If multiple
    files could be edited, ask the user which one they mean.
 
-2. **Check the override-hook rule.** If the path is under
-   `~/.config/{hypr,waybar,walker,alacritty,kitty,ghostty,mako,omarchy}/`
-   on an Omarchy host (detect: `/etc/os-release` mentions Arch *and*
-   `~/.local/share/omarchy/` exists), **invoke the `omarchy` skill if one is available**
-   instead of editing the file directly. Omarchy's own tooling makes this
-   mandatory.
+2. **Prefer an override to a rewrite.** If something else owns the file
+   (a package or framework that ships or regenerates it), put the change
+   in the include or drop-in that tool reads, rather than editing the
+   file it would overwrite. The user's own notes (`.claude/AGENTS.md`)
+   may name setup-specific rules or skills for this; follow them.
 
 3. **Make the edit** with `Edit` (not `Write`) when modifying an
    existing file. Keep the change minimal — don't reformat, don't
@@ -42,7 +41,7 @@ When telling the user what to run next, use `dj` and `dot`.
 4. **Verify syntactically** if a quick check exists:
    - shell snippets: `sh -n <file>` or `bash -n <file>`
    - toml: open and re-read; structural typos usually visible
-   - hyprland: no built-in linter; rely on user to reload
+   - anything else: say how to reload it, and let the user check
 
 5. **Show what changed.** Run `git --git-dir="$HOME/.config.git" --work-tree="$HOME" diff -- <path>`
    for bare-repo-tracked files. Tell the user *concretely* what the
@@ -55,7 +54,7 @@ When telling the user what to run next, use `dj` and `dot`.
 
 ## Special cases
 
-- **Tool-specific knowledge.** For Starship, Hyprland, etc., apply the
+- **Tool-specific knowledge.** For Starship, tmux, etc., apply the
   tool's idiomatic config style. If a dedicated skill for that tool
   exists in `.claude/skills/`, it takes precedence over this generic
   workflow.

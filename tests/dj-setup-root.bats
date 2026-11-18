@@ -21,14 +21,6 @@ setup() {
   export DOTFILES_DIR="$HOME/.dotfiles"
   mkdir -p "$HOME/.ssh" "$XDG_CONFIG_HOME/sops/age"
   printf 'AGE-SECRET-KEY-1FAKE\n' > "$XDG_CONFIG_HOME/sops/age/keys.txt"
-  # See dj-setup.bats for why claude needs an explicit default stub:
-  # without one, `command -v claude` falls through to the real binary
-  # this repo is developed inside.
-  cat > "$STUB_BIN/claude" <<'EOF'
-#!/bin/sh
-exit 1
-EOF
-  chmod +x "$STUB_BIN/claude"
 }
 
 teardown() {
@@ -557,18 +549,3 @@ EOF
   # The value must appear as its own line, not merged/truncated.
   printf '%s\n' "$output" | grep -qx 'srv#2'
 }
-
-# ---------- tmux-theme module: --theme picked when omitted ---------------
-
-@test "generates a theme when omitted (falls back to random since claude is stubbed off)" {
-  export DJ_MODULES=tmux-theme
-  default_stubs
-  private_repo_with_remote
-  dotfiles_repo_with_origin git@github.com:someuser/somerepo.git
-
-  run sh "$SETUP" testhost --system-type server < /dev/null
-  [ "$status" -eq 0 ]
-  remote_cmd=$(final_remote_cmd)
-  [[ "$remote_cmd" =~ --theme.*\#[0-9a-f]{6} ]]
-}
-

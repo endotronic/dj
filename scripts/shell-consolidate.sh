@@ -195,9 +195,6 @@ export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
 export XDG_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
 export XDG_CACHE_HOME="${XDG_CACHE_HOME:-$HOME/.cache}"
 export XDG_STATE_HOME="${XDG_STATE_HOME:-$HOME/.local/state}"
-
-export EDITOR="${EDITOR:-nvim}"
-export VISUAL="${VISUAL:-nvim}"
 ENV_SH
 
 cat > "$shell_dir/aliases.sh" << 'ALIASES_SH'
@@ -205,34 +202,14 @@ cat > "$shell_dir/aliases.sh" << 'ALIASES_SH'
 
 # `dot`: operate on the private bare dotfiles repo (work-tree $HOME).
 # `dot status` is intentionally blind to untracked files
-# (status.showUntrackedFiles=no) -- use dot_add/dot-add to discover and
-# stage new files.
+# (status.showUntrackedFiles=no): add new files by name with `dot add`.
 alias dot='git --git-dir="$HOME/.config.git" --work-tree="$HOME"'
 ALIASES_SH
 
 cat > "$shell_dir/functions.sh" << 'FUNCTIONS_SH'
 # Shared functions. POSIX only -- no bashisms/zshisms.
-
-# `dot_add <path>`: stage a file from $HOME into the private bare repo.
-# Necessary because `dot status` is intentionally blind to untracked
-# files, so you can't discover what's not yet tracked.
-dot_add() {
-  if [ $# -eq 0 ]; then
-    printf 'usage: dot_add <path> [<path> ...]\n' >&2
-    return 2
-  fi
-  git --git-dir="$HOME/.config.git" --work-tree="$HOME" add "$@" \
-    && git --git-dir="$HOME/.config.git" --work-tree="$HOME" status
-}
-# Convenience: an alias-friendly hyphenated name.
-alias dot-add='dot_add'
-
-# `mkcd <dir>`: mkdir -p and cd into it.
-mkcd() {
-  [ $# -eq 1 ] || { printf 'usage: mkcd <dir>\n' >&2; return 2; }
-  mkdir -p -- "$1" && cd -- "$1"
-}
 FUNCTIONS_SH
+
 cat > "$shell_dir/secrets.sh" << 'SECRETS_SH'
 # Sourced last; load decrypted secrets into THIS shell here.
 # rebuild-secrets.sh materializes manifest entries under ~/.secrets/ --
