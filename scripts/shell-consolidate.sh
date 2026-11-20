@@ -346,6 +346,11 @@ cat > "$HOME/.bashrc" << 'BASHRC'
 # Interactive bash. Tiny loader -- real config lives in
 # ~/.config/shell/ (shared with zsh) and ~/.config/bash/ (bash-only).
 
+# Environment (PATH incl. ~/.dotfiles/bin for dj) for every shell, so
+# non-interactive ones like `ssh host dj sync` find it. Prints nothing;
+# init.sh sources it again below, which is idempotent.
+[ -r "$HOME/.config/shell/env.sh" ] && . "$HOME/.config/shell/env.sh"
+
 # Only run interactive bits when interactive.
 case $- in *i*) ;; *) return ;; esac
 

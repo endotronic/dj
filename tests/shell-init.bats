@@ -74,6 +74,16 @@ in_bash() {
   [ "$output" = "ok" ]
 }
 
+@test "non-interactive bash gets \$HOME/.dotfiles/bin on PATH, silently" {
+  # `ssh host dj sync` runs a non-interactive bash that stops at .bashrc's
+  # interactive guard; env.sh must be loaded before it. And print nothing,
+  # or scp/rsync break.
+  run bash --norc -c ". \"\$HOME/.bashrc\"; case \":\$PATH:\" in *\":\$HOME/.dotfiles/bin:\"*) echo ok ;; *) echo \"PATH=\$PATH\" ;; esac"
+  [ "$output" = "ok" ]
+  run bash --norc -c ". \"\$HOME/.bashrc\""
+  [ -z "$output" ]
+}
+
 @test "PATH prepend is idempotent across re-sourcing" {
   run in_bash 'source ~/.bashrc; source ~/.bashrc; \
     n_scripts=$(echo "$PATH" | tr : "\n" | grep -cx "$HOME/.dotfiles/bin" || true); \
